@@ -30,7 +30,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 
 - 用户用自然语言创建应用，不需要知道代码、构建或部署。
 - 灵矽只依赖一组稳定的 MCP Tool；新应用不需要在灵矽侧重新注册工具。
-- 构建是长任务，可以异步执行、按需查询进度，不阻塞语音对话。
+- 构建是长任务，可以异步执行、按需查询状态和已用时间，不阻塞语音对话。
 - 应用生成后可以在 Render 上稳定启动，并通过 OpenAPI 被控制面调用。
 - 应用画面通过 AirPlay 常驻在屏幕上；切换应用不重新建立投屏。
 - Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
@@ -54,7 +54,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | Render | 现场的应用运行时，负责启动应用、提供 HTTP、维持 AirPlay |
 | Task | 一次 `create_app` 构建任务，对外用 `task_id` 标识 |
 | App | AgentAPI 产出的、已经在 Render 上运行的应用 |
-| Artifact | 应用产物目录，包含程序、OpenAPI 文档、`launch.json` 和自检报告 |
+| Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档、`launch.json` 和自检报告 |
 | Stage | Render 上常驻的展示页面；AirPlay 镜像的就是它 |
 | OpenAPI | 应用能力的 HTTP 契约，控制面据此校验和转发请求 |
 | launch.json | 应用启动契约，描述可执行文件、参数和端口 |
@@ -109,8 +109,8 @@ flowchart LR
 | Tool | 作用 | 背后动作 |
 | --- | --- | --- |
 | `create_app` | 创建一个应用构建任务 | 调 AgentAPI 创建编码 session，返回 `task_id` |
-| `get_task_status` | 查询构建/部署进度 | 查 AgentAPI session 和事件，归一化状态 |
-| `get_openapi` | 获取当前应用的操作说明 | 从 artifact 的 OpenAPI 生成灵矽友好摘要 |
+| `get_task_status` | 查询构建/部署状态和已用时间 | 查 AgentAPI session 和事件，归一化状态和时间 |
+| `get_openapi` | 获取当前应用的 OpenAPI 文档 | 从 artifact 返回 OpenAPI 文档本身 |
 | `send_request` | 调用应用的一个操作 | 按 OpenAPI 解析并转发 HTTP 到 Render |
 
 应用的每个操作**不会**在灵矽里单独注册 MCP Tool。灵矽看到的是稳定的四个工具，具体能力由 OpenAPI 动态描述。这是本架构最关键的取舍：**MCP 面稳定，应用能力动态。**
@@ -154,17 +154,20 @@ flowchart LR
 {
   "task_id": "task_01J...",
   "status": "building",
-  "progress": 0.6,
-  "message": "正在写页面，已经完成一半",
+  "elapsed_seconds": 42,
+  "message": "正在写页面",
   "app_id": null
 }
 ```
+
+- `elapsed_seconds`：从创建 AgentAPI session 到查询时刻的秒数；AgentAPI 不提供更细的进度。
+- `message`：AgentAPI Session Event 中最近一次 agent 消息的文本；还没有消息时为空字符串。控制面不改写、不总结。
 
 对灵矽暴露的状态收敛为三种：
 
 - `building`：构建或校验中。
 - `ready`：应用已启动，可以调用。
-- `failed`：构建、校验或启动失败；`message` 说明原因。
+- `failed`：构建、校验或启动失败；`message` 仍是最近一次 agent 消息，控制面在 `content` 中给出可播报的失败原因。
 
 控制面内部可以细分 `validating`、`starting`，但不要求灵矽理解。
 
@@ -180,34 +183,64 @@ flowchart LR
 
 `app_id` 可选；不传时按 `(device_id, agent_id, session_id)` 解析当前应用。
 
-输出是灵矽友好的操作摘要，不是整份 YAML：
+输出是 artifact 中的 OpenAPI 文档本身，不做操作摘要，也不改写 `paths`、参数或 schema。下面是截取后的示例：
 
 ```json
 {
-  "app_id": "app_01J...",
-  "title": "计时器",
-  "operations": [
-    {
-      "operationId": "startTimer",
-      "method": "POST",
-      "path": "/api/timer/start",
-      "summary": "开始计时",
-      "params": [
-        {
-          "name": "durationSec",
-          "type": "integer",
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Timer",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/timer/start": {
+      "post": {
+        "operationId": "startTimer",
+        "summary": "开始计时",
+        "requestBody": {
           "required": false,
-          "description": "计时时长，单位秒"
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "durationSec": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "计时已开始",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status", "message"],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": ["running"]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
-      ],
-      "response": {
-        "message": "string",
-        "status": "string"
       }
     }
-  ]
+  }
 }
 ```
+
+`structuredContent` 直接放这份 OpenAPI 文档；`content` 只给一句可播报的说明（例如“当前应用有 2 个操作”）。`app_id` 由调用参数或当前绑定确定，不写进 OpenAPI 文档。
 
 #### `send_request`
 
@@ -216,13 +249,25 @@ flowchart LR
 ```json
 {
   "operationId": "startTimer",
-  "params": {
+  "requestBody": {
     "durationSec": 60
   }
 }
 ```
 
-`app_id` 可选；不传时使用当前绑定应用。**不接受 URL、method、path 或任意 header。**
+`parameters` 用于 path/query/header/cookie 参数，按 OpenAPI 中的参数名传入；`requestBody` 原样作为 JSON body。`app_id` 可选；不传时使用当前绑定应用。**不接受 URL、method、path 或任意 header。**
+
+带 path/query 参数时，参数名沿用 OpenAPI：
+
+```json
+{
+  "operationId": "getItem",
+  "parameters": {
+    "id": "42",
+    "verbose": true
+  }
+}
+```
 
 输出：
 
@@ -244,7 +289,7 @@ flowchart LR
   "ok": false,
   "status": 400,
   "error": {
-    "code": "INVALID_PARAMS",
+    "code": "INVALID_PARAMETERS",
     "message": "缺少参数 durationSec"
   },
   "message": "参数不对，需要提供一个时长"
@@ -253,14 +298,33 @@ flowchart LR
 
 ### 5.4 调用规则
 
-- `send_request` 只接受 `operationId` 和参数；控制面从 OpenAPI 解析出真正的 method、path 和参数位置。
-- 参数按 OpenAPI schema 校验；未知字段拒绝，避免误调用。
+- `send_request` 只接受 `operationId`、`parameters` 和 `requestBody`；控制面从 OpenAPI 解析出真正的 method、path 和参数位置。
+- `parameters` 和 `requestBody` 按 OpenAPI schema 校验；未知字段拒绝，避免误调用。
 - 默认不做非幂等操作的自动重试。`startTimer` 这类操作重试可能产生副作用，由灵矽决定是否再次调用。
 - 每个 device/session 做限流；`send_request` 不允许跨应用访问。
 - 当前没有 `ready` 应用时，`get_openapi` 和 `send_request` 返回 `NO_APP`；灵矽应提示用户先创建应用。
 - 工具描述保持稳定、清晰；灵矽的 LLM 依赖这些描述选择工具。
 
-### 5.5 设备、会话与应用绑定
+### 5.5 `send_request` 的执行边界
+
+`send_request` 是一次普通的 HTTP 请求/响应，不是通用代理。工具形状保持简单，但执行语义必须明确；复杂能力由 OpenAPI 表达，不通过扩展 MCP 工具解决。MVP 明确支持：
+
+| 场景 | 约定 |
+| --- | --- |
+| 参数 | `parameters` 只放 OpenAPI 声明的 path/query/header/cookie 参数；控制面按 `in`、`style`、`explode` 序列化，未知参数拒绝 |
+| 请求体 | 只支持 `application/json`；按 `requestBody` schema 校验 |
+| 成功响应 | 2xx；有响应体时必须是 JSON，204 允许空 body；原样放入 `data`，无 body 时为 `null` |
+| 业务错误 | 4xx/5xx；返回 `ok: false`，保留 `status` 和应用的 `error` / `message` |
+| 超时 | 控制面设置单次请求超时（MVP 10 秒）；返回 `TIMEOUT`，不自动重试 |
+| 长任务 | 操作必须快速返回；耗时工作拆成“启动 + 查询”，由灵矽轮询查询操作 |
+| 流式/上传/下载 | MVP 不支持；不代理 SSE/WebSocket，不做文件上传下载 |
+| 大小限制 | 控制面限制请求体和响应体大小；超限返回 `REQUEST_TOO_LARGE` 或 `RESPONSE_TOO_LARGE` |
+
+常见错误码：`NO_APP`、`OPERATION_NOT_FOUND`、`INVALID_PARAMETERS`、`APP_ERROR`、`TIMEOUT`、`REQUEST_TOO_LARGE`、`RESPONSE_TOO_LARGE`。
+
+不支持的场景不要靠 `send_request` 硬做；需要时扩展契约，而不是放开任意 URL、method、path 或 header。
+
+### 5.6 设备、会话与应用绑定
 
 控制面的注册表至少保存三类映射：
 
@@ -282,19 +346,21 @@ task_id -> { agentapi_session_id, status, artifact_uri, app_id }
 
 ### 6.1 Artifact 结构
 
-AgentAPI 的 agent 在 workspace 中写代码，最终把以下内容放到 `output/`：
+AgentAPI 的 agent 在 workspace 中写代码，最终把以下内容放到 `outputs/`：
 
 ```text
-output/
-  index.js            # 程序本体：Node.js 单文件；Go 时替换为可执行文件
-  index.html          # UI（可选；也可以由 index.js 内联返回）
+outputs/
+  app/
+    index.js          # 程序本体：Node.js 单文件；Go 时替换为可执行文件
+    index.html        # UI（可选；也可以由 app/index.js 内联返回）
   openapi.yaml        # OpenAPI 3.1，只描述 /api/* 操作
   launch.json         # 启动契约
   report.json         # 自检报告（建议）
 ```
 
-- 程序本体必须自包含；MVP 不允许在 Render 端执行 install 或 build。
-- `launch.json` 里的相对路径以 artifact 根目录为 cwd；Render 解压后把工作目录设为该目录。
+- `app/` 放应用代码；程序本体必须自包含，MVP 不允许在 Render 端执行 install 或 build。
+- `openapi.yaml`、`launch.json`、`report.json` 放在 artifact 根目录。
+- `launch.json` 里的相对路径以 artifact 根目录为 cwd；Render 解压后把工作目录设为该目录，因此 `runtimeArgs` 使用 `app/index.js` 这样的相对路径。
 - `openapi.yaml` 必须合法；每个操作有稳定、语义化的 `operationId`；响应 schema 包含 `message` 字段。
 - `report.json` 是 agent 自检的结果，供控制面参考，但不作为唯一准入依据。
 
@@ -306,7 +372,7 @@ output/
 {
   "name": "game",
   "runtimeExecutable": "node",
-  "runtimeArgs": ["index.js", "--port", "3000"],
+  "runtimeArgs": ["app/index.js", "--port", "3000"],
   "port": 3000
 }
 ```
@@ -314,7 +380,7 @@ output/
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `name` | 是 | 应用名，用于日志、注册表和展示 |
-| `runtimeExecutable` | 是 | 可执行文件，例如 `node`、`./game`；必须命中允许列表 |
+| `runtimeExecutable` | 是 | 可执行文件，例如 `node`、`./app/game`；必须命中允许列表 |
 | `runtimeArgs` | 是 | 参数数组；如果包含 `--port`，必须与 `port` 一致 |
 | `port` | 是 | 应用监听端口，也是 Render 健康检查和路由使用的端口 |
 | `healthPath` | 否 | 建议 `/health`；默认 `/health` |
@@ -331,7 +397,7 @@ output/
 ```json
 {
   "name": "timer",
-  "runtimeExecutable": "./timer",
+  "runtimeExecutable": "./app/timer",
   "runtimeArgs": [],
   "port": 3000
 }
@@ -441,8 +507,8 @@ sequenceDiagram
   U->>L: 做到哪里了？
   L->>C: MCP get_task_status(task_id)
   C->>A: 查询 session 和事件
-  A-->>C: 进度
-  C-->>L: status, progress, message
+  A-->>C: session 事件与时间
+  C-->>L: status, elapsed_seconds, message
   L-->>U: TTS：正在写页面
 
   A-->>C: session idle，artifact 已持久化
@@ -459,8 +525,8 @@ sequenceDiagram
 
 1. 灵矽只调用 `create_app`，不直接调 AgentAPI。
 2. 控制面创建 AgentAPI session，立即返回 `task_id`，语音先给用户一个即时反馈。
-3. 用户再次询问时，灵矽调 `get_task_status`；控制面查 AgentAPI 并把进度翻译成一句话。
-4. session idle 或完成后，控制面用 Files API 下载 `output/`。
+3. 用户再次询问时，灵矽调 `get_task_status`；控制面查 AgentAPI session，返回状态、已用时间和最近一次 agent 消息。
+4. session idle 或完成后，控制面用 Files API 下载 `outputs/`。
 5. 控制面完成独立校验，把 artifact 和 `app_id` 交给 Render；Render 启动应用并回报健康状态。
 6. 控制面更新注册表，后续 `get_task_status` 返回 `ready`。
 
@@ -493,7 +559,7 @@ sequenceDiagram
 步骤说明：
 
 1. 灵矽如果不知道当前应用有哪些操作，先调 `get_openapi`。
-2. `send_request` 只传 `operationId` 和参数；控制面按 device/session 找到 app，从 OpenAPI 解析 method 和 path。
+2. `send_request` 只传 `operationId`、`parameters` 和 `requestBody`；控制面按 device/session 找到 app，从 OpenAPI 解析 method、path 和参数位置。
 3. 控制面校验参数后，通过内部通道把 HTTP 请求转发给 Render 中的应用。
 4. 应用更新状态并返回 JSON；控制面把结果包成 MCP tool result，灵矽播报 `message`。
 5. 应用的 UI 通过轮询或 SSE 同步状态，AirPlay 屏幕显示变化。
@@ -524,7 +590,7 @@ stateDiagram-v2
 ### 8.1 AgentAPI session
 
 - 控制面预配置一个编码 Agent，运行时使用 `claudecode` 或 `codex`，并安装 Open Anywhere 的 app-builder Skill。
-- `create_app` 把用户 prompt 作为 session 输入；Agent 在 workspace 中写代码、自测、打包到 `output/`。
+- `create_app` 把用户 prompt 作为 session 输入；Agent 在 workspace 中写代码、自测，把代码放到 `outputs/app/`，把契约文件放到 `outputs/`。
 - AgentAPI 默认沙箱和命令上限为 1 小时；idle 后 90–150 秒暂停。控制面应在 session idle 或完成后尽快下载产物，避免产物随 session 丢失。
 - AgentAPI 的 session id 只在控制面内部使用；灵矽只看到 `task_id`。
 
@@ -537,12 +603,14 @@ open-anywhere-app-builder/
   SKILL.md
   templates/
     node-single-file/
-      index.js
-      index.html
+      app/
+        index.js
+        index.html
       openapi.yaml
       launch.json
     go-single-file/
-      main.go
+      app/
+        main.go
       openapi.yaml
       launch.json
   scripts/
@@ -553,7 +621,7 @@ open-anywhere-app-builder/
 
 `SKILL.md` 必须写清楚：
 
-- artifact 目录结构。
+- artifact 目录结构：代码在 `app/`，`openapi.yaml`、`launch.json`、`report.json` 在根目录。
 - `launch.json` 的字段和端口规则。
 - 应用必须提供 `/` UI、`/api/*` 接口、`/openapi.json`。
 - 所有 API 响应必须是 JSON，并包含 `message`。
@@ -637,55 +705,7 @@ flowchart TB
 - macOS 没有公开的 CLI 可以程序化发起系统镜像；MVP 手动连接 AirPlay，Stage 页面保持全屏。浏览器直接打开或 HDMI 作为兜底。
 - 一个 Render Host 对应一块屏幕；多屏幕后续再扩展。
 
-## 10. 安全
-
-- **唯一入口**：控制面是灵矽访问应用的唯一入口；应用不对公网暴露。
-- **工具最小化**：`send_request` 只接受 `operationId`，不接受 URL、method、path 或任意 header；控制面只转发 OpenAPI 中登记的操作。
-- **参数校验**：按 OpenAPI schema 校验参数；未知字段拒绝；请求体大小限制。
-- **内部认证**：控制面到 Render 使用内部 token；每个 app 一个 token；token 不进入 artifact。
-- **Artifact 沙箱**：解压和启动在隔离环境；`runtimeExecutable` 使用允许列表；不经过 shell；限制 CPU、内存、启动时间和网络。
-- **不可信输入**：Agent 生成的代码和 `report.json` 都视为不可信；控制面和 Render 独立校验。
-- **密钥管理**：AgentAPI、灵矽的密钥只放在控制面；不写入 artifact、日志或工具结果。
-- **限流与审计**：按 device/session 限流；记录 `task_id`、`app_id`、`device_id`、`session_id`、工具调用和 HTTP 请求。
-
-## 11. 可观测性与失败处理
-
-### 11.1 日志与指标
-
-- 控制面：MCP 工具调用、AgentAPI session 事件、artifact 校验结果、HTTP 转发耗时。
-- Render：应用 stdout/stderr、启动耗时、健康检查、进程重启、AirPlay 状态。
-- 指标：构建成功率、构建时长、校验失败率、启动失败率、请求延迟、活跃应用数。
-- 关联 ID：`task_id`、`app_id`、`device_id`、`session_id`。
-
-### 11.2 失败模式
-
-| 失败 | 处理 | 用户听到 |
-| --- | --- | --- |
-| AgentAPI session 超时 | 任务 `failed`，可重试 | 这次构建超时了，我再试一次 |
-| artifact 校验失败 | 拒绝，重试或结束 | 生成的程序没通过检查，我重新做一版 |
-| Render 启动失败 | 任务 `failed`，保留旧应用 | 新应用没启动起来，旧的应用还在 |
-| 应用进程崩溃 | Render 重启，状态丢失 | 应用重启了，我们重新开始 |
-| 灵矽 SSE 断线 | 重连，按 header 恢复绑定 | — |
-| AirPlay 断开 | Render 重连或提示手动连接 | 投屏断开了，我重新连一下 |
-| OpenAPI 操作失败 | 返回 MCP 错误结果 | 应用返回的具体提示 |
-| 重复 `create_app` | 短时间按 device/session 去重 | 已经在做了 |
-
-## 12. 决策记录
-
-| 编号 | 决策 | 理由 |
-| --- | --- | --- |
-| AD-01 | 采用灵矽、控制面、AgentAPI、Render 四组件 | 入口、编排、构建、运行边界清晰 |
-| AD-02 | 灵矽只通过 MCP 访问控制面 | 工具面稳定，灵矽不依赖内部服务 |
-| AD-03 | 控制面实现 MCP over SSE | 匹配灵矽现有 MCP 能力 |
-| AD-04 | AgentAPI 只负责构建，异步任务 + 轮询 | 构建慢，语音对话不能阻塞 |
-| AD-05 | 应用契约使用 OpenAPI + launch.json + HTTP | 标准、可校验、Render 通用 |
-| AD-06 | MVP 使用通用 `send_request`，不动态注册每个操作 | MCP 面稳定，应用能力动态 |
-| AD-07 | Render 负责运行时、Stage 和 AirPlay | 呈现与构建分离 |
-| AD-08 | Agent Skill + 控制面/Render 双重校验 | Agent 产出不可信，必须硬约束 |
-| AD-09 | 应用状态归应用，控制面只管生命周期 | 控制面不理解业务语义 |
-| AD-10 | MVP 一个 device/session 一个 active app | 简化绑定和资源管理 |
-
-## 13. 开放问题
+## 10. 开放问题
 
 - AgentAPI 的真实构建时长、artifact 大小上限、失败率需要实测。
 - 通用 `send_request` 对灵矽 LLM 的调用准确率是否足够；如果不够，是否把 OpenAPI 动态展开成 per-operation MCP Tool。
@@ -695,7 +715,7 @@ flowchart TB
 - macOS AirPlay 自动化的可行路径（MDM、AppleScript、第三方工具）是否值得投入。
 - 计费、配额和多租户隔离。
 
-## 14. 附录：MCP 调用示例
+## 11. 附录：MCP 调用示例
 
 ```json
 {
@@ -706,7 +726,7 @@ flowchart TB
     "name": "send_request",
     "arguments": {
       "operationId": "startTimer",
-      "params": {
+      "requestBody": {
         "durationSec": 60
       }
     }
