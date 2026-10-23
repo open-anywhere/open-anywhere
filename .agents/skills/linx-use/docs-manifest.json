@@ -1,0 +1,252 @@
+{
+  "source": "https://linx.qiniu.com/docs/xrobot/",
+  "syncedAt": "2026-10-23",
+  "pages": [
+    {
+      "route": "/docs/xrobot/api",
+      "title": "平台API",
+      "file": "references/api/index.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api"
+    },
+    {
+      "route": "/docs/xrobot/api/agent",
+      "title": "智能体 API",
+      "file": "references/api/agent.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/agent"
+    },
+    {
+      "route": "/docs/xrobot/api/chat-history",
+      "title": "聊天记录 API",
+      "file": "references/api/chat-history.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/chat-history"
+    },
+    {
+      "route": "/docs/xrobot/api/device",
+      "title": "设备 API",
+      "file": "references/api/device.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/device"
+    },
+    {
+      "route": "/docs/xrobot/api/device-tool",
+      "title": "设备工具描述API",
+      "file": "references/api/device-tool.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/device-tool"
+    },
+    {
+      "route": "/docs/xrobot/api/firmware",
+      "title": "固件管理API",
+      "file": "references/api/firmware.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/firmware"
+    },
+    {
+      "route": "/docs/xrobot/api/knowledge",
+      "title": "知识库 API",
+      "file": "references/api/knowledge.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/knowledge"
+    },
+    {
+      "route": "/docs/xrobot/api/language",
+      "title": "获取语言列表 API",
+      "file": "references/api/language.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/language"
+    },
+    {
+      "route": "/docs/xrobot/api/llm",
+      "title": "大语言模型 API",
+      "file": "references/api/llm.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/llm"
+    },
+    {
+      "route": "/docs/xrobot/api/longterm-memory",
+      "title": "长期记忆 API",
+      "file": "references/api/longterm-memory.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/longterm-memory"
+    },
+    {
+      "route": "/docs/xrobot/api/others",
+      "title": "其他API文档",
+      "file": "references/api/others.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/others"
+    },
+    {
+      "route": "/docs/xrobot/api/user",
+      "title": "用户API文档",
+      "file": "references/api/user.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/user"
+    },
+    {
+      "route": "/docs/xrobot/api/voice-clone",
+      "title": "音色克隆API",
+      "file": "references/api/voice-clone.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/voice-clone"
+    },
+    {
+      "route": "/docs/xrobot/api/voiceprint-v2",
+      "title": "声纹识别 V2 API",
+      "file": "references/api/voiceprint-v2.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/api/voiceprint-v2"
+    },
+    {
+      "route": "/docs/xrobot/faq",
+      "title": "常见问题",
+      "file": "references/faq/index.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/faq"
+    },
+    {
+      "route": "/docs/xrobot/faq/faq",
+      "title": "Q & A",
+      "file": "references/faq/faq.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/faq/faq"
+    },
+    {
+      "route": "/docs/xrobot/guide",
+      "title": "最佳实践",
+      "file": "references/guide/index.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide"
+    },
+    {
+      "route": "/docs/xrobot/guide/agent-config",
+      "title": "智能体配置操作指引",
+      "file": "references/guide/agent-config.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/agent-config"
+    },
+    {
+      "route": "/docs/xrobot/guide/camera-feature",
+      "title": "拍照功能",
+      "file": "references/guide/camera-feature.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/camera-feature"
+    },
+    {
+      "route": "/docs/xrobot/guide/client-demo",
+      "title": "客户端demo",
+      "file": "references/guide/client-demo.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/client-demo"
+    },
+    {
+      "route": "/docs/xrobot/guide/knowledge-start",
+      "title": "知识库使用最佳实践指南",
+      "file": "references/guide/knowledge-start.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/knowledge-start"
+    },
+    {
+      "route": "/docs/xrobot/guide/linxclaw-best-practice",
+      "title": "灵矽平台 + LinxClaw：打造具备行动力的全能AI助理",
+      "file": "references/guide/linxclaw-best-practice.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/linxclaw-best-practice"
+    },
+    {
+      "route": "/docs/xrobot/guide/longterm-memory-start",
+      "title": "长期记忆使用最佳实践指南",
+      "file": "references/guide/longterm-memory-start.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/longterm-memory-start"
+    },
+    {
+      "route": "/docs/xrobot/guide/mcp-store",
+      "title": "MCP服务 用户接入指南",
+      "file": "references/guide/mcp-store.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/mcp-store"
+    },
+    {
+      "route": "/docs/xrobot/guide/platform-mp",
+      "title": "灵矽AI小程序+后台解决方案",
+      "file": "references/guide/platform-mp.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/platform-mp"
+    },
+    {
+      "route": "/docs/xrobot/guide/quick-start",
+      "title": "快速入门",
+      "file": "references/guide/quick-start.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/quick-start"
+    },
+    {
+      "route": "/docs/xrobot/guide/third-app",
+      "title": "第三方业务系统接入指南",
+      "file": "references/guide/third-app.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/third-app"
+    },
+    {
+      "route": "/docs/xrobot/guide/xiaozhi-firmware",
+      "title": "开源小智固件接入指南",
+      "file": "references/guide/xiaozhi-firmware.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/xiaozhi-firmware"
+    },
+    {
+      "route": "/docs/xrobot/guide/xiaozhi-hardware",
+      "title": "开源小智硬件接入指南",
+      "file": "references/guide/xiaozhi-hardware.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/xiaozhi-hardware"
+    },
+    {
+      "route": "/docs/xrobot/guide/灵矽智能硬件智能体提示指南",
+      "title": "灵矽智能硬件智能体提示指南",
+      "file": "references/guide/hardware-agent-prompt-guide.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/guide/%E7%81%B5%E7%9F%BD%E6%99%BA%E8%83%BD%E7%A1%AC%E4%BB%B6%E6%99%BA%E8%83%BD%E4%BD%93%E6%8F%90%E7%A4%BA%E6%8C%87%E5%8D%97"
+    },
+    {
+      "route": "/docs/xrobot/mcp",
+      "title": "MCP 接入",
+      "file": "references/mcp/index.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/mcp"
+    },
+    {
+      "route": "/docs/xrobot/mcp/example-music-pan",
+      "title": "基于七牛云存储服务构建一个音乐网盘MCP",
+      "file": "references/mcp/example-music-pan.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/mcp/example-music-pan"
+    },
+    {
+      "route": "/docs/xrobot/mcp/hardware-mcp",
+      "title": "灵矽AI平台与设备端MCP协议交互指南",
+      "file": "references/mcp/hardware-mcp.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/mcp/hardware-mcp"
+    },
+    {
+      "route": "/docs/xrobot/mcp/software-mcp",
+      "title": "云端MCP服务接入指南",
+      "file": "references/mcp/software-mcp.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/mcp/software-mcp"
+    },
+    {
+      "route": "/docs/xrobot/platform",
+      "title": "设备接入协议",
+      "file": "references/platform/index.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/platform"
+    },
+    {
+      "route": "/docs/xrobot/platform/MQTT",
+      "title": "MQTT 通信协议",
+      "file": "references/platform/MQTT.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/platform/MQTT"
+    },
+    {
+      "route": "/docs/xrobot/platform/OTA",
+      "title": "OTA 协议(网关)",
+      "file": "references/platform/OTA.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/platform/OTA"
+    },
+    {
+      "route": "/docs/xrobot/platform/agent-voice-switch",
+      "title": "智能体与音色切换",
+      "file": "references/platform/agent-voice-switch.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/platform/agent-voice-switch"
+    },
+    {
+      "route": "/docs/xrobot/platform/blufi-config",
+      "title": "蓝牙配网 BluFi 协议规范",
+      "file": "references/platform/blufi-config.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/platform/blufi-config"
+    },
+    {
+      "route": "/docs/xrobot/platform/websocket",
+      "title": "WebSocket 协议",
+      "file": "references/platform/websocket.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/platform/websocket"
+    },
+    {
+      "route": "/docs/xrobot/platform/wifi-config",
+      "title": "Wi-Fi 设备配网说明",
+      "file": "references/platform/wifi-config.md",
+      "url": "https://linx.qiniu.com/docs/xrobot/platform/wifi-config"
+    }
+  ]
+}
