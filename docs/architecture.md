@@ -3,7 +3,6 @@
 > 状态：Proposal（供 PR 评审）
 > 版本：v0.1
 > 日期：2026-10-23
-> 说明：本文以四组件模型为准；issue #9 中的三平面描述作为历史讨论保留。
 
 ## 1. 摘要
 
@@ -83,17 +82,6 @@ flowchart LR
 | AgentAPI | 运行编码 Agent、在沙箱中写代码和自测、持久化 artifact | 承载应用运行时、直接面对灵矽 |
 | Render | 解压 artifact、按 `launch.json` 启动、健康检查、进程保活、接收控制面 HTTP 转发、Stage 与 AirPlay | 理解应用业务、决定应用能力 |
 | 应用 | 提供 UI 和 `/api/*` HTTP 接口、维护自己的状态 | 感知 MCP、直接面对灵矽 |
-
-### 4.2 与旧三平面的关系
-
-| 旧概念 | 新组件 | 变化 |
-| --- | --- | --- |
-| 构建面 | AgentAPI | 保留；只负责构建，不承载运行时 |
-| 控制面 / Gateway | 控制面 | 从自定义语音适配改为 MCP Server + OpenAPI 适配 |
-| 呈现面 | Render | 保留；应用变成普通 HTTP 服务，Render 负责运行和 AirPlay |
-| 语音入口 | 灵矽云 | 升级为明确的组件；所有操作通过 MCP |
-
-旧版的 `manifest` / `action` 协议由 **OpenAPI + HTTP** 取代；旧版的 Stage/AirPlay 常驻、构建与运行分离继续保留。
 
 ## 5. 契约一：灵矽与控制面（MCP）
 
@@ -312,7 +300,7 @@ output/
 
 ### 6.2 launch.json
 
-`launch.json` 的字段如下，**不使用 `command` / `args` / `params` 的旧写法**：
+`launch.json` 的字段如下：
 
 ```json
 {
