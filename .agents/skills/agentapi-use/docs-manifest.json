@@ -1,0 +1,312 @@
+{
+  "source": "https://developer-doc.qiniu.com/products/agentapi/",
+  "syncedAt": "2026-10-23",
+  "pages": [
+    {
+      "route": "/products/agentapi/product_dynamic/13626-qiniu-cloud-agent-api-is-officially-released-allowing-agent-to-accept-long-tasks",
+      "title": "AgentAPI 正式发布",
+      "file": "references/product-dynamic/official-release.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/product_dynamic/13626-qiniu-cloud-agent-api-is-officially-released-allowing-agent-to-accept-long-tasks",
+      "section": "产品动态",
+      "group": "",
+      "description": "七牛云 AgentAPI 正式发布，为企业 Agent 应用提供托管执行与管理能力。 作为通用的托管智能体框架，AgentAPI 支持开发者按需配置智能体、连接工具，开展多步骤长任务与异步工作，把更多精力放在产品体验和任务效果上。"
+    },
+    {
+      "route": "/products/agentapi/product_introduction/13584-agentapi-overview",
+      "title": "产品概述",
+      "file": "references/product-introduction/overview.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/product_introduction/13584-agentapi-overview",
+      "section": "产品简介",
+      "group": "",
+      "description": "理解 AgentAPI 的核心能力，选择 Portal 可视化使用或通过 API 集成到应用。"
+    },
+    {
+      "route": "/products/agentapi/product_introduction/13583-agentapi-concepts",
+      "title": "基本概念",
+      "file": "references/product-introduction/concepts.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/product_introduction/13583-agentapi-concepts",
+      "section": "产品简介",
+      "group": "",
+      "description": "理解 AgentAPI 的智能体、运行时、工具、环境、会话和事件等基本概念及其关系。"
+    },
+    {
+      "route": "/products/agentapi/quick_start/13585-agentapi-access",
+      "title": "接入准备",
+      "file": "references/quick-start/access.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/quick_start/13585-agentapi-access",
+      "section": "快速入门",
+      "group": "",
+      "description": "在 AgentAPI Portal 创建 API Key，选择服务区域并配置请求鉴权。"
+    },
+    {
+      "route": "/products/agentapi/quick_start/13586-agentapi-portal",
+      "title": "在 Portal 中构建",
+      "file": "references/quick-start/portal.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/quick_start/13586-agentapi-portal",
+      "section": "快速入门",
+      "group": "",
+      "description": "在 AgentAPI Portal 中配置和测试智能体，再通过 API 在应用中复用配置。"
+    },
+    {
+      "route": "/products/agentapi/quick_start/13587-agentapi-quickstart",
+      "title": "通过 API 构建",
+      "file": "references/quick-start/quickstart.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/quick_start/13587-agentapi-quickstart",
+      "section": "快速入门",
+      "group": "",
+      "description": "将 AgentAPI 集成到自有智能体产品或业务系统，通过 HTTP 或 SDK 配置智能体、运行任务并获取结果。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-agent-configuration/13589-agentapi-agent-configuration-runtime-and-models",
+      "title": "运行时和模型",
+      "file": "references/development-guidelines/agent-configuration/runtime-and-models.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-agent-configuration/13589-agentapi-agent-configuration-runtime-and-models",
+      "section": "使用指南",
+      "group": "智能体配置",
+      "description": "按任务选择 AgentAPI 的运行时、执行环境和模型，确认应用需要参与的步骤。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-agent-configuration/13590-agentapi-agent-configuration-agent",
+      "title": "创建与管理智能体",
+      "file": "references/development-guidelines/agent-configuration/agent.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-agent-configuration/13590-agentapi-agent-configuration-agent",
+      "section": "使用指南",
+      "group": "智能体配置",
+      "description": "配置 AgentAPI 智能体的模型、运行时、系统提示、工具、MCP 服务器和 Agent Skills。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-agent-configuration/13591-agentapi-agent-configuration-tools",
+      "title": "工具",
+      "file": "references/development-guidelines/agent-configuration/tools.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-agent-configuration/13591-agentapi-agent-configuration-tools",
+      "section": "使用指南",
+      "group": "智能体配置",
+      "description": "查看 AgentAPI 不同运行时提供的内置工具、MCP 工具和自定义工具能力。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-agent-configuration/13592-agentapi-agent-configuration-mcp",
+      "title": "MCP 连接器",
+      "file": "references/development-guidelines/agent-configuration/mcp.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-agent-configuration/13592-agentapi-agent-configuration-mcp",
+      "section": "使用指南",
+      "group": "智能体配置",
+      "description": "将 MCP 服务器连接到 AgentAPI 云端智能体，配置外部工具、数据源和服务访问。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-agent-configuration/13593-agentapi-agent-configuration-permissions",
+      "title": "权限策略",
+      "file": "references/development-guidelines/agent-configuration/permissions.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-agent-configuration/13593-agentapi-agent-configuration-permissions",
+      "section": "使用指南",
+      "group": "智能体配置",
+      "description": "配置 AgentAPI 工具调用的权限策略，决定哪些操作需要应用确认。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-agent-configuration/13594-agentapi-agent-configuration-skills",
+      "title": "Agent Skills",
+      "file": "references/development-guidelines/agent-configuration/skills.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-agent-configuration/13594-agentapi-agent-configuration-skills",
+      "section": "使用指南",
+      "group": "智能体配置",
+      "description": "使用基于文件系统的 Agent Skills，为云端智能体添加可复用的领域工作流和上下文。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13596-agentapi-sessions-and-tasks-session",
+      "title": "创建会话",
+      "file": "references/development-guidelines/sessions-and-tasks/session.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13596-agentapi-sessions-and-tasks-session",
+      "section": "使用指南",
+      "group": "会话与任务",
+      "description": "创建 AgentAPI 会话，固定智能体版本并配置执行环境、资源与凭证。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13597-agentapi-sessions-and-tasks-events",
+      "title": "事件和事件流",
+      "file": "references/development-guidelines/sessions-and-tasks/events.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13597-agentapi-sessions-and-tasks-events",
+      "section": "使用指南",
+      "group": "会话与任务",
+      "description": "建立 AgentAPI 会话事件消费流程，判断执行结果、恢复事件历史，并处理运行中断、工具等待与用量。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13598-agentapi-sessions-and-tasks-session-lifecycle",
+      "title": "会话操作",
+      "file": "references/development-guidelines/sessions-and-tasks/session-lifecycle.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13598-agentapi-sessions-and-tasks-session-lifecycle",
+      "section": "使用指南",
+      "group": "会话与任务",
+      "description": "读取、更新、归档和删除 AgentAPI 会话，掌握会话状态与生命周期操作。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13599-agentapi-sessions-and-tasks-outcomes",
+      "title": "定义结果",
+      "file": "references/development-guidelines/sessions-and-tasks/outcomes.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13599-agentapi-sessions-and-tasks-outcomes",
+      "section": "使用指南",
+      "group": "会话与任务",
+      "description": "为 AgentAPI 会话定义可衡量的结果和评分标准，让智能体持续评估任务产物。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13600-agentapi-sessions-and-tasks-scheduled-deployments",
+      "title": "定时部署",
+      "file": "references/development-guidelines/sessions-and-tasks/scheduled-deployments.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-sessions-and-tasks/13600-agentapi-sessions-and-tasks-scheduled-deployments",
+      "section": "使用指南",
+      "group": "会话与任务",
+      "description": "创建 AgentAPI 定时部署，按固定时间自动启动会话并执行任务。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-data-and-integrations/13602-agentapi-data-and-integrations-files",
+      "title": "附加和下载文件",
+      "file": "references/development-guidelines/data-and-integrations/files.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-data-and-integrations/13602-agentapi-data-and-integrations-files",
+      "section": "使用指南",
+      "group": "数据与集成",
+      "description": "为 AgentAPI 任务准备输入材料、补充文件、验收输出产物并清理文件对象。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-data-and-integrations/13603-agentapi-data-and-integrations-memory",
+      "title": "构建持久记忆",
+      "file": "references/development-guidelines/data-and-integrations/memory.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-data-and-integrations/13603-agentapi-data-and-integrations-memory",
+      "section": "使用指南",
+      "group": "数据与集成",
+      "description": "选择跨会话资料的保存方式，配置记忆读写范围，并核对持久化结果、并发修改和历史版本。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-data-and-integrations/13604-agentapi-data-and-integrations-github",
+      "title": "访问 GitHub",
+      "file": "references/development-guidelines/data-and-integrations/github.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-data-and-integrations/13604-agentapi-data-and-integrations-github",
+      "section": "使用指南",
+      "group": "数据与集成",
+      "description": "按代码审查、仓库修改和 Pull Request 交付任务选择 GitHub 接入方式、配置权限并验收结果。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-data-and-integrations/13605-agentapi-data-and-integrations-webhooks",
+      "title": "Webhook 通知",
+      "file": "references/development-guidelines/data-and-integrations/webhooks.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-data-and-integrations/13605-agentapi-data-and-integrations-webhooks",
+      "section": "使用指南",
+      "group": "数据与集成",
+      "description": "在 AgentAPI Portal 配置资源事件通知，验证 Webhook 签名，并可靠处理重复投递与端点恢复。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-data-and-integrations/13606-agentapi-data-and-integrations-vaults",
+      "title": "凭证管理",
+      "file": "references/development-guidelines/data-and-integrations/vaults.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-data-and-integrations/13606-agentapi-data-and-integrations-vaults",
+      "section": "使用指南",
+      "group": "数据与集成",
+      "description": "为会话配置第三方 MCP 身份，划分业务用户的授权范围，并验证凭证轮换与撤销。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-execution-environments/13608-agentapi-execution-environments-environment",
+      "title": "配置云端环境",
+      "file": "references/development-guidelines/execution-environments/environment.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-execution-environments/13608-agentapi-execution-environments-environment",
+      "section": "使用指南",
+      "group": "执行环境",
+      "description": "创建和管理 AgentAPI 云端环境，配置预装软件包、网络策略，并为会话提供独立的七牛云端沙箱。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-execution-environments/13609-agentapi-execution-environments-cloud-environments",
+      "title": "云端沙箱参考",
+      "file": "references/development-guidelines/execution-environments/cloud-environments.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-execution-environments/13609-agentapi-execution-environments-cloud-environments",
+      "section": "使用指南",
+      "group": "执行环境",
+      "description": "参考 AgentAPI 在七牛 LAS Sandbox 上使用的云端基础模板、软件包和运行环境信息。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-execution-environments/13614-agentapi-execution-environments-self-hosted",
+      "title": "自托管执行器",
+      "file": "references/development-guidelines/execution-environments/self-hosted.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-execution-environments/13614-agentapi-execution-environments-self-hosted",
+      "section": "使用指南",
+      "group": "执行环境",
+      "description": "将 AgentAPI 会话中的文件操作和命令执行交给自有基础设施，配置 worker、资源准备、隔离和运维。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/agentapi-execution-environments/13615-agentapi-execution-environments-self-hosted-security",
+      "title": "自托管安全责任",
+      "file": "references/development-guidelines/execution-environments/self-hosted-security.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/agentapi-execution-environments/13615-agentapi-execution-environments-self-hosted-security",
+      "section": "使用指南",
+      "group": "执行环境",
+      "description": "明确 AgentAPI 自托管模式的数据流、凭证权限、工作负载隔离与数据清理责任。"
+    },
+    {
+      "route": "/products/agentapi/development_guidelines/13617-agentapi-migration",
+      "title": "迁移到 AgentAPI",
+      "file": "references/development-guidelines/migration.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/development_guidelines/13617-agentapi-migration",
+      "section": "使用指南",
+      "group": "",
+      "description": "将现有的智能体循环和工具执行迁移到 AgentAPI 云端服务，了解资源映射与迁移步骤。"
+    },
+    {
+      "route": "/products/agentapi/api/13618-agentapi-api-conventions",
+      "title": "API 通用约定",
+      "file": "references/api/api-conventions.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/api/13618-agentapi-api-conventions",
+      "section": "API 文档",
+      "group": "",
+      "description": "查阅 AgentAPI 公共 API 的认证、请求格式、资源范围和事件类型等通用约定。"
+    },
+    {
+      "route": "/products/agentapi/api/13619-agentapi-openapi",
+      "title": "OpenAPI 规范",
+      "file": "references/api/openapi.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/api/13619-agentapi-openapi",
+      "section": "API 文档",
+      "group": "",
+      "description": "下载完整 AgentAPI OpenAPI 规范，并查阅公共 API 接口索引。"
+    },
+    {
+      "route": "/products/agentapi/sdk/13620-agentapi-sdk-download",
+      "title": "SDK 下载",
+      "file": "references/sdk/sdk-download.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/sdk/13620-agentapi-sdk-download",
+      "section": "SDK 下载",
+      "group": "",
+      "description": "获取 AgentAPI 接入所用的 Anthropic SDK，按语言安装依赖，并查阅官方源码。"
+    },
+    {
+      "route": "/products/agentapi/glossary/13621-agentapi-glossary",
+      "title": "术语表",
+      "file": "references/glossary/glossary.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/glossary/13621-agentapi-glossary",
+      "section": "术语表",
+      "group": "",
+      "description": "查询 AgentAPI 的常用中英文术语、简短定义与详细说明。"
+    },
+    {
+      "route": "/products/agentapi/best_practices/13629-handle-operational-tasks-with-scheduled-tasks",
+      "title": "使用定时任务处理运营任务",
+      "file": "references/best-practices/handle-operational-tasks-with-scheduled-tasks.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/best_practices/13629-handle-operational-tasks-with-scheduled-tasks",
+      "section": "最佳实践",
+      "group": "",
+      "description": "电商平台每天上午需要核对前一天的订单流水与账务记录，输出差异清单，并把需人工跟进的异常推送到运营群。下面这条流程将核对规则配置到 AgentAPI 的定时部署中：先手动验证会话和产物，再开启计划；每次运行都经过结果验收、幂等处理和通知对账。"
+    },
+    {
+      "route": "/products/agentapi/best_practices/13627-code-review-assistant",
+      "title": "使用 MCP、Skills 做代码审查助手",
+      "file": "references/best-practices/code-review-assistant.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/best_practices/13627-code-review-assistant",
+      "section": "最佳实践",
+      "group": "",
+      "description": "某效能团队希望每个 Pull Request 在合并前都完成一次自动审查：读取完整仓库，检查缺陷、安全问题和团队规范，并把带文件与行号的结论直接提交到 PR。下面这条流程从 PR 的 head commit 开始，创建一次隔离的 AgentAPI 会话，运行检查并通过 GitHub MCP 提交 review。"
+    },
+    {
+      "route": "/products/agentapi/best_practices/13628-sre-intelligent-o-m",
+      "title": "使用自托管 worker 处理内网运维",
+      "file": "references/best-practices/sre-intelligent-o-m.md",
+      "url": "https://developer-doc.qiniu.com/products/agentapi/best_practices/13628-sre-intelligent-o-m",
+      "section": "最佳实践",
+      "group": "",
+      "description": "互联网公司的 SRE 团队每天处理来自生产环境的告警：先查日志，再比对发布和配置变更，最后检索内部运行手册。把这条处置链路接入 AgentAPI 后，智能体可以在同一个会话中汇总证据、生成处置建议，并在重启服务等高风险动作前停下来等待人工决定。"
+    }
+  ]
+}
