@@ -19,10 +19,10 @@ import (
 )
 
 func TestStartupRejectsInvalidConfiguration(t *testing.T) {
-	if err := run("127.0.0.1:0", "", 0); err == nil || !strings.Contains(err.Error(), "scan-interval") {
+	if err := run("127.0.0.1:0", "", 0, 0); err == nil || !strings.Contains(err.Error(), "scan-interval") {
 		t.Fatalf("invalid scan interval accepted: %v", err)
 	}
-	if err := run("127.0.0.1:0", "casting-interface-does-not-exist", time.Second); err == nil {
+	if err := run("127.0.0.1:0", "casting-interface-does-not-exist", time.Second, 0); err == nil {
 		t.Fatal("invalid interface accepted")
 	}
 }
@@ -47,7 +47,7 @@ func TestStartupUsesLocalInterfaceAndReportsListenFailure(t *testing.T) {
 			}
 			// An invalid listen address fails before discovery starts. Only inspect
 			// loopback interface metadata; no multicast or LAN traffic is sent.
-			err := run("invalid listen address", iface.Name, time.Second)
+			err := run("invalid listen address", iface.Name, time.Second, 0)
 			var opErr *net.OpError
 			if !errors.As(err, &opErr) {
 				t.Fatalf("want listen failure after interface selection, got %v", err)
@@ -59,7 +59,7 @@ func TestStartupUsesLocalInterfaceAndReportsListenFailure(t *testing.T) {
 }
 func TestStartupDefaultInterfaceReportsListenFailure(t *testing.T) {
 	var opErr *net.OpError
-	if err := run("invalid listen address", "", time.Second); !errors.As(err, &opErr) {
+	if err := run("invalid listen address", "", time.Second, 0); !errors.As(err, &opErr) {
 		t.Fatalf("want listen error, got %v", err)
 	}
 }
@@ -75,24 +75,26 @@ func TestCommandFlagsAndExitCodes(t *testing.T) {
 		wantCode            int
 		wantAddr, wantIface string
 		wantInterval        time.Duration
+		wantGrace           time.Duration
 		startErr            error
 		called              bool
 	}{
-		{name: "defaults", wantAddr: ":8080", wantInterval: 30 * time.Second, called: true},
-		{name: "custom", args: []string{"-addr", "127.0.0.1:0", "-interface", "test-nic", "-scan-interval", "2s"}, wantAddr: "127.0.0.1:0", wantIface: "test-nic", wantInterval: 2 * time.Second, called: true},
+		{name: "defaults", wantAddr: ":8080", wantInterval: 30 * time.Second, wantGrace: 30 * time.Second, called: true},
+		{name: "custom", args: []string{"-addr", "127.0.0.1:0", "-interface", "test-nic", "-scan-interval", "2s", "-unreachable-grace", "5s"}, wantAddr: "127.0.0.1:0", wantIface: "test-nic", wantInterval: 2 * time.Second, wantGrace: 5 * time.Second, called: true},
 		{name: "help", args: []string{"-h"}},
 		{name: "invalid flag", args: []string{"-unknown"}, wantCode: 2},
 		{name: "invalid duration", args: []string{"-scan-interval", "bad"}, wantCode: 2},
+		{name: "invalid grace", args: []string{"-unreachable-grace", "bad"}, wantCode: 2},
 		{name: "extra argument", args: []string{"extra"}, wantCode: 2},
-		{name: "startup failure", wantAddr: ":8080", wantInterval: 30 * time.Second, wantCode: 1, startErr: errors.New("listen failed"), called: true},
+		{name: "startup failure", wantAddr: ":8080", wantInterval: 30 * time.Second, wantGrace: 30 * time.Second, wantCode: 1, startErr: errors.New("listen failed"), called: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 			called := false
-			code := command(tt.args, &out, func(addr, iface string, interval time.Duration) error {
+			code := command(tt.args, &out, func(addr, iface string, interval, grace time.Duration) error {
 				called = true
-				if addr != tt.wantAddr || iface != tt.wantIface || interval != tt.wantInterval {
-					t.Fatalf("unexpected settings: %q %q %v", addr, iface, interval)
+				if addr != tt.wantAddr || iface != tt.wantIface || interval != tt.wantInterval || grace != tt.wantGrace {
+					t.Fatalf("unexpected settings: %q %q %v %v", addr, iface, interval, grace)
 				}
 				return tt.startErr
 			})
@@ -126,7 +128,7 @@ func TestRuntimeInterfaceErrors(t *testing.T) {
 			deps := systemRuntime()
 			deps.interfaceByName = func(string) (*net.Interface, error) { return &net.Interface{}, tt.lookupErr }
 			deps.interfaceAddrs = func(*net.Interface) ([]net.Addr, error) { return tt.addresses, tt.addrsErr }
-			err := runWith(context.Background(), "127.0.0.1:0", "test-nic", time.Second, deps)
+			err := runWith(context.Background(), "127.0.0.1:0", "test-nic", time.Second, 0, deps)
 			if tt.want != nil {
 				if !errors.Is(err, tt.want) {
 					t.Fatal(err)
@@ -170,7 +172,7 @@ func TestRuntimePublishesPartialDiscoveryResults(t *testing.T) {
 		return listener, err
 	}
 	done := make(chan error, 1)
-	go func() { done <- runWith(ctx, "127.0.0.1:0", "test-nic", time.Hour, deps) }()
+	go func() { done <- runWith(ctx, "127.0.0.1:0", "test-nic", time.Hour, 0, deps) }()
 	var addr net.Addr
 	select {
 	case addr = <-listening:
@@ -244,7 +246,7 @@ func TestRuntimeDiscardsDiscoveryResultsAfterCancellation(t *testing.T) {
 		}
 	}
 	done := make(chan error, 1)
-	go func() { done <- runWith(ctx, "127.0.0.1:0", "", time.Hour, deps) }()
+	go func() { done <- runWith(ctx, "127.0.0.1:0", "", time.Hour, 0, deps) }()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
