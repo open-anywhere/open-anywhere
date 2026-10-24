@@ -72,7 +72,18 @@ type Session struct {
 	CreatedAt  time.Time     `json:"created_at"`
 }
 
-// SessionError describes an error reported while starting a session.
+// Codes of SessionError. device_control_failed means the target refused a
+// start; device_unreachable means a session was failed after the target stopped
+// answering; stop_unconfirmed means playback was never confirmed stopped but
+// the target's reservation was released anyway.
+const (
+	ErrorDeviceControlFailed = "device_control_failed"
+	ErrorDeviceUnreachable   = "device_unreachable"
+	ErrorStopUnconfirmed     = "stop_unconfirmed"
+)
+
+// SessionError describes an error reported while starting or stopping a
+// session.
 type SessionError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

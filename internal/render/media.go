@@ -89,24 +89,76 @@ type media struct {
 	workers         sync.WaitGroup
 	failure         chan error
 	log             *os.File
+	stopProc        func(*exec.Cmd, <-chan struct{}) error
+}
+
+// browserHooks isolates the Chrome/DevTools machinery so tests can exercise the
+// ffmpeg pipeline without launching a real browser.
+type browserHooks struct {
+	start   func(context.Context, Config) (context.Context, context.CancelFunc, context.CancelFunc)
+	run     func(context.Context, ...chromedp.Action) error
+	capture func(context.Context) ([]byte, error)
+}
+
+func (c Config) browserHooks() browserHooks {
+	h := browserHooks{
+		start: func(ctx context.Context, cfg Config) (context.Context, context.CancelFunc, context.CancelFunc) {
+			options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+			options = append(options, chromedp.WindowSize(cfg.Width, cfg.Height), chromedp.Flag("hide-scrollbars", true), chromedp.Flag("disable-background-timer-throttling", true))
+			if cfg.Chrome != "" {
+				options = append(options, chromedp.ExecPath(cfg.Chrome))
+			}
+			alloc, allocCancel := chromedp.NewExecAllocator(ctx, options...)
+			browser, browserCancel := chromedp.NewContext(alloc)
+			return browser, browserCancel, allocCancel
+		},
+		run:     chromedp.Run,
+		capture: captureFrame,
+	}
+	if c.browser.start != nil {
+		h.start = c.browser.start
+	}
+	if c.browser.run != nil {
+		h.run = c.browser.run
+	}
+	if c.browser.capture != nil {
+		h.capture = c.browser.capture
+	}
+	return h
+}
+
+// captureFrame grabs one JPEG screenshot from the page attached to ctx.
+func captureFrame(ctx context.Context) ([]byte, error) {
+	var frame []byte
+	err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+		return captureScreenshot(c, &frame)
+	}))
+	return frame, err
+}
+
+// captureScreenshot performs the DevTools Page.captureScreenshot call used by
+// captureFrame.
+func captureScreenshot(ctx context.Context, frame *[]byte) error {
+	var err error
+	*frame, err = page.CaptureScreenshot().WithFormat(page.CaptureScreenshotFormatJpeg).WithQuality(85).Do(ctx)
+	return err
 }
 
 func startMedia(life, startup context.Context, cfg Config, url, logPath string, h *hub) (*media, error) {
+	hooks := cfg.browserHooks()
 	ctx, cancel := context.WithCancel(life)
-	m := &media{hub: h, cancel: cancel, processDone: make(chan struct{}), failure: make(chan error, 1)}
-	options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	options = append(options, chromedp.WindowSize(cfg.Width, cfg.Height), chromedp.Flag("hide-scrollbars", true), chromedp.Flag("disable-background-timer-throttling", true))
-	if cfg.Chrome != "" {
-		options = append(options, chromedp.ExecPath(cfg.Chrome))
+	stopProc := cfg.stopGroup
+	if stopProc == nil {
+		stopProc = stopProcess
 	}
-	alloc, allocCancel := chromedp.NewExecAllocator(ctx, options...)
+	m := &media{hub: h, cancel: cancel, processDone: make(chan struct{}), failure: make(chan error, 1), stopProc: stopProc}
+	browser, browserCancel, allocCancel := hooks.start(ctx, cfg)
 	m.allocatorCancel = allocCancel
-	browser, browserCancel := chromedp.NewContext(alloc)
 	m.browserCancel = browserCancel
 	// Cancel startup operations if the independent startup deadline expires.
 	stopDeadline := context.AfterFunc(startup, cancel)
 	defer stopDeadline()
-	if err := chromedp.Run(browser, chromedp.EmulateViewport(int64(cfg.Width), int64(cfg.Height)), chromedp.Navigate(url), chromedp.WaitReady("body", chromedp.ByQuery)); err != nil {
+	if err := hooks.run(browser, chromedp.EmulateViewport(int64(cfg.Width), int64(cfg.Height)), chromedp.Navigate(url), chromedp.WaitReady("body", chromedp.ByQuery)); err != nil {
 		return m, fmt.Errorf("load browser page: %w", err)
 	}
 	var err error
@@ -138,12 +190,7 @@ func startMedia(life, startup context.Context, cfg Config, url, logPath string, 
 		ticker := time.NewTicker(time.Second / time.Duration(cfg.FPS))
 		defer ticker.Stop()
 		for {
-			var frame []byte
-			err := chromedp.Run(browser, chromedp.ActionFunc(func(c context.Context) error {
-				var e error
-				frame, e = page.CaptureScreenshot().WithFormat(page.CaptureScreenshotFormatJpeg).WithQuality(85).Do(c)
-				return e
-			}))
+			frame, err := hooks.capture(browser)
 			if err != nil {
 				m.fail(fmt.Errorf("browser capture: %w", err))
 				return
@@ -205,7 +252,11 @@ func (m *media) fail(err error) {
 func (m *media) close() error {
 	m.hub.close()
 	m.cancel()
-	err := stopProcess(m.cmd, m.processDone)
+	stop := m.stopProc
+	if stop == nil {
+		stop = stopProcess
+	}
+	err := stop(m.cmd, m.processDone)
 	if m.browserCancel != nil {
 		m.browserCancel()
 	}

@@ -19,17 +19,17 @@ type createAppInput struct {
 }
 
 type appIDInput struct {
-	AppID string `json:"app_id" jsonschema:"create-app 返回的应用 ID，仅当前 Linx 会话可访问"`
+	AppID string `json:"app_id" jsonschema:"create-app 返回的正在创建中应用 ID"`
 }
 
 type startAppInput struct {
-	AppID    string `json:"app_id" jsonschema:"create-app 返回的应用 ID，仅当前 Linx 会话可访问"`
+	AppID    string `json:"app_id" jsonschema:"create-app 返回的正在创建中应用 ID"`
 	ScreenID string `json:"screen_id" jsonschema:"get-screens 返回的屏幕 ID"`
-	Force    bool   `json:"force,omitempty" jsonschema:"默认 false。为 true 时强制投屏：先停止目标屏幕上正在展示的应用，再启动本应用"`
+	Force    bool   `json:"force,omitempty" jsonschema:"默认 false。为 true 时强制投屏：先停止目标屏幕上通过本工具启动的应用，再启动本应用；其他来源的投屏不能被强制停止"`
 }
 
 type sendRequestInput struct {
-	AppID       string         `json:"app_id" jsonschema:"create-app 返回的应用 ID，仅当前 Linx 会话可访问"`
+	AppID       string         `json:"app_id" jsonschema:"create-app 返回的应用 ID"`
 	OperationID string         `json:"operation_id" jsonschema:"get-app-operations 返回的 operation_id"`
 	Parameters  map[string]any `json:"parameters,omitempty" jsonschema:"路径参数和查询参数，值只支持字符串、数字或布尔值；复杂结构请放进 body"`
 	Body        any            `json:"body,omitempty" jsonschema:"可选 JSON 请求体，结构由 get-app-operations 的 request_body 描述"`
@@ -46,7 +46,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "get-screens",
 		Title:       "查询可用屏幕",
-		Description: "列出当前可用的屏幕以及每块屏幕正在展示的应用。用户询问有哪些屏幕、投到哪块屏幕，或调用 start-app 前使用。available 表示当前能投送画面，不代表空闲；current_app 为 null 才表示空闲。",
+		Description: "列出当前的屏幕以及每块屏幕正在展示的应用。用户询问有哪些屏幕、投到哪块屏幕，或调用 start-app 前使用。status 表示这块屏幕现在能做什么：free 可以直接启动；showing_app 被你的应用占用，换应用要先征得用户同意；external 被其他来源占用，不能接管，建议换一块屏幕；unavailable 当前不能显示应用。current_app 非 null 表示占用它的是你的哪个应用。",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, _ emptyInput) (*sdk.CallToolResult, screensOutput, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -61,7 +61,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "create-app",
 		Title:       "创建应用",
-		Description: "根据用户已确认的需求创建应用，并异步启动构建。prompt 必须是整理后的需求，包含页面、交互和规则，不要把原始语音转写直接传入。多人游戏请在 player_names 中传入用户已确认的初始玩家姓名，保留顺序；未知姓名不要猜测，名单不完整且需要预置全部玩家时先询问。名单只定义初始玩家，不代表已准备好。立即返回 app_id 和 building；之后用 get-app-status 查询进度，构建完成会收到 notifications/app_status。同一 Linx 会话已有构建中的应用时返回原 app_id，不会重复创建，也不会覆盖原构建的 prompt 或 player_names。",
+		Description: "根据用户已确认的需求创建应用，并异步启动构建。prompt 必须是整理后的需求，包含页面、交互和规则，不要把原始语音转写直接传入。多人游戏请在 player_names 中传入用户已确认的初始玩家姓名，保留顺序；未知姓名不要猜测，名单不完整且需要预置全部玩家时先询问。名单只定义初始玩家，不代表已准备好。立即返回 app_id 和 building；之后用 get-app-status 查询进度，构建完成会收到 notifications/app_status。已有构建中的应用时返回原 app_id，不会重复创建，也不会覆盖原构建的 prompt 或 player_names。",
 		Annotations: mutatingAnnotations(false, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input createAppInput) (*sdk.CallToolResult, service.CreateResult, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -106,7 +106,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "start-app",
 		Title:       "在屏幕上启动应用",
-		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）启动到指定屏幕，历史应用也可以直接启动，等待应用健康检查和投屏都就绪后返回 running。screen_id 必须来自 get-screens。一块屏幕同时只能展示一个应用；默认被其他应用占用返回 TARGET_BUSY。仅当用户明确要求替换或抢占屏幕时才传 force=true：它会先停止该屏幕上正在展示的应用（返回里的 replaced_app_id 是被停止的应用），再启动本应用；停不掉时返回错误，不会覆盖。已在其他屏幕运行返回 APP_ALREADY_RUNNING。启动可能需要几十秒；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。",
+		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）启动到指定屏幕，历史应用也可以直接启动，等待应用就绪后返回 running。screen_id 必须来自 get-screens；status 为 external 或 unavailable 的屏幕不要选，showing_app 时只有用户明确同意替换才能传 force=true。一块屏幕同时只能展示一个应用；默认被其他应用占用返回 TARGET_BUSY。仅当用户明确要求替换或抢占屏幕时才传 force=true：它会先停止该屏幕上通过本工具启动的应用，再启动本应用；停不掉时返回错误，不会覆盖；其他来源占用的屏幕不能被 force 接管。已在其他屏幕运行返回 APP_ALREADY_RUNNING。启动需要一些时间；失败时应用进入 error，并返回 error.stage=starting 的结构化原因，构建成功的应用可以再次 start-app 重试。上次启动还在收尾时返回 CLEANUP_PENDING，稍后再试，不要重新创建应用。",
 		Annotations: mutatingAnnotations(false, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input startAppInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -121,7 +121,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "stop-app",
 		Title:       "停止应用",
-		Description: "停止运行中的应用，先断开投屏再停止应用进程，释放屏幕后返回 idle。已处于 idle 时幂等返回；应用仍在 building 时返回 APP_BUILDING；应用已处于 error 时幂等返回错误状态。停止失败返回 STOP_FAILED，不会假装已释放屏幕。",
+		Description: "停止运行中的应用并释放屏幕，返回 idle。已处于 idle 时幂等返回；应用仍在 building 时返回 APP_BUILDING；应用已处于 error 时幂等返回错误状态，若它是构建成功但启动失败的应用，会先清理上次启动遗留的内容并回到 idle。清理未完成返回 CLEANUP_PENDING，稍后再试。停止失败返回 STOP_FAILED，不会假装已释放屏幕。",
 		Annotations: mutatingAnnotations(true, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input appIDInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)

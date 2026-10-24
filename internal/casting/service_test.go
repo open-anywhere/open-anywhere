@@ -15,11 +15,16 @@ type fakeAdapter struct {
 	startErr, statusErr, stopErr error
 	state                        api.SessionState
 	starts, stops                atomic.Int32
+	statuses                     atomic.Int32
+	lastDevice                   atomic.Pointer[Device]
 	entered                      chan struct{}
 	resume                       chan struct{}
 }
 
-func (a *fakeAdapter) Start(ctx context.Context, _ Device, _ api.StreamSource) error {
+func (a *fakeAdapter) record(d Device) { a.lastDevice.Store(&d) }
+
+func (a *fakeAdapter) Start(ctx context.Context, d Device, _ api.StreamSource) error {
+	a.record(d)
 	a.starts.Add(1)
 	if a.entered != nil {
 		close(a.entered)
@@ -31,10 +36,16 @@ func (a *fakeAdapter) Start(ctx context.Context, _ Device, _ api.StreamSource) e
 	}
 	return a.startErr
 }
-func (a *fakeAdapter) Status(context.Context, Device) (api.SessionState, error) {
+func (a *fakeAdapter) Status(_ context.Context, d Device) (api.SessionState, error) {
+	a.record(d)
+	a.statuses.Add(1)
 	return a.state, a.statusErr
 }
-func (a *fakeAdapter) Stop(context.Context, Device) error { a.stops.Add(1); return a.stopErr }
+func (a *fakeAdapter) Stop(_ context.Context, d Device) error {
+	a.record(d)
+	a.stops.Add(1)
+	return a.stopErr
+}
 func testDevice() Device {
 	return Device{Target: api.Target{ID: "tv", Name: "Test TV", State: api.TargetOnline, Endpoints: []api.Endpoint{{ID: "dlna-renderer", Protocol: "dlna", Capabilities: api.Capabilities{Formats: []string{"mpegts"}, VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"}, Streaming: true}}}}, ControlURL: "http://device.invalid/control"}
 }
@@ -42,9 +53,17 @@ func testRequest() api.CreateSessionRequest {
 	return api.CreateSessionRequest{TargetID: "tv", EndpointID: "dlna-renderer", Source: api.StreamSource{Type: "stream", URL: "http://media.invalid/live.ts", Format: "mpegts", VideoCodec: "h264", AudioCodec: "aac"}}
 }
 func setup(a *fakeAdapter) (*Service, *Registry) {
+	return setupWithConfig(a, Config{})
+}
+
+func setupWithConfig(a *fakeAdapter, cfg Config) (*Service, *Registry) {
 	r := NewRegistry()
 	r.Upsert(testDevice())
-	return NewService(r, map[string]Adapter{"dlna": a}), r
+	return NewService(r, map[string]Adapter{"dlna": a}, cfg), r
+}
+
+func quietConfig(grace time.Duration, now func() time.Time) Config {
+	return Config{UnreachableGrace: grace, Now: now, Logf: func(string, ...any) {}}
 }
 
 func TestSessionLifecycle(t *testing.T) {
@@ -432,4 +451,334 @@ func TestTargetReportsFailedCleanupReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTargetSession(t, s, "")
+}
+
+func testClock() (func() time.Time, func(time.Duration)) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	return func() time.Time { return now }, func(d time.Duration) { now = now.Add(d) }
+}
+
+func TestPlayingSessionGetsDoubledGrace(t *testing.T) {
+	now, advance := testClock()
+	a := &fakeAdapter{state: api.SessionPlaying}
+	s, _ := setupWithConfig(a, quietConfig(10*time.Second, now))
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil || session.State != api.SessionPlaying {
+		t.Fatalf("%+v %v", session, err)
+	}
+	a.statusErr = errors.New("unreachable")
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("first failure changed the session: %v", err)
+	}
+	advance(19 * time.Second)
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("released before the doubled grace: %v", err)
+	}
+	assertTargetSession(t, s, session.ID)
+	advance(time.Second)
+	failed, err := s.GetSession(context.Background(), session.ID)
+	if err != nil || failed.State != api.SessionFailed || failed.Error == nil || failed.Error.Code != api.ErrorDeviceUnreachable {
+		t.Fatalf("%+v %v", failed, err)
+	}
+	assertTargetSession(t, s, "")
+	a.statusErr = nil
+	if _, err := s.CreateSession(context.Background(), testRequest()); err != nil {
+		t.Fatalf("released target still busy: %v", err)
+	}
+}
+
+func TestStartingSessionUsesBaseGrace(t *testing.T) {
+	now, advance := testClock()
+	a := &fakeAdapter{state: api.SessionStarting}
+	s, _ := setupWithConfig(a, quietConfig(10*time.Second, now))
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil || session.State != api.SessionStarting {
+		t.Fatalf("%+v %v", session, err)
+	}
+	a.statusErr = errors.New("unreachable")
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("first failure changed the session: %v", err)
+	}
+	advance(9 * time.Second)
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("released before the grace: %v", err)
+	}
+	advance(time.Second)
+	failed, err := s.GetSession(context.Background(), session.ID)
+	if err != nil || failed.State != api.SessionFailed {
+		t.Fatalf("%+v %v", failed, err)
+	}
+	assertTargetSession(t, s, "")
+}
+
+func TestFailureGapStartsNewStreak(t *testing.T) {
+	now, advance := testClock()
+	a := &fakeAdapter{state: api.SessionStarting}
+	s, _ := setupWithConfig(a, quietConfig(10*time.Second, now))
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.statusErr = errors.New("unreachable")
+	advance(time.Second)
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatal(err)
+	}
+	// A gap longer than 2x grace means the old failure is not evidence.
+	advance(25 * time.Second)
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("gap did not reset the streak: %v", err)
+	}
+	advance(9 * time.Second)
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("new streak expired early: %v", err)
+	}
+	advance(time.Second)
+	failed, err := s.GetSession(context.Background(), session.ID)
+	if err != nil || failed.State != api.SessionFailed {
+		t.Fatalf("%+v %v", failed, err)
+	}
+}
+
+func TestRecoveryResetsFailureStreak(t *testing.T) {
+	now, advance := testClock()
+	a := &fakeAdapter{state: api.SessionPaused}
+	s, _ := setupWithConfig(a, quietConfig(10*time.Second, now))
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.statusErr = errors.New("unreachable")
+	advance(time.Second)
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatal(err)
+	}
+	advance(4 * time.Second)
+	a.statusErr = nil
+	if got, err := s.GetSession(context.Background(), session.ID); err != nil || got.State != api.SessionPaused {
+		t.Fatalf("%+v %v", got, err)
+	}
+	a.statusErr = errors.New("unreachable")
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatal(err)
+	}
+	advance(9 * time.Second)
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("failure before recovery counted: %v", err)
+	}
+	advance(time.Second)
+	failed, err := s.GetSession(context.Background(), session.ID)
+	if err != nil || failed.State != api.SessionFailed {
+		t.Fatalf("%+v %v", failed, err)
+	}
+}
+
+func TestStopUnconfirmedReleasesReservation(t *testing.T) {
+	now, advance := testClock()
+	a := &fakeAdapter{state: api.SessionPlaying}
+	s, _ := setupWithConfig(a, quietConfig(10*time.Second, now))
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.stopErr = errors.New("unreachable")
+	if _, err := s.StopSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("first failed stop changed the session: %v", err)
+	}
+	advance(19 * time.Second)
+	if _, err := s.StopSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("released before the doubled grace: %v", err)
+	}
+	assertTargetSession(t, s, session.ID)
+	advance(time.Second)
+	stopped, err := s.StopSession(context.Background(), session.ID)
+	if err != nil || stopped.State != api.SessionStopped || stopped.Error == nil || stopped.Error.Code != api.ErrorStopUnconfirmed {
+		t.Fatalf("%+v %v", stopped, err)
+	}
+	assertTargetSession(t, s, "")
+	// The idempotent stop still reports the unconfirmed result.
+	again, err := s.StopSession(context.Background(), session.ID)
+	if err != nil || again.Error == nil {
+		t.Fatalf("%+v %v", again, err)
+	}
+	a.stopErr = nil
+	if _, err := s.CreateSession(context.Background(), testRequest()); err != nil {
+		t.Fatalf("released target still busy: %v", err)
+	}
+}
+
+func TestSweepRefreshesUnqueriedSession(t *testing.T) {
+	now, advance := testClock()
+	a := &fakeAdapter{state: api.SessionPlaying}
+	s, _ := setupWithConfig(a, quietConfig(10*time.Second, now))
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.statusErr = errors.New("unreachable")
+	s.Sweep(context.Background())
+	assertTargetSession(t, s, session.ID)
+	advance(20 * time.Second)
+	s.Sweep(context.Background())
+	got, err := s.GetSession(context.Background(), session.ID)
+	if err != nil || got.State != api.SessionFailed || got.Error == nil || got.Error.Code != api.ErrorDeviceUnreachable {
+		t.Fatalf("%+v %v", got, err)
+	}
+	assertTargetSession(t, s, "")
+}
+
+func TestSweepReleasesWhenTargetReportsStopped(t *testing.T) {
+	a := &fakeAdapter{state: api.SessionStarting}
+	s, _ := setup(a)
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state = api.SessionStopped
+	s.Sweep(context.Background())
+	got, err := s.GetSession(context.Background(), session.ID)
+	if err != nil || got.State != api.SessionStopped {
+		t.Fatalf("%+v %v", got, err)
+	}
+	assertTargetSession(t, s, "")
+}
+
+func TestSweepRetriesFailedCleanup(t *testing.T) {
+	t.Run("releases on success", func(t *testing.T) {
+		now, advance := testClock()
+		a := &fakeAdapter{startErr: errors.New("Play failed"), stopErr: errors.New("Stop failed")}
+		s, _ := setupWithConfig(a, quietConfig(10*time.Second, now))
+		failed, _ := s.CreateSession(context.Background(), testRequest())
+		assertTargetSession(t, s, failed.ID)
+		advance(9 * time.Second)
+		s.Sweep(context.Background())
+		assertTargetSession(t, s, failed.ID)
+		a.stopErr = nil
+		advance(time.Second)
+		s.Sweep(context.Background())
+		assertTargetSession(t, s, "")
+		got, err := s.GetSession(context.Background(), failed.ID)
+		if err != nil || got.State != api.SessionStopped || got.Error != nil {
+			t.Fatalf("%+v %v", got, err)
+		}
+	})
+	t.Run("releases unconfirmed after grace", func(t *testing.T) {
+		now, advance := testClock()
+		a := &fakeAdapter{startErr: errors.New("Play failed"), stopErr: errors.New("Stop failed")}
+		s, _ := setupWithConfig(a, quietConfig(10*time.Second, now))
+		failed, _ := s.CreateSession(context.Background(), testRequest())
+		assertTargetSession(t, s, failed.ID)
+		advance(10 * time.Second)
+		s.Sweep(context.Background())
+		assertTargetSession(t, s, "")
+		got, err := s.GetSession(context.Background(), failed.ID)
+		if err != nil || got.State != api.SessionStopped || got.Error == nil || got.Error.Code != api.ErrorStopUnconfirmed {
+			t.Fatalf("%+v %v", got, err)
+		}
+	})
+}
+
+func TestSweepSkipsBusySession(t *testing.T) {
+	a := &fakeAdapter{state: api.SessionPlaying, entered: make(chan struct{}), resume: make(chan struct{})}
+	s, _ := setup(a)
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.CreateSession(context.Background(), testRequest())
+		done <- err
+	}()
+	<-a.entered
+	s.Sweep(context.Background())
+	if a.statuses.Load() != 0 {
+		t.Fatal("sweep queried a session that was busy with a request")
+	}
+	close(a.resume)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSweepStopsWhenContextCanceled(t *testing.T) {
+	a := &fakeAdapter{state: api.SessionPlaying}
+	s, _ := setup(a)
+	if _, err := s.CreateSession(context.Background(), testRequest()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.Sweep(ctx)
+	if a.statuses.Load() != 1 {
+		t.Fatalf("sweep ignored cancellation: %d status calls", a.statuses.Load())
+	}
+}
+
+func TestSweepUsesLatestDeviceAddress(t *testing.T) {
+	a := &fakeAdapter{state: api.SessionPlaying}
+	s, r := setup(a)
+	if _, err := s.CreateSession(context.Background(), testRequest()); err != nil {
+		t.Fatal(err)
+	}
+	updated := testDevice()
+	updated.ControlURL = "http://new.invalid/control"
+	r.Upsert(updated)
+	s.Sweep(context.Background())
+	got := a.lastDevice.Load()
+	if got == nil || got.ControlURL != updated.ControlURL {
+		t.Fatalf("stale device used: %+v", got)
+	}
+}
+
+func TestDisabledAutomaticRelease(t *testing.T) {
+	now, advance := testClock()
+	a := &fakeAdapter{state: api.SessionPlaying}
+	s, _ := setupWithConfig(a, quietConfig(-time.Second, now))
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.statusErr = errors.New("unreachable")
+	advance(time.Hour)
+	if _, err := s.GetSession(context.Background(), session.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("automatic release disabled but session changed: %v", err)
+	}
+	assertTargetSession(t, s, session.ID)
+}
+
+func TestCanceledProbeIsNotDeviceFailure(t *testing.T) {
+	a := &fakeAdapter{state: api.SessionStarting}
+	s, _ := setup(a)
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.lookup(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if s.noteFailure(r, ctx, errors.New("shutdown")) {
+		t.Fatal("canceled probe counted as a device failure")
+	}
+	if !r.failingSince.IsZero() || r.failures != 0 {
+		t.Fatalf("canceled probe changed state: %+v", r)
+	}
+}
+
+func TestCallerCancellationDoesNotAbortProbe(t *testing.T) {
+	a := &fakeAdapter{state: api.SessionStarting}
+	s, _ := setup(a)
+	session, err := s.CreateSession(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.GetSession(ctx, session.ID); err != nil {
+		t.Fatalf("probe inherited caller cancellation: %v", err)
+	}
+	if a.statuses.Load() != 2 {
+		t.Fatalf("device not queried: %d status calls", a.statuses.Load())
+	}
 }

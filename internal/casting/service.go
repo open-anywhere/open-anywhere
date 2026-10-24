@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
+	"maps"
 	"net/url"
 	"slices"
 	"sync"
@@ -22,12 +24,32 @@ var (
 	ErrUpstream    = errors.New("device control failed")
 )
 
+const (
+	defaultUnreachableGrace = 30 * time.Second
+	defaultProbeTimeout     = 3 * time.Second
+)
+
+// Config controls how long a session may keep failing before its screen
+// reservation is released. The zero value uses the defaults; a negative
+// UnreachableGrace disables automatic release.
+type Config struct {
+	UnreachableGrace time.Duration
+	ProbeTimeout     time.Duration
+	FailureGap       time.Duration
+	Now              func() time.Time
+	Logf             func(string, ...any)
+}
+
 type record struct {
-	mu       sync.Mutex
-	session  api.Session
-	device   Device
-	adapter  Adapter
-	released bool
+	mu      sync.Mutex
+	session api.Session
+	device  Device
+	adapter Adapter
+
+	released     bool
+	failingSince time.Time
+	lastFailure  time.Time
+	failures     int
 }
 
 type Service struct {
@@ -36,14 +58,50 @@ type Service struct {
 	mu       sync.Mutex
 	sessions map[string]*record
 	active   map[string]string
+
+	grace        time.Duration
+	probeTimeout time.Duration
+	failureGap   time.Duration
+	now          func() time.Time
+	logf         func(string, ...any)
 }
 
-func NewService(registry *Registry, adapters map[string]Adapter) *Service {
-	copied := make(map[string]Adapter, len(adapters))
-	for k, v := range adapters {
-		copied[k] = v
+func NewService(registry *Registry, adapters map[string]Adapter, options ...Config) *Service {
+	var cfg Config
+	if len(options) > 0 {
+		cfg = options[0]
 	}
-	return &Service{registry: registry, adapters: copied, sessions: make(map[string]*record), active: make(map[string]string)}
+	if cfg.UnreachableGrace == 0 {
+		cfg.UnreachableGrace = defaultUnreachableGrace
+	}
+	if cfg.ProbeTimeout <= 0 {
+		cfg.ProbeTimeout = defaultProbeTimeout
+	}
+	if cfg.FailureGap <= 0 {
+		cfg.FailureGap = 2 * cfg.UnreachableGrace
+		if cfg.FailureGap <= 0 {
+			cfg.FailureGap = 2 * defaultUnreachableGrace
+		}
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.Logf == nil {
+		cfg.Logf = log.Printf
+	}
+	copied := make(map[string]Adapter, len(adapters))
+	maps.Copy(copied, adapters)
+	return &Service{
+		registry:     registry,
+		adapters:     copied,
+		sessions:     make(map[string]*record),
+		active:       make(map[string]string),
+		grace:        cfg.UnreachableGrace,
+		probeTimeout: cfg.ProbeTimeout,
+		failureGap:   cfg.FailureGap,
+		now:          cfg.Now,
+		logf:         cfg.Logf,
+	}
 }
 
 func (s *Service) ListTargets() []api.Target {
@@ -113,10 +171,14 @@ func (s *Service) CreateSession(ctx context.Context, req api.CreateSessionReques
 	defer r.mu.Unlock()
 	if err := a.Start(ctx, d, req.Source); err != nil {
 		r.session.State = api.SessionFailed
-		r.session.Error = &api.SessionError{Code: "device_control_failed", Message: err.Error()}
+		r.session.Error = &api.SessionError{Code: api.ErrorDeviceControlFailed, Message: err.Error()}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
-		if a.Stop(cleanupCtx, d) == nil {
+		if stopErr := a.Stop(cleanupCtx, d); stopErr != nil {
+			if s.noteFailure(r, context.Background(), stopErr) {
+				s.release(r)
+			}
+		} else {
 			s.release(r)
 		}
 		return r.session, fmt.Errorf("%w: %v", ErrUpstream, err)
@@ -148,6 +210,108 @@ func (s *Service) release(r *record) {
 		delete(s.active, r.session.TargetID)
 	}
 }
+
+// resolveDevice prefers the latest discovery result so a target that changed
+// address after the session was created is still reachable.
+func (s *Service) resolveDevice(r *record) Device {
+	if device, ok := s.registry.Get(r.session.TargetID); ok {
+		r.device = device
+	}
+	return r.device
+}
+
+// noteFailure records a failed device call and reports whether the session has
+// been failing for longer than its grace period. A gap between failures larger
+// than failureGap starts a new streak, so an old failure is never used as
+// evidence. A canceled probe (shutdown) is not a device failure.
+func (s *Service) noteFailure(r *record, probeCtx context.Context, err error) bool {
+	if probeCtx.Err() == context.Canceled {
+		return false
+	}
+	now := s.now()
+	if r.failingSince.IsZero() || (!r.lastFailure.IsZero() && now.Sub(r.lastFailure) > s.failureGap) {
+		r.failingSince = now
+		r.failures = 0
+	}
+	r.failures++
+	r.lastFailure = now
+	if r.failures == 1 {
+		s.logf("casting session %s target %s: device probe failed: %v", r.session.ID, r.session.TargetID, err)
+	}
+	grace := s.grace
+	if r.session.State == api.SessionPlaying {
+		// A session that was last seen playing gets more time: a short network
+		// hiccup must not tear down a stream the user is watching.
+		grace *= 2
+	}
+	if grace <= 0 {
+		return false
+	}
+	return !now.Before(r.failingSince.Add(grace))
+}
+
+func (s *Service) noteSuccess(r *record) {
+	if r.failingSince.IsZero() {
+		return
+	}
+	s.logf("casting session %s target %s: device recovered after %s", r.session.ID, r.session.TargetID, s.now().Sub(r.failingSince).Round(time.Second))
+	r.failingSince = time.Time{}
+	r.lastFailure = time.Time{}
+	r.failures = 0
+}
+
+// refreshLocked asks the device for its transport state. Repeated failures are
+// evidence that the device is gone: once they span the grace period the session
+// is failed and its reservation released, so a stale screen cannot block the
+// next application.
+func (s *Service) refreshLocked(probeCtx context.Context, r *record) (api.Session, error) {
+	state, err := r.adapter.Status(probeCtx, s.resolveDevice(r))
+	if err != nil {
+		if s.noteFailure(r, probeCtx, err) {
+			s.failLocked(r)
+			return r.session, nil
+		}
+		return r.session, fmt.Errorf("%w: %v", ErrUpstream, err)
+	}
+	s.noteSuccess(r)
+	r.session.State = state
+	if state == api.SessionStopped {
+		s.release(r)
+	}
+	return r.session, nil
+}
+
+func (s *Service) failLocked(r *record) {
+	elapsed := s.now().Sub(r.failingSince).Round(time.Second)
+	r.session.State = api.SessionFailed
+	r.session.Error = &api.SessionError{Code: api.ErrorDeviceUnreachable, Message: fmt.Sprintf("device unreachable for %s", elapsed)}
+	s.release(r)
+	s.logf("casting session %s target %s: released after %s without a device answer", r.session.ID, r.session.TargetID, elapsed)
+}
+
+// stopLocked stops playback. If the device cannot be reached for the whole
+// grace period, the reservation is released anyway so the screen is usable
+// again; the session carries stop_unconfirmed so callers can tell that the
+// stop was never acknowledged by the device.
+func (s *Service) stopLocked(probeCtx context.Context, r *record) error {
+	if err := r.adapter.Stop(probeCtx, s.resolveDevice(r)); err != nil {
+		if s.noteFailure(r, probeCtx, err) {
+			elapsed := s.now().Sub(r.failingSince).Round(time.Second)
+			r.session.State = api.SessionStopped
+			r.session.Error = &api.SessionError{Code: api.ErrorStopUnconfirmed, Message: fmt.Sprintf("device unreachable for %s; reservation released without a confirmed stop", elapsed)}
+			s.release(r)
+			s.logf("casting session %s target %s: released after %s without a confirmed stop", r.session.ID, r.session.TargetID, elapsed)
+			return nil
+		}
+		return err
+	}
+	s.noteSuccess(r)
+	r.session.State = api.SessionStopped
+	r.session.Error = nil
+	s.release(r)
+	return nil
+}
+
 func (s *Service) GetSession(ctx context.Context, id string) (api.Session, error) {
 	r, err := s.lookup(id)
 	if err != nil {
@@ -158,16 +322,11 @@ func (s *Service) GetSession(ctx context.Context, id string) (api.Session, error
 	if r.session.State == api.SessionStopped || r.session.State == api.SessionFailed {
 		return r.session, nil
 	}
-	state, err := r.adapter.Status(ctx, r.device)
-	if err != nil {
-		return r.session, fmt.Errorf("%w: %v", ErrUpstream, err)
-	}
-	r.session.State = state
-	if state == api.SessionStopped {
-		s.release(r)
-	}
-	return r.session, nil
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.probeTimeout)
+	defer cancel()
+	return s.refreshLocked(probeCtx, r)
 }
+
 func (s *Service) StopSession(ctx context.Context, id string) (api.Session, error) {
 	r, err := s.lookup(id)
 	if err != nil {
@@ -177,14 +336,59 @@ func (s *Service) StopSession(ctx context.Context, id string) (api.Session, erro
 	defer r.mu.Unlock()
 	if r.session.State == api.SessionStopped || r.released {
 		r.session.State = api.SessionStopped
-		r.session.Error = nil
+		// Keep stop_unconfirmed: it is the only record that the device never
+		// acknowledged the stop. Other errors belonged to the state being left.
+		if r.session.Error != nil && r.session.Error.Code != api.ErrorStopUnconfirmed {
+			r.session.Error = nil
+		}
 		return r.session, nil
 	}
-	if err := r.adapter.Stop(ctx, r.device); err != nil {
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.probeTimeout)
+	defer cancel()
+	if err := s.stopLocked(probeCtx, r); err != nil {
 		return r.session, fmt.Errorf("%w: %v", ErrUpstream, err)
 	}
-	r.session.State = api.SessionStopped
-	r.session.Error = nil
-	s.release(r)
 	return r.session, nil
+}
+
+// Sweep refreshes sessions nobody is querying and retries cleanup for sessions
+// whose failed start left a reservation behind. It skips a session that is busy
+// with an HTTP request and stops probing when ctx is canceled.
+func (s *Service) Sweep(ctx context.Context) {
+	s.mu.Lock()
+	records := make([]*record, 0, len(s.sessions))
+	for _, r := range s.sessions {
+		records = append(records, r)
+	}
+	s.mu.Unlock()
+	for _, r := range records {
+		if ctx.Err() != nil {
+			return
+		}
+		if !r.mu.TryLock() {
+			continue
+		}
+		s.sweepLocked(ctx, r)
+		r.mu.Unlock()
+	}
+}
+
+func (s *Service) sweepLocked(ctx context.Context, r *record) {
+	switch r.session.State {
+	case api.SessionStopped:
+		if !r.released {
+			s.release(r)
+		}
+	case api.SessionFailed:
+		if r.released {
+			return
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, s.probeTimeout)
+		defer cancel()
+		_ = s.stopLocked(probeCtx, r)
+	default:
+		probeCtx, cancel := context.WithTimeout(ctx, s.probeTimeout)
+		defer cancel()
+		_, _ = s.refreshLocked(probeCtx, r)
+	}
 }

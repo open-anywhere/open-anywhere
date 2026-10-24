@@ -232,10 +232,11 @@ type EventStream struct {
 	stream *ssestream.Stream[anthropic.BetaManagedAgentsStreamSessionEventsUnion]
 }
 
-// OpenEventStream subscribes to a session's event stream.
-func (c *Client) OpenEventStream(ctx context.Context, sessionID string) (*EventStream, error) {
+// OpenEventStream subscribes to a session's event stream. Connection and
+// status failures surface from the first Next call.
+func (c *Client) OpenEventStream(ctx context.Context, sessionID string) *EventStream {
 	stream := c.api.Beta.Sessions.Events.StreamEvents(ctx, sessionID, anthropic.BetaSessionEventStreamParams{}, option.WithHeader("Accept", "text/event-stream"))
-	return &EventStream{stream: stream}, nil
+	return &EventStream{stream: stream}
 }
 
 // Next returns the next event, or io.EOF when the connection ends.

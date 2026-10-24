@@ -1,13 +1,13 @@
 # OpenAPI 与业务响应契约
 
-`openapi.yaml` 是控制面发现和调用应用业务操作的唯一来源。`get-app-operations` 会读取它，`send-request` 按其中的 `operationId`、参数和请求体调用应用。下面的猜电影操作来自模板，仅用于说明写法；实际应用按需求替换路径、`operationId` 和 schema。
+`openapi.yaml` 用于声明应用可调用的业务操作。下面的猜电影操作来自模板，仅用于说明写法；实际应用按需求替换路径、`operationId` 和 schema。
 
 ## 文档要求
 
 - 必须是 OpenAPI 3.1 文档，`openapi` 字段以 `3.1` 开头。
 - `paths` 非空，且每个路径都以 `/api/` 开头；`/`、`/health`、`/openapi.json` 和 SSE 通道不写入 `paths`。
-- `servers` 使用相对地址，例如 `[{url: "/"}]`。不要写入构建机器的主机、端口或部署地址。
-- 每个操作必须有唯一、稳定、语义化的 `operationId`。控制面按 `operationId` 查找操作，重复会导致产物校验失败。
+- `servers` 使用相对地址，例如 `[{url: "/"}]`。不要写入具体主机或端口。
+- 每个操作必须有唯一、稳定、语义化的 `operationId`；重复会导致产物校验失败。
 - 每个操作提供调用者能理解的 `summary`、`description`、参数和请求体 schema。
 - 响应使用 JSON，并声明实际会返回的结构。
 
@@ -76,10 +76,10 @@ paths:
 ## 参数与请求体
 
 - 路径参数写在路径模板中，例如 `/api/players/{user_name}`，并在 `parameters` 中声明 `in: path` 和 `required: true`。
-- 查询参数声明 `in: query` 和 schema。控制面只会把字符串、数字、布尔值放入查询参数；复杂结构放在 JSON 请求体中。
+- 查询参数声明 `in: query` 和 schema。查询参数只支持字符串、数字、布尔值；复杂结构放在 JSON 请求体中。
 - `requestBody` 使用 `application/json`，声明 `required`、`schema` 和 `additionalProperties: false`（除非确实需要额外字段）。
 - 数组和对象可以放在请求体；不要把复杂 JSON 塞进查询参数。
-- 业务接口不要依赖认证头、Cookie 或灵矽内部标识；身份通过 `user_name` 等业务字段传入。
+- 业务接口不要依赖认证头、Cookie 或登录状态；身份通过 `user_name` 等业务字段传入。
 
 ## 玩家身份
 

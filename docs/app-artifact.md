@@ -129,43 +129,9 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 - MVP 使用内存态，不依赖外部数据库或外部网络服务；静态资源随包交付，不从 CDN 拉取脚本、字体等启动必需资源。
 - 应用只负责页面和业务服务。Chromium 渲染、音视频捕获、编码和投屏由包外的运行设施负责，不生成在应用包中。
 
-## 4. 给构建 Agent 的提示
+## 4. 构建 Agent
 
-下面这段可以作为构建任务的公共约束，与具体应用需求一起交给编码 Agent。当前 AgentAPI 构建智能体的完整系统提示词见 [open-anywhere-app-builder.txt](agent-system-prompts/open-anywhere-app-builder.txt)，实际构建以该提示词和 `app-builder` 技能为准；本节保留产物契约摘要。
-
-```text
-请在 outputs/ 中生成一个可直接运行的独立 Node.js Web 应用，并遵守以下交付契约：
-
-1. 产物包括 app/、openapi.yaml、launch.json。app/ 必须包含 app.js、package.json
-   和 public/index.html；可选 public/styles.css、public/ui.js 和 assets/。
-   前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
-2. 一期仅支持 Node.js。launch.json 的 runtimeExecutable 必须为 node，
-   runtimeArgs 包含包内入口文件路径，例如 ["app/app.js"]，并填写应用 name。
-   所有相对路径以 outputs/ 为工作目录。不要写入 port 字段或固定端口参数。
-   应用必须读取环境变量 PORT；HOST 默认 0.0.0.0。
-   PORT 缺失或非法时退出并说明原因，不擅自使用默认端口。
-3. 必须实际实现 GET /health。只有页面和业务接口准备好后，才返回
-   HTTP 200、Content-Type: application/json 和 {"status":"ok"}。
-   不要只在 launch.json 中声明 healthPath 而遗漏路由。
-4. GET / 返回可由 Chromium 直接加载的 UI；/api/* 提供业务操作。
-   UI 与 API 使用同一份状态，外部 HTTP 操作后 UI 自动刷新，可用轮询或 SSE。
-5. openapi.yaml 使用 OpenAPI 3.1，只描述 /api/* 业务操作。
-   各操作具有唯一且稳定的 operationId、description、参数和响应 schema。
-   业务成功/错误响应都是 JSON，包含必需的字符串 message。
-   不把 /health 加入业务操作列表；它不需要 message 字段。
-   不写死部署地址或端口。若提供 /openapi.json，其内容须与 YAML 等价。
-6. 应用用 user_name 同时表示本局玩家身份和展示名称，不另行生成 user_id。
-   若构建输入提供 player_names，按顺序建立初始玩家 user_name；玩家或状态 API
-   返回名字。去除首尾空白、拒绝空名和重名，按名字精确匹配；本局内不改名。
-   未登记名字不能直接答题或计分。初始玩家未准备好，不接入声纹、灵矽或 MCP。
-   名单为空或省略时不得编造姓名，按需求支持运行时加入。
-   应用以前台进程运行，日志写 stdout/stderr，收到 SIGTERM 时退出并清理资源。
-7. 只做最小验证：运行技能脚本 init-template.sh 复制模板，self-test.sh 一次完成静态检查、
-   测试端口启动、/health、/ 和一个改变状态的业务请求、错误分支抽查、打包和归档校验。
-   不要截图、跑 UI 自动化、逐项遍历错误分支、反复换端口，或测试 SIGTERM/进程退出。
-   未运行的检查不得宣称通过。
-8. 打包 outputs/ 的内容为 tar.gz，使 launch.json 位于归档根目录。
-```
+构建 Agent 的系统提示词只负责角色、输入约定、强制使用 `app-builder` 技能和最终输出格式；完整构建契约、模板和自测流程以 [`skills/app-builder/SKILL.md`](../skills/app-builder/SKILL.md) 及其 `references/` 为准。本文件第 1–3 节保留人类可读的产物规范，不再维护另一份提示词副本。
 
 ## 5. 产物验收
 

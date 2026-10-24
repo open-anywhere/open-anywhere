@@ -62,10 +62,7 @@ func TestStreamErrorStatus(t *testing.T) {
 		io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"bad"}}`)
 	}))
 	defer server.Close()
-	stream, err := New(server.URL, "key", time.Second).OpenEventStream(context.Background(), "ses_1")
-	if err != nil {
-		return
-	}
+	stream := New(server.URL, "key", time.Second).OpenEventStream(context.Background(), "ses_1")
 	defer stream.Close()
 	if _, err := stream.Next(); err == nil {
 		t.Fatal("stream should fail")

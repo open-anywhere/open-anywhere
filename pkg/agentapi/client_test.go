@@ -238,10 +238,7 @@ func TestEventStream(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "secret", time.Second)
-	stream, err := client.OpenEventStream(context.Background(), "ses_1")
-	if err != nil {
-		t.Fatalf("OpenEventStream: %v", err)
-	}
+	stream := client.OpenEventStream(context.Background(), "ses_1")
 	defer stream.Close()
 
 	first, err := stream.Next()
@@ -269,10 +266,7 @@ func TestEventStream(t *testing.T) {
 		t.Fatalf("final error = %v", err)
 	}
 
-	bad, err := client.OpenEventStream(context.Background(), "bad")
-	if err != nil {
-		t.Fatalf("OpenEventStream: %v", err)
-	}
+	bad := client.OpenEventStream(context.Background(), "bad")
 	defer bad.Close()
 	_, err = bad.Next()
 	var apiErr *anthropic.Error

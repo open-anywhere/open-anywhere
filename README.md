@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/open-anywhere-logo-dark.svg">
-    <img src="assets/logo/open-anywhere-logo.svg" alt="open anywhere" width="440">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/open-anywhere/.github/main/assets/logo/open-anywhere-logo-dark.svg">
+    <img src="https://raw.githubusercontent.com/open-anywhere/.github/main/assets/logo/open-anywhere-logo.svg" alt="open anywhere" width="440">
   </picture>
 </p>
 
@@ -45,6 +45,14 @@ go run ./cmd/casting -addr :8080 -interface en0
 ```
 
 接口、目录组织和测试说明见 [Casting 服务](docs/casting.md)。
+
+没有真实电视时，可以启动模拟电视：
+
+```sh
+go run ./cmd/mock-tv -addr :8095 -iface en0
+```
+
+打开 <http://127.0.0.1:8095/> 查看画面。Casting 会发现名为 `Mock TV`、ID 为 `dlna-open-anywhere-mock-tv` 的屏幕。参数、Gateway 接入和限制见 [模拟电视](docs/mock-tv.md)。
 
 运行 Render（需 Node.js、Chromium、FFmpeg 和 lsof）：
 

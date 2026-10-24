@@ -52,7 +52,7 @@ x-api-key: $AGENTAPI_API_KEY
 | `GET` | `/v1/sessions/{id}` | 查询会话快照 | 恢复与超时处理 |
 | `GET` | `/v1/files?scope_id={session_id}` | 列出交付目录中的文件 | 构建结束 |
 | `GET` | `/v1/files/{file_id}/content` | 下载 `artifact.tar.gz` | 构建结束 |
-| `POST` | `/v1/sessions/{id}/archive` | 归档构建会话 | 构建结束或失败 |
+| `POST` | `/v1/sessions/{id}/archive` | 归档构建会话 | 构建失败、超时或设备会话清理 |
 
 ## 2. AgentAPI 侧：智能体准备
 
@@ -216,7 +216,7 @@ Content-Type: application/json
 
 不配置 MCP 是刻意的边界：构建只需要沙箱内的文件、命令和模型能力；接入 MCP 会增加凭证、网络和工具确认流程，而控制面没有对应的审批逻辑。
 
-`system` 必须使用 `docs/agent-system-prompts/open-anywhere-app-builder.txt` 的全文，而不是一句话摘要。系统提示词承载完整构建契约、产物结构、启动与 HTTP 约束、玩家身份规则、最小验证范围和最终输出要求；技能提供模板和参考文件。两者分工明确后，灵犀侧的用户消息只需要传需求和初始玩家名单。
+`system` 必须使用 `docs/agent-system-prompts/open-anywhere-app-builder.txt` 的全文。系统提示词只定义角色、输入约定、强制使用技能和最终输出格式；完整构建契约、产物结构、启动与 HTTP 约束、玩家身份规则和最小验证范围都在 `app-builder` 技能中，避免两处维护。灵犀侧的用户消息只需要传需求和初始玩家名单。
 
 ### 2.5 版本与发布
 
@@ -251,10 +251,10 @@ Content-Type: application/json
 2. 调用 `POST /v1/sessions`，按配置固定智能体版本（未配置时取创建时的最新版本）和环境，写入 `app_id` 元数据。
 3. 保存 `session_id`；同一 `app_id` 只创建一个构建会话。
 4. 注册该会话的事件流消费者。消费者可以在连接建立前注册，AgentAPI 会回放历史事件。
-5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，只把用户需求和初始玩家名单交给智能体；完整构建契约由系统提示词和技能承载。
+5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，只把用户需求和初始玩家名单交给智能体；完整构建契约由 `app-builder` 技能承载，系统提示词只负责角色、输入约定、强制使用技能和最终输出。
 6. 立即向灵矽返回 `app_id` 和 `state=building`；构建在后台继续。
 7. 消费事件流，更新 `building.message`；会话进入 `idle` 后按停止原因处理。
-8. 成功时收集并校验 `/mnt/session/outputs/artifact.tar.gz`，注册应用并进入 `idle`；失败时进入 `error(stage=building)`。
+8. 成功时收集并校验 `/mnt/session/outputs/artifact.tar.gz`，注册应用并进入 `idle`，构建会话保持 `idle`；失败时进入 `error(stage=building)`。
 
 ```mermaid
 sequenceDiagram
@@ -276,8 +276,7 @@ sequenceDiagram
   C->>A: GET /v1/files/{file_id}/content
   A-->>C: tar.gz bytes
   C->>C: 校验、注册 app
-  C->>A: POST /v1/sessions/{id}/archive
-  Note over C: 通知灵矽 state=idle
+  Note over C: 会话保持 idle，可继续对话；通知灵矽 state=idle
 ```
 
 ### 3.2 创建会话
@@ -364,7 +363,7 @@ GET /v1/sessions/{id}/events/stream
 Accept: text/event-stream
 ```
 
-事件流先回放历史，再推送实时事件；`session.status_idle` 之后连接仍保持打开，由控制面决定何时关闭。控制面在处理完本轮并归档会话后关闭连接。
+事件流先回放历史，再推送实时事件；`session.status_idle` 之后连接仍保持打开，由控制面决定何时关闭。控制面在处理完本轮并关闭连接后，成功的构建会话保持 `idle`，可继续接收新的 `user.message`。
 
 ```text
 event: session.status_running
@@ -556,7 +555,7 @@ GET /v1/files/{file_id}/content
 2. 应用名称取 `launch.json.name`，去除首尾空白并限制长度；为空时使用 `app_id`。
 3. 保存 `artifact_sha256`、`artifact_size`、`build_duration_seconds`（从提交构建任务到产物校验通过）和产物存储地址。
 4. 通过已有的 MCP SSE 连接发送 `notifications/app_status`，`state=idle`，`message` 为给灵矽播报的完成文案。
-5. 归档构建会话，释放沙箱资源；归档失败只记录日志，不回滚已注册的应用。
+5. 构建会话保持 `idle`，不归档：AgentAPI 会暂停空闲会话的沙箱，成本很低，会话也可以继续用于后台对话。
 
 ### 4.5 失败处理
 
@@ -621,7 +620,7 @@ MVP 不做自动修复轮次。构建失败后由用户重新发起 `create-app`
 - 同一 `app_id` 最多创建一个构建会话；MCP 层重复 `create-app` 返回已有的 `building` 应用。
 - 产物只在应用尚未注册时处理；重复的 `session.status_idle` 或重放事件不能重复注册应用。
 - 同一 `session_id` 的消费者串行推进；多副本部署使用分布式锁。
-- 应用注册成功后，即使构建会话归档失败，也不再重新下载或重新注册产物。
+- 应用注册成功后，不再重新下载或重新注册产物；构建会话保持 `idle`。
 
 ## 7. 安全与边界
 
@@ -630,7 +629,7 @@ MVP 不做自动修复轮次。构建失败后由用户重新发起 `create-app`
 - AgentAPI API Key 只保存在控制面，不进入提示词、日志、MCP 响应或 Render。
 - 会话 `metadata` 只包含 `app_id`；不放设备标识、声纹或用户隐私数据。
 - 构建产物视为不可信输入：控制面在交给 Render 前完成归档结构和启动契约校验；Render 会再次校验摘要和归档。
-- 构建会话完成后归档，保留事件和文件用于审计；按保留策略删除会话或文件对象，不影响已注册应用。
+- 成功的构建会话保持 `idle`；失败、超时或设备会话清理时归档，事件和文件保留用于审计。按保留策略删除会话或文件对象，不影响已注册应用。
 
 ## 8. 验证状态
 

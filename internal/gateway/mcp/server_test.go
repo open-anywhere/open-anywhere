@@ -109,7 +109,7 @@ func (f *fakeApps) SendRequest(_ context.Context, owner app.Identity, _, operati
 
 func TestServerSessionFlow(t *testing.T) {
 	fake := &fakeApps{
-		screens: []service.ScreenView{{ScreenID: "tv_1", Name: "客厅", Available: true}},
+		screens: []service.ScreenView{{ScreenID: "tv_1", Name: "客厅", Status: service.ScreenFree}},
 		create:  service.CreateResult{AppID: "app_1", State: app.StateBuilding},
 		status:  service.StatusView{AppID: "app_1", State: app.StateBuilding, Message: "正在构建"},
 	}

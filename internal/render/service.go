@@ -36,6 +36,22 @@ type Config struct {
 	StartupTimeout time.Duration
 	ServicePorts   []int
 	Logger         *log.Logger
+
+	// browser optionally overrides the browser/DevTools layer in tests.
+	browser browserHooks
+	// stopGroup optionally overrides process-group shutdown in tests.
+	stopGroup func(*exec.Cmd, <-chan struct{}) error
+	// afterDownload optionally runs in tests once the artifact has been
+	// downloaded into dir and before the app directory is created.
+	afterDownload func(dir string)
+	// afterUnpack optionally runs in tests once the artifact has been
+	// unpacked into appDir and before it is validated.
+	afterUnpack func(dir, appDir string)
+	// afterMedia optionally runs in tests once media startup has succeeded.
+	afterMedia func(*Service, *run)
+	// beforeReady optionally runs in tests after the startup media select and
+	// before the ready state is published.
+	beforeReady func(*Service, *run)
 }
 
 type run struct {
@@ -62,6 +78,7 @@ type Service struct {
 	ports        map[int]string
 	servicePorts map[int]bool
 	client       *http.Client
+	randRead     func([]byte) (int, error)
 	closed       bool
 }
 
@@ -127,7 +144,7 @@ func New(cfg Config) (*Service, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{cfg: cfg, ctx: ctx, cancel: cancel, instances: map[string]*run{}, apps: map[string]string{}, ports: map[int]string{}, servicePorts: map[int]bool{}, client: &http.Client{Timeout: 30 * time.Second}}
+	s := &Service{cfg: cfg, ctx: ctx, cancel: cancel, instances: map[string]*run{}, apps: map[string]string{}, ports: map[int]string{}, servicePorts: map[int]bool{}, client: &http.Client{Timeout: 30 * time.Second}, randRead: rand.Read}
 	for _, p := range cfg.ServicePorts {
 		s.servicePorts[p] = true
 	}
@@ -179,7 +196,7 @@ func (s *Service) Create(ctx context.Context, req api.CreateRequest) (api.Instan
 		return api.Instance{}, failure(409, "PORT_IN_USE", "requested port is occupied")
 	}
 	var idBytes [16]byte
-	if _, err = rand.Read(idBytes[:]); err != nil {
+	if _, err = s.randRead(idBytes[:]); err != nil {
 		s.mu.Unlock()
 		return api.Instance{}, failure(500, "APP_START_FAILED", err.Error())
 	}
@@ -234,7 +251,7 @@ func (s *Service) execute(r *run) {
 			}
 		}
 		if cmd != nil {
-			if err := stopProcess(cmd, processDone); err != nil {
+			if err := s.stopGroupProcess(cmd, processDone); err != nil {
 				errs = append(errs, err)
 			} else {
 				cmd = nil
@@ -306,6 +323,9 @@ func (s *Service) execute(r *run) {
 		fail(502, "ARTIFACT_DOWNLOAD_FAILED", err)
 		return
 	}
+	if s.cfg.afterDownload != nil {
+		s.cfg.afterDownload(dir)
+	}
 	appDir := filepath.Join(dir, "artifact")
 	if err = os.Mkdir(appDir, 0700); err != nil {
 		fail(500, "APP_START_FAILED", err)
@@ -314,6 +334,9 @@ func (s *Service) execute(r *run) {
 	if err = unpack(startup, filepath.Join(dir, "artifact.tar.gz"), appDir); err != nil {
 		fail(422, "INVALID_ARTIFACT", err)
 		return
+	}
+	if s.cfg.afterUnpack != nil {
+		s.cfg.afterUnpack(dir, appDir)
 	}
 	l, err := validateArtifact(appDir)
 	if err != nil {
@@ -364,6 +387,9 @@ func (s *Service) execute(r *run) {
 		fail(502, "STREAM_START_FAILED", err)
 		return
 	}
+	if s.cfg.afterMedia != nil {
+		s.cfg.afterMedia(s, r)
+	}
 	select {
 	case <-r.ctx.Done():
 		return
@@ -371,6 +397,9 @@ func (s *Service) execute(r *run) {
 		fail(502, "APP_EXITED", errors.New("application exited during startup"))
 		return
 	default:
+	}
+	if s.cfg.beforeReady != nil {
+		s.cfg.beforeReady(s, r)
 	}
 	s.mu.Lock()
 	if r.stopRequested {
@@ -469,6 +498,13 @@ func waitHealth(ctx context.Context, base string, pid, port int, done <-chan str
 		}
 	}
 }
+func (s *Service) stopGroupProcess(cmd *exec.Cmd, done <-chan struct{}) error {
+	if s.cfg.stopGroup != nil {
+		return s.cfg.stopGroup(cmd, done)
+	}
+	return stopProcess(cmd, done)
+}
+
 func (s *Service) Get(id string) (api.Instance, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

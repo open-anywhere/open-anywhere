@@ -138,20 +138,7 @@ func (b *Builder) watch(appID, sessionID string) {
 			b.timeout(appID, sessionID)
 			return
 		}
-		stream, err := b.client.OpenEventStream(ctx, sessionID)
-		if err != nil {
-			if ctx.Err() != nil {
-				b.timeout(appID, sessionID)
-				return
-			}
-			b.logf("build %s: event stream: %v", appID, err)
-			if !b.sleep(ctx, reconnectDelay(reconnects)) {
-				b.timeout(appID, sessionID)
-				return
-			}
-			reconnects++
-			continue
-		}
+		stream := b.client.OpenEventStream(ctx, sessionID)
 		reconnects = 0
 		for {
 			event, err := stream.Next()
@@ -295,7 +282,9 @@ func (b *Builder) complete(appID, sessionID string) {
 			if err == nil {
 				b.register(entry, result, item)
 				os.Remove(path)
-				b.archive(sessionID)
+				// Keep a successful build session alive: AgentAPI pauses idle
+				// sandboxes, so the cost is negligible, and the session stays
+				// available for follow-up conversations.
 				return
 			}
 		}

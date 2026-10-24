@@ -62,12 +62,28 @@ type ToolError struct {
 
 func (e *ToolError) Error() string { return e.Code + ": " + e.Message }
 
+// ScreenStatus is what the caller can do with a screen right now.
+type ScreenStatus string
+
+const (
+	// ScreenFree can be started on immediately.
+	ScreenFree ScreenStatus = "free"
+	// ScreenShowingApp is occupied by an application of this control plane.
+	// Starting another one there requires the user to approve the replacement.
+	ScreenShowingApp ScreenStatus = "showing_app"
+	// ScreenExternal is occupied by a casting session this control plane cannot
+	// prove it owns; it cannot be taken over.
+	ScreenExternal ScreenStatus = "external"
+	// ScreenUnavailable cannot receive a stream right now.
+	ScreenUnavailable ScreenStatus = "unavailable"
+)
+
 // ScreenView is one entry of get-screens.
 type ScreenView struct {
-	ScreenID   string  `json:"screen_id"`
-	Name       string  `json:"name"`
-	Available  bool    `json:"available"`
-	CurrentApp *AppRef `json:"current_app"`
+	ScreenID   string       `json:"screen_id"`
+	Name       string       `json:"name"`
+	Status     ScreenStatus `json:"status"`
+	CurrentApp *AppRef      `json:"current_app"`
 }
 
 // AppRef identifies an application occupying a screen.
@@ -187,24 +203,36 @@ func (s *Service) GetScreens(ctx context.Context, _ app.Identity) ([]ScreenView,
 		byID[target.ID] = target
 	}
 	configured := s.screens.List()
-	views := make([]ScreenView, 0, len(targets))
+	type screenEntry struct {
+		view        ScreenView
+		deliverable bool
+		busy        bool
+	}
+	entries := make([]screenEntry, 0, len(targets))
 	if len(configured) == 0 {
 		for _, target := range targets {
 			_, compatible := screen.DiscoverableEndpoint(target)
-			views = append(views, ScreenView{
-				ScreenID:  target.ID,
-				Name:      target.Name,
-				Available: target.State == casting.TargetOnline && compatible,
+			entries = append(entries, screenEntry{
+				view:        ScreenView{ScreenID: target.ID, Name: target.Name},
+				deliverable: target.State == casting.TargetOnline && compatible,
+				busy:        target.ActiveSessionID != "",
 			})
 		}
 	} else {
 		for _, item := range configured {
 			target, found := byID[item.TargetID]
-			available := false
-			if found && target.State == casting.TargetOnline {
-				_, available = screen.DiscoverableEndpoint(target)
+			var deliverable, busy bool
+			if found {
+				busy = target.ActiveSessionID != ""
+				if target.State == casting.TargetOnline {
+					_, deliverable = screen.DiscoverableEndpoint(target)
+				}
 			}
-			views = append(views, ScreenView{ScreenID: item.ID, Name: item.Name, Available: available})
+			entries = append(entries, screenEntry{
+				view:        ScreenView{ScreenID: item.ID, Name: item.Name},
+				deliverable: deliverable,
+				busy:        busy,
+			})
 		}
 	}
 	running := make(map[string]app.App)
@@ -213,9 +241,19 @@ func (s *Service) GetScreens(ctx context.Context, _ app.Identity) ([]ScreenView,
 			running[value.ScreenID] = value
 		}
 	}
-	for index := range views {
-		if value, ok := running[views[index].ScreenID]; ok {
-			views[index].CurrentApp = &AppRef{AppID: value.ID, Name: value.Name}
+	views := make([]ScreenView, len(entries))
+	for index, item := range entries {
+		views[index] = item.view
+		switch ours, occupied := running[item.view.ScreenID]; {
+		case !item.deliverable:
+			views[index].Status = ScreenUnavailable
+		case occupied:
+			views[index].Status = ScreenShowingApp
+			views[index].CurrentApp = &AppRef{AppID: ours.ID, Name: ours.Name}
+		case item.busy:
+			views[index].Status = ScreenExternal
+		default:
+			views[index].Status = ScreenFree
 		}
 	}
 	return views, nil
@@ -372,6 +410,20 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	target, err := s.target(ctx, screenID)
 	if err != nil {
 		return StatusView{}, err
+	}
+	// A casting session nobody in the control plane can account for cannot be
+	// stopped through force either. Refuse before starting a Render instance.
+	if target.ActiveSessionID != "" {
+		other, busy := s.apps.RunningOnScreen(screenID)
+		known := busy && other.ProjectionSessionID == target.ActiveSessionID
+		switch {
+		case known && other.ID != appID:
+			// claimScreen will refuse or stop it when force is set.
+		case known:
+			return StatusView{}, &ToolError{Code: "CLEANUP_PENDING", Message: "上次投屏还在释放，请稍后再试"}
+		default:
+			return StatusView{}, &ToolError{Code: "TARGET_BUSY", Message: "屏幕被其他投屏会话占用，无法接管，请换一块屏幕"}
+		}
 	}
 	replaced, err := s.claimScreen(ctx, screenID, appID, force)
 	if err != nil {
