@@ -199,16 +199,19 @@ DELETE /v1/projection-sessions/{session_id}
 
 ## 6. 应用管理 MCP
 
-本章定义灵矽通过控制面管理应用生命周期的四个 MCP Tool。工具名按灵矽侧约定使用 kebab-case；应用运行后的能力调用仍走既有的 OpenAPI / HTTP 契约，不在本章展开。
+本章定义灵矽通过控制面发现屏幕并管理应用生命周期的五个 MCP Tool。工具名按灵矽侧约定使用 kebab-case；应用运行后的能力调用仍走既有的 OpenAPI / HTTP 契约，不在本章展开。
 
 ### 6.1 工具集
 
 | Tool | 作用 | 输入 | 输出 |
 | --- | --- | --- | --- |
+| `get-screens` | 查询当前可用屏幕及占用情况 | 无 | `screens` 数组，见 6.7 |
 | `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt` | `app_id`, `state: building` |
 | `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见 6.3 |
-| `start-app` | 启动已构建的应用 | `app_id` | `app_id`, `state: running` |
+| `start-app` | 在指定屏幕上启动已构建的应用 | `app_id`, `screen_id` | `app_id`, `screen_id`, `state: running` |
 | `stop-app` | 停止运行中的应用 | `app_id` | `app_id`, `state: idle` |
+
+应用状态表示应用在指定屏幕上的整体可用性。`running` 要求应用健康检查通过且投屏服务报告正在播放；只启动应用进程不算成功。不向灵矽暴露独立的 `display.state`。
 
 应用状态有四种：`building`、`idle`、`running`、`error`。`error` 表示构建、启动或运行失败；`error.stage` 区分失败阶段，构建失败不会产生可启动的 `idle` 应用。
 
@@ -251,8 +254,8 @@ DELETE /v1/projection-sessions/{session_id}
 | --- | --- | --- |
 | `building` | AgentAPI 正在构建，应用还不可启动 | `app_id`, `state`, `elapsed_seconds`, `message` |
 | `idle` | 构建完成并注册，进程未启动 | `app_id`, `state`, `name`, `build_duration_seconds` |
-| `running` | 进程已启动并通过健康检查 | `app_id`, `state`, `name`, `started_at`, `uptime_seconds` |
-| `error` | 构建、启动或运行失败 | `app_id`, `state`, `error` |
+| `running` | 应用健康检查通过，指定屏幕的投屏会话处于播放状态 | `app_id`, `state`, `screen_id`, `name`, `started_at`, `uptime_seconds` |
+| `error` | 构建、启动或运行失败，包含投屏失败 | `app_id`, `state`, `error`；已指定屏幕时带 `screen_id` |
 
 `building`：
 
@@ -282,6 +285,7 @@ DELETE /v1/projection-sessions/{session_id}
 {
   "app_id": "app_01J...",
   "state": "running",
+  "screen_id": "tv-living-room",
   "name": "掷骰子游戏",
   "started_at": "2026-10-24T08:30:00Z",
   "uptime_seconds": 12
@@ -313,25 +317,55 @@ DELETE /v1/projection-sessions/{session_id}
 
 ```json
 {
-  "app_id": "app_01J..."
+  "app_id": "app_01J...",
+  "screen_id": "tv-living-room"
 }
 ```
 
-控制面让 Render 启动已注册的应用。健康检查通过后返回 `running` 状态：
+`screen_id` 必填，来自 `get-screens` 返回的屏幕列表。控制面选择能够访问目标屏幕的 Render 和兼容的 Endpoint，启动应用、加载 Stage、准备媒体流，再建立或复用投屏会话。只有应用健康检查通过且投屏服务报告 `playing` 后，才返回 `running`：
 
 ```json
 {
   "app_id": "app_01J...",
   "state": "running",
+  "screen_id": "tv-living-room",
   "name": "掷骰子游戏",
   "started_at": "2026-10-24T08:30:00Z",
   "uptime_seconds": 0
 }
 ```
 
-应用端口只在控制面和 Render 内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。
+应用端口、`render_id`、`endpoint_id` 和 `projection_session_id` 只在控制面和 Render 内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。
 
-只允许从 `idle` 启动。已经在 `running` 时幂等返回当前状态；`building` 时返回 `APP_BUILDING`；`error` 时返回 `APP_IN_ERROR`；启动失败时应用进入 `error`（`stage=starting`），工具返回 `isError: true`，`error.code=START_FAILED`。
+只允许从 `idle` 启动。已经在同一屏幕上 `running` 时幂等返回当前状态；若指定不同屏幕，返回 `APP_ALREADY_RUNNING`，由调用方先停止再启动。`building` 时返回 `APP_BUILDING`；`error` 时返回 `APP_IN_ERROR`。目标屏幕被其他应用占用时返回 `TARGET_BUSY`，不自动替换已有应用。
+
+启动流程有时限，由控制面配置超时。连接过程中请求等待最终结果，不返回 `running + connecting`；超时或失败时进入 `error`，工具返回 `isError: true`。同一应用的并发启动请求不得重复创建进程或投屏会话。输入或占用校验不通过时拒绝操作，不改变已有应用状态。
+
+沿用现有 `error.stage`，不新增 `projection` 阶段：
+
+| 场景 | `error.stage` | `error.code` 示例 |
+| --- | --- | --- |
+| 应用启动或健康检查失败 | `starting` | `START_FAILED` |
+| 启动过程中屏幕不可达 | `starting` | `TARGET_UNREACHABLE` |
+| 启动过程中投屏超时 | `starting` | `PROJECTION_TIMEOUT` |
+| 应用运行后进程异常退出 | `running` | `APP_EXITED` |
+| 应用运行后投屏断开 | `running` | `PROJECTION_DISCONNECTED` |
+
+例如，屏幕连接失败时，`get-app-status` 返回：
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "error",
+  "screen_id": "tv-living-room",
+  "error": {
+    "stage": "starting",
+    "code": "TARGET_UNREACHABLE"
+  }
+}
+```
+
+控制面内部维护应用进程和投屏会话的对应关系，跟踪投屏状态；运行中一旦确认投屏断开，整体状态进入 `error`，即使应用进程仍在运行。`screen_id` 保留用于定位失败目标。失败后的资源清理由控制面负责；只有确认进程和投屏资源已释放后才能释放屏幕占用。
 
 启动成功后，后续应用操作仍通过既有的 OpenAPI / HTTP 契约完成。
 
@@ -345,7 +379,7 @@ DELETE /v1/projection-sessions/{session_id}
 }
 ```
 
-停止应用进程并回到 `idle`：
+停止应用进程，解除它与屏幕的展示绑定并释放占用后回到 `idle`；常驻 Stage 的投屏通道可以保留，用于显示待机页或后续应用。`idle` 响应不再携带 `screen_id`：
 
 ```json
 {
@@ -367,6 +401,7 @@ sequenceDiagram
   participant C as 控制面
   participant A as AgentAPI
   participant R as Render
+  participant P as 投屏服务
 
   U->>L: 帮我做一个掷骰子游戏
   L->>C: create-app(prompt)
@@ -381,12 +416,16 @@ sequenceDiagram
   C-->>L: notifications/app_status(app_id, state=idle)
   L-->>U: TTS：APP 创建完成，要开始吗？
 
-  U->>L: 开始吧
-  L->>C: start-app(app_id)
-  C->>R: 启动应用
-  R-->>C: health OK
-  C-->>L: state=running
-  L-->>U: TTS：游戏开始了
+  U->>L: 在客厅电视上开始吧
+  L->>C: get-screens()
+  C-->>L: screens（screen_id / name / available / current_app）
+  L->>C: start-app(app_id, screen_id)
+  C->>R: 启动应用、加载 Stage、准备媒体流
+  R-->>C: health OK / 流地址
+  C->>P: 建立或复用目标屏幕投屏会话
+  P-->>C: playing
+  C-->>L: state=running, screen_id
+  L-->>U: TTS：游戏已投到客厅电视
 ```
 
 构建完成后，控制面通过已有的 MCP SSE 连接发送通知：
@@ -406,3 +445,42 @@ sequenceDiagram
 构建失败时发送同一方法，`state` 为 `error`，`error` 结构与 `get-app-status` 一致。
 
 灵矽收到通知后决定是否播报并等待用户指令；控制面不直接推 TTS。通知是 best-effort，断线或丢失时以 `get-app-status` 为准。
+
+
+### 6.7 `get-screens`
+
+输入为空对象：
+
+```json
+{}
+```
+
+控制面返回当前 device/session 可访问的物理屏幕。`screen_id` 是灵矽侧使用的物理屏幕标识，而非 Endpoint 或 Render 标识。控制面将 `screen_id` 映射到投屏服务的 `target_id`，再选择该目标支持的 Endpoint；灵矽通过 `screen_id` 指定启动屏幕，`get-app-status(app_id)` 在结果中返回该标识。控制面负责将投屏服务的发现结果、Render 可达性和当前应用占用情况汇总为屏幕列表。
+
+```json
+{
+  "screens": [
+    {
+      "screen_id": "tv-living-room",
+      "name": "客厅电视",
+      "available": true,
+      "current_app": null
+    },
+    {
+      "screen_id": "tv-study",
+      "name": "书房电视",
+      "available": true,
+      "current_app": {
+        "app_id": "app-dice",
+        "name": "掷骰子"
+      }
+    }
+  ]
+}
+```
+
+- `available` 表示当前有 Render 可通过支持的协议向该屏幕投送画面，不等于空闲；`current_app` 为 `null` 才表示未被应用占用。
+- 没有发现可用目标时允许返回空数组；已知但离线或不可达的目标可以返回 `available: false`。
+- 返回结构化字段，不生成描述屏幕列表的顶层 `message`；由灵矽组织话术。`start-app` 的成功响应也不额外生成顶层 `message`，既有构建进度、通知和错误的消息字段保留原约定。
+- 用户明确指定屏幕时，灵矽匹配其 `screen_id`；未指定时可沿用当前会话的选择，或在只有一个可用且空闲的屏幕时直接选择；无法唯一确定时询问用户。调用 `start-app` 时始终传入明确的 `screen_id`。
+- MVP 中一个应用同时绑定一个屏幕，一个屏幕同时展示一个应用。列表是查询时快照，启动时控制面仍需重新校验可达性与占用，避免并发冲突。
