@@ -3,7 +3,7 @@
 > 状态：Proposal（设计约定，尚未实现）
 > 日期：2026-10-24
 
-Render 接收应用包下载地址和运行端口，下载并启动 Node.js 应用，用 Chromium 持续渲染页面，再将画面编码为可通过 HTTP 拉取的实时媒体流。控制面将该流交给独立的 Casting 服务播放。
+Render 接收控制面分配的应用 ID、应用包下载地址和运行端口，下载并启动 Node.js 应用，用 Chromium 持续渲染页面，再将画面编码为可通过 HTTP 拉取的实时媒体流。控制面将该流交给独立的 Casting 服务播放。
 
 应用包结构、`launch.json` 和构建要求见[应用包设计](app-artifact.md)；投屏控制接口见 [Casting 服务](casting.md)。本文定义 Render 的职责、接口及运行生命周期。
 
@@ -22,7 +22,7 @@ Render 启动请求不包含 `screen_id`、`target_id` 或投屏协议。Render 
 
 ```mermaid
 flowchart LR
-  C[控制面] -->|artifact_url + port| R[Render]
+  C[控制面] -->|app_id + artifact_url + port| R[Render]
   R -->|下载 tar.gz| A[产物存储]
   R -->|启动，注入 HOST / PORT| N[Node.js 应用]
   N -->|页面 / 状态更新| B[Chromium]
@@ -43,6 +43,7 @@ Content-Type: application/json
 
 ```json
 {
+  "app_id": "app-quiz",
   "artifact_url": "https://example.com/artifacts/quiz.tar.gz",
   "port": 39101
 }
@@ -50,23 +51,25 @@ Content-Type: application/json
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
+| `app_id` | 是 | 控制面创建应用时分配的非空字符串 ID，启动时原样传入，不由 Render 重新生成 |
 | `artifact_url` | 是 | Render 能直接下载的 HTTP(S) 应用包 URL，格式为 tar.gz；不是本地路径或页面地址 |
 | `port` | 是 | 本次部署的应用监听端口，1–65535 的整数，由控制面确定并传入 |
 
-一期固定这两个输入，不提供省略端口后的自动分配。URL 可以是带有效期的下载地址，有效期须覆盖下载过程。包内不包含部署端口，Render 也不修改 `launch.json`。
+一期固定这三个输入，不提供省略端口后的自动分配。URL 可以是带有效期的下载地址，有效期须覆盖下载过程。`app_id` 和端口都是部署信息，不写入应用包，Render 也不修改 `launch.json`。
 
 ### 2.1 端口与实例
 
 - 控制面可以先用 `GET /v1/ports` 查看已占用端口，再用 `GET /v1/ports/{port}` 检查候选端口，最后把选定的端口传入启动请求，详见 2.4。
-- Render 为每次接受的启动请求分配 `instance_id`，用于查询和停止；控制面维护 `app_id → Render / instance_id` 的映射。
+- `app_id` 标识控制面创建的应用，停止后再次启动仍沿用同一个值。Render 为每次新启动分配 `instance_id`，标识这一次运行，用于查询和停止；实例记录、日志及应用端口占用记录均关联传入的 `app_id`。控制面维护 `app_id → Render / instance_id` 的映射。
+- 一期同一 Render 上一个 `app_id` 最多保有一个活动实例。已有实例正在启动、运行、停止或仍有未清理资源时，拒绝重复创建，返回 `409 APP_ALREADY_RUNNING`，并附带已有的 `app_id` 和 `instance_id`；旧实例资源全部释放后可再次启动。跨 Render 的单实例约束由控制面保证。
 - Render 校验并预留自己管理的端口，防止并发启动重复使用。已有活动实例占用该端口时返回 `409 PORT_IN_USE`。
 - 控制面之前观察到端口空闲，不代表进程启动时仍然空闲。最终以应用绑定端口是否成功为准；绑定失败不得把该端口上其他服务的健康响应当作本次启动成功。
 - Render 不自动换端口。控制面收到冲突后可以选择其他端口，重新发起启动。
-- 相同包允许启动多个独立实例，实例之间不共享内存状态。创建操作不按 URL 幂等；请求结果不明时，不应直接换端口重复创建。
+- 不同 `app_id` 可以使用相同包启动独立实例，实例之间不共享内存状态。创建操作不按 URL 幂等；请求结果不明时，不应直接换端口重复创建。
 
 ### 2.2 启动步骤
 
-1. 校验输入、预留端口、创建实例记录和独立工作目录。
+1. 校验输入，原子检查并登记 `app_id` 的活动实例及端口预留，创建关联该 `app_id` 的实例记录和独立工作目录。
 2. 下载并解压应用包，确认 artifact 根目录直接包含 `launch.json`、`openapi.yaml` 和 `app/`。下载、解压有大小和时间限制；归档条目不得逃逸工作目录。
 3. 校验启动契约和 OpenAPI，仅接受 `runtimeExecutable: "node"`；入口文件必须在包内。
 4. 以 artifact 根目录为 cwd，按 `runtimeArgs` 参数数组启动 Node.js，注入 `HOST=0.0.0.0` 和请求中的 `PORT`。通过进程 API 执行，不拼接 shell 命令或 `--port` 参数。
@@ -82,6 +85,7 @@ Content-Type: application/json
 
 ```json
 {
+  "app_id": "app-quiz",
   "instance_id": "instance-quiz-001",
   "state": "ready",
   "port": 39101,
@@ -98,7 +102,7 @@ Content-Type: application/json
 
 - `app_base_url` 是控制面可访问的应用 HTTP 地址，用于调用 `/api/*`；远程控制面不能使用 Render 自己的 `127.0.0.1`。部署环境必须提供可达地址及网络路径。
 - `source.url` 是电视可访问的实时媒体地址，不是 UI URL，也不是应用包下载地址。
-- 应用端口与媒体服务端口独立。示例中的 `8765` 是 Render 自身的媒体服务配置，不是创建应用时的第三个参数。
+- 应用端口与媒体服务端口独立。示例中的 `8765` 是 Render 自身的媒体服务配置，不属于创建应用请求的参数。
 - `source` 可直接作为 Casting 创建投屏会话的 `source`。示例为纯视频，`audio_codec` 为空字符串；仅在实际包含 AAC 音轨时声明 `aac`。
 - Render 的 `ready` 表示应用、页面和媒体输出已就绪，不表示电视已播放。控制面仍须等 Casting 确认 `playing`，才能对灵矽返回整体应用 `running`。
 
@@ -126,6 +130,7 @@ GET /v1/ports/39101
 
 ```json
 {
+  "app_id": "app-quiz",
   "port": 39101,
   "occupied": true,
   "owner": "app",
@@ -133,7 +138,7 @@ GET /v1/ports/39101
 }
 ```
 
-`owner` 取值为 `app`（Render 管理的应用实例）、`render`（Render 自身的 API 或媒体服务）、`external`（其他程序）或空闲时的 `null`。只有 `app` 返回 `instance_id`；不暴露其他程序的进程详情。
+`owner` 取值为 `app`（Render 管理的应用实例）、`render`（Render 自身的 API 或媒体服务）、`external`（其他程序）或空闲时的 `null`。只有 `app` 返回 `app_id` 和 `instance_id`；不暴露其他程序的进程详情。
 
 **列出当前占用端口：**
 
@@ -152,6 +157,7 @@ GET /v1/ports
       "owner": "render"
     },
     {
+      "app_id": "app-quiz",
       "port": 39101,
       "occupied": true,
       "owner": "app",
@@ -195,10 +201,11 @@ GET /v1/ports
 | `stopping` | 正在关闭资源，端口尚未释放 |
 | `stopped` | 所有实例资源已释放 |
 
-`GET` 返回 `200`；`ready` 响应与启动成功的实例结构一致。`starting`、`stopping` 和 `stopped` 返回 `instance_id`、`state`、`port`，不提供可用 `source`。失败示例：
+`GET` 返回 `200`；`ready` 响应与启动成功的实例结构一致。`starting`、`stopping` 和 `stopped` 返回 `app_id`、`instance_id`、`state`、`port`，不提供可用 `source`。失败示例：
 
 ```json
 {
+  "app_id": "app-quiz",
   "instance_id": "instance-quiz-001",
   "state": "error",
   "port": 39101,
@@ -216,6 +223,7 @@ Render 持续监测应用进程、应用健康、浏览器和媒体输出。确�
 
 ```json
 {
+  "app_id": "app-quiz",
   "instance_id": "instance-quiz-001",
   "state": "stopped",
   "port": 39101
@@ -230,15 +238,16 @@ Render 停止不会自动调用 Casting。控制面正常停止应用时应先�
 
 ## 4. 错误约定
 
-错误响应统一包含 `error.stage`、`error.code` 和 `error.message`；已分配实例时附带顶层 `instance_id`，便于查询和清理。阶段沿用 `starting`、`running`，不增加 `projection` 阶段。
+错误响应统一包含 `error.stage`、`error.code` 和 `error.message`；已分配实例时附带顶层 `app_id` 和 `instance_id`，便于查询和清理。阶段沿用 `starting`、`running`，不增加 `projection` 阶段。
 
 端口查询尚未进入应用生命周期，其错误仅包含 `error.code` 和 `error.message`，不附带 `stage`。端口参数必须为 1–65535 的整数；非法参数返回 `400 INVALID_REQUEST`。
 
 | 场景 | HTTP 状态 | code 示例 |
 | --- | --- | --- |
-| URL、端口或 JSON 输入非法 | `400` | `INVALID_REQUEST` |
+| app_id、URL、端口或 JSON 输入非法 | `400` | `INVALID_REQUEST` |
 | 查询或停止未知实例 | `404` | `INSTANCE_NOT_FOUND` |
 | 端口已占用 | `409` | `PORT_IN_USE` |
+| 同一应用已有活动实例或未清理资源 | `409` | `APP_ALREADY_RUNNING` |
 | 端口查询或系统占用枚举失败 | `503` | `PORT_INSPECTION_FAILED` |
 | 产物结构、OpenAPI 或运行时不符合约定 | `422` | `INVALID_ARTIFACT` |
 | 应用下载失败 | `502` | `ARTIFACT_DOWNLOAD_FAILED` |
@@ -263,7 +272,7 @@ Chromium 负责运行页面，捕获编码组件负责把画面转换为 MPEG-TS
 
 ## 6. 验收场景
 
-1. 提供符合应用包契约的 Node.js tar.gz URL 和空闲端口，Render 返回 `ready`、应用地址及可拉取媒体流。
+1. 提供控制面分配的 `app_id`、符合应用包契约的 Node.js tar.gz URL 和空闲端口，Render 返回 `ready`、应用地址及可拉取媒体流。
 2. 外部 HTTP 客户端调用应用业务操作，Chromium 中已打开的页面自动更新，投屏画面能观察到变化。
 3. 缺失 `/health`、入口文件或合法 OpenAPI 时启动失败，不能返回 `ready`。
 4. 同端口并发启动只有一个实例能占用；端口已被其他程序占用时，不把其他程序误认成新应用。
@@ -272,5 +281,6 @@ Chromium 负责运行页面，捕获编码组件负责把画面转换为 MPEG-TS
 7. 将返回的 `source` 交给现有 Casting 服务，使用真实屏幕验证拉流和播放；Render 的 `ready` 与 Casting 的 `playing` 分别检查。
 8. 端口查询和列表能够区分空闲、应用预留、Render 自身服务及其他程序占用；清理完成后应用预留从列表消失，检查失败时返回错误而非误报空闲。
 9. 查询空闲后被其他程序抢先绑定，启动仍返回端口冲突，控制面可另选端口重试。
+10. 启动、状态查询、停止及应用端口占用结果携带同一个 `app_id`；同一应用并发启动不重复创建实例，停止并清理后再次启动使用新 `instance_id`。
 
 本文定义预期行为，不代表 Render、Chromium 捕获或上述接口已经实现。
