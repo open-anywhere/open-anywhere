@@ -1,0 +1,84 @@
+# Open Anywhere 架构设计
+
+> 状态：Proposal（供 PR 评审）
+> 版本：v0.1
+> 日期：2026-10-23
+
+## 1. 摘要
+
+Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成一个可运行的 Web 应用，并在身边的屏幕上通过 AirPlay 呈现和控制。
+
+系统由四个组件构成：
+
+| 组件 | 角色 |
+| --- | --- |
+| 灵矽云（Linx） | 语音入口：ASR、TTS、意图识别、MCP Client |
+| 控制面（Control Plane） | MCP Server、任务编排、应用注册表、OpenAPI 到 HTTP 的适配 |
+| AgentAPI | 异步应用工厂：编码 Agent + 沙箱，产出应用 artifact |
+| Render | 应用运行时与舞台：启动应用、转发 HTTP、AirPlay 投屏 |
+
+系统只有两条契约：
+
+1. **MCP**：灵矽云与控制面之间。灵矽只看见 MCP Tool，不直接接触 AgentAPI 或 Render。
+2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。
+
+核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容。**
+
+## 2. 目标与非目标
+
+### 2.1 目标
+
+- 用户用自然语言创建应用，不需要知道代码、构建或部署。
+- 灵矽只依赖一组稳定的 MCP Tool；新应用不需要在灵矽侧重新注册工具。
+- 构建是长任务，可以异步执行、按需查询状态和已用时间，不阻塞语音对话。
+- 应用生成后可以在 Render 上稳定启动，并通过 OpenAPI 被控制面调用。
+- 应用画面通过 AirPlay 常驻在屏幕上；切换应用不重新建立投屏。
+- Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
+
+### 2.2 非目标
+
+- 多租户、计费、应用市场、任意第三方应用托管。
+- 为每个 OpenAPI 操作动态注册一个 MCP Tool；MVP 使用通用的 `send_request`。
+- 服务端主动 TTS 推送；MVP 由灵矽在用户询问时轮询任务状态。
+- 应用状态跨重启持久化；MVP 允许内存态，重启后状态丢失。
+- 在 macOS 上程序化发起 AirPlay 系统镜像；MVP 手动连接，浏览器或 HDMI 兜底。
+- 把 AgentAPI 的沙箱当作应用运行时；AgentAPI 只负责构建。
+
+## 3. 术语
+
+| 术语 | 含义 |
+| --- | --- |
+| 灵矽（Linx） | 七牛云的 AI 智能硬件平台，负责语音入口、ASR、TTS 和意图识别 |
+| 控制面（Control Plane） | 对灵矽暴露 MCP、对 AgentAPI 编排构建、对 Render 转发请求的服务 |
+| AgentAPI | 托管智能体框架，运行编码 Agent 和沙箱，产出持久化文件 |
+| Render | 现场的应用运行时，负责启动应用、提供 HTTP、维持 AirPlay |
+| Task | 一次 `create_app` 构建任务，对外用 `task_id` 标识 |
+| App | AgentAPI 产出的、已经在 Render 上运行的应用 |
+| Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档、`launch.json` 和自检报告 |
+| Stage | Render 上常驻的展示页面；AirPlay 镜像的就是它 |
+| OpenAPI | 应用能力的 HTTP 契约，控制面据此校验和转发请求 |
+| launch.json | 应用启动契约，描述可执行文件、参数和端口 |
+
+## 4. 系统上下文
+
+```mermaid
+flowchart LR
+  U["用户"] -->|语音| L["灵矽云<br/>ASR / TTS / 意图"]
+  L -->|MCP Tool| C["控制面<br/>MCP Server / 编排 / 注册表"]
+  C -->|创建 / 查询 session| A["AgentAPI<br/>编码 Agent + 沙箱"]
+  A -->|artifact| C
+  C -->|部署 / HTTP 转发| R["Render<br/>运行时 / Stage / AirPlay"]
+  R -->|HTTP 响应| C
+  C -->|MCP Tool 结果| L
+  R -->|AirPlay| T["电视 / 大屏"]
+```
+
+### 4.1 组件职责
+
+| 组件 | 负责 | 不负责 |
+| --- | --- | --- |
+| 灵矽云 | ASR、TTS、意图识别、选择并调用 MCP Tool | 构建应用、运行应用、投屏 |
+| 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验 | 写代码、运行应用、理解应用的业务语义 |
+| AgentAPI | 运行编码 Agent、在沙箱中写代码和自测、持久化 artifact | 承载应用运行时、直接面对灵矽 |
+| Render | 解压 artifact、按 `launch.json` 启动、健康检查、进程保活、接收控制面 HTTP 转发、Stage 与 AirPlay | 理解应用业务、决定应用能力 |
+| 应用 | 提供 UI 和 `/api/*` HTTP 接口、维护自己的状态 | 感知 MCP、直接面对灵矽 |
