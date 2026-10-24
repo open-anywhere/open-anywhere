@@ -14,8 +14,12 @@
 ```text
 outputs/
   app/
-    index.js          # Node.js 自包含入口
-    index.html        # UI（可选，也可以由 index.js 内联返回）
+    app.js            # Node.js 自包含入口
+    package.json      # 应用元信息；依赖须预打包，运行端不 install
+    public/
+      index.html      # UI
+      styles.css      # 可选
+      ui.js           # 可选
     assets/           # 可选，随包提供的静态资源
   openapi.yaml        # OpenAPI 3.1，仅描述 /api/* 业务操作
   launch.json         # 启动契约
@@ -40,7 +44,7 @@ Node.js 示例：
 {
   "name": "quiz",
   "runtimeExecutable": "node",
-  "runtimeArgs": ["app/index.js"],
+  "runtimeArgs": ["app/app.js"],
   "healthPath": "/health",
   "readyTimeoutMs": 10000
 }
@@ -50,7 +54,7 @@ Node.js 示例：
 | --- | --- | --- |
 | `name` | 是 | 应用名称，用于日志、注册表和展示 |
 | `runtimeExecutable` | 是 | 一期固定为 `node`，其他值不予接受 |
-| `runtimeArgs` | 是 | Node.js 启动参数数组，包含包内入口文件路径，例如 `["app/index.js"]`；不含部署端口 |
+| `runtimeArgs` | 是 | Node.js 启动参数数组，包含包内入口文件路径，例如 `["app/app.js"]`；不含部署端口 |
 | `healthPath` | 否 | 默认 `/health`；MVP 固定使用 `/health`，若声明必须为该值 |
 | `readyTimeoutMs` | 否 | 就绪超时，单位毫秒，默认 `10000`，须为正整数；运行端可设置上限 |
 
@@ -78,7 +82,7 @@ Node.js 示例：
 | `/api/*` | 必需，提供 OpenAPI 中声明的业务操作 |
 | `GET /openapi.json` | 推荐，返回与根目录 `openapi.yaml` 等价的 JSON 格式规范 |
 
-`/` 指 HTTP 根路径，不是归档根目录里的某个 HTML 文件。页面可以由程序内联返回，也可以从 `app/index.html` 提供；运行端只需用 Chromium 访问 `/`，不需要寻找 HTML 文件或理解前端框架。
+`/` 指 HTTP 根路径，不是归档根目录里的某个 HTML 文件。页面可以由程序内联返回，也可以从 `app/public/index.html` 提供；运行端只需用 Chromium 访问 `/`，不需要寻找 HTML 文件或理解前端框架。
 
 UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作后，已经打开的 UI 必须自动更新，MVP 可采用轮询或 SSE。应用应同时支持页面操作和外部 HTTP 调用，不依赖灵矽才能使用。
 
@@ -129,10 +133,9 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 ```text
 请在 outputs/ 中生成一个可直接运行的独立 Node.js Web 应用，并遵守以下交付契约：
 
-1. 产物包括 app/、openapi.yaml、launch.json。
-   前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
+1. 产物包括 app/、openapi.yaml、launch.json。app/ 以 app.js 为入口，可包含 package.json、public/ 和 assets/；前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
 2. 一期仅支持 Node.js。launch.json 的 runtimeExecutable 必须为 node，
-   runtimeArgs 包含包内入口文件路径，例如 ["app/index.js"]，并填写应用 name。
+   runtimeArgs 包含包内入口文件路径，例如 ["app/app.js"]，并填写应用 name。
    所有相对路径以 outputs/ 为工作目录。不要写入 port 字段或固定端口参数。
    应用必须读取环境变量 PORT；HOST 默认 0.0.0.0。
    PORT 缺失或非法时退出并说明原因，不擅自使用默认端口。
