@@ -9,26 +9,25 @@
 
 ## 1. 交付格式
 
-构建结果打包为 `tar.gz`，发布到运行端可下载的 HTTP(S) URL。下载地址是交付信息，不写入 `launch.json`。解压后的 artifact 根目录如下：
+构建结果打包为 `tar.gz`，发布到运行端可下载的 HTTP(S) URL。下载地址是交付信息，不写入 `launch.json`。构建端输出到 `outputs/`；归档其内容，解压后的 artifact 根目录如下：
 
 ```text
-outputs/
-  app/
-    app.js            # Node.js 自包含入口
-    package.json      # 应用元信息；依赖须预打包，运行端不 install
-    public/
-      index.html      # UI
-      styles.css      # 可选
-      ui.js           # 可选
-    assets/           # 可选，随包提供的静态资源
-  openapi.yaml        # OpenAPI 3.1，仅描述 /api/* 业务操作
-  launch.json         # 启动契约
+app/
+├── app.js
+├── package.json        # 应用元信息；依赖须预打包
+├── public/
+│   ├── index.html
+│   ├── styles.css      # 可选
+│   └── ui.js           # 可选
+└── assets/             # 可选
+openapi.yaml
+launch.json
 ```
 
 - `outputs/` 是构建端的产物目录名。归档其内容，解压后直接得到 `app/`、`launch.json` 等文件，不额外嵌套一层 `outputs/`。
 - `app/` 必须自包含。前端 JSX、TypeScript、样式和依赖在构建端处理完成；运行端不执行 install 或 build，不依赖构建沙箱里的文件或全局安装的应用依赖。
 - MVP 的 Node.js 程序使用内置模块，或把可打包的依赖预先打包到入口文件；运行端提供约定版本的 Node.js。
-- `openapi.yaml` 和 `launch.json` 必填。
+- `app/app.js`、`app/package.json`、`app/public/index.html`、`openapi.yaml` 和 `launch.json` 必填；样式、页面脚本和其他资源按需提供。
 
 打包示例：
 
@@ -82,7 +81,7 @@ Node.js 示例：
 | `/api/*` | 必需，提供 OpenAPI 中声明的业务操作 |
 | `GET /openapi.json` | 推荐，返回与根目录 `openapi.yaml` 等价的 JSON 格式规范 |
 
-`/` 指 HTTP 根路径，不是归档根目录里的某个 HTML 文件。页面可以由程序内联返回，也可以从 `app/public/index.html` 提供；运行端只需用 Chromium 访问 `/`，不需要寻找 HTML 文件或理解前端框架。
+`/` 指 HTTP 根路径，不是归档根目录里的某个 HTML 文件。应用通过该路径提供 `app/public/index.html` 页面；运行端只需用 Chromium 访问 `/`，不需要寻找 HTML 文件或理解前端框架。
 
 UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作后，已经打开的 UI 必须自动更新，MVP 可采用轮询或 SSE。应用应同时支持页面操作和外部 HTTP 调用，不依赖灵矽才能使用。
 
@@ -133,7 +132,9 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 ```text
 请在 outputs/ 中生成一个可直接运行的独立 Node.js Web 应用，并遵守以下交付契约：
 
-1. 产物包括 app/、openapi.yaml、launch.json。app/ 以 app.js 为入口，可包含 package.json、public/ 和 assets/；前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
+1. 产物包括 app/、openapi.yaml、launch.json。app/ 必须包含 app.js、package.json
+   和 public/index.html；可选 public/styles.css、public/ui.js 和 assets/。
+   前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
 2. 一期仅支持 Node.js。launch.json 的 runtimeExecutable 必须为 node，
    runtimeArgs 包含包内入口文件路径，例如 ["app/app.js"]，并填写应用 name。
    所有相对路径以 outputs/ 为工作目录。不要写入 port 字段或固定端口参数。
