@@ -536,7 +536,7 @@ GET /v1/files/{file_id}/content
 
 `app/` 必须非空；`package.json` 不是必需文件，但存在时必须是合法 JSON。OpenAPI 的 `message` 字段由技能和构建提示约束，控制面做结构检查；后续可以增加更严格的 schema 校验。
 
-校验成功后，控制面保留原始 `artifact.tar.gz`，同时解析 `openapi.yaml` 并存入应用注册表，后续 `send_request` 按该规范转发。
+校验成功后，控制面保留原始 `artifact.tar.gz`，同时解析 `openapi.yaml` 并存入应用注册表，后续 `send-request` 按该规范转发。
 
 ### 4.4 注册与通知
 
