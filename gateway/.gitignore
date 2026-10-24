@@ -1,6 +1,0 @@
-node_modules/
-.runtime/
-*.log
-
-# Local deployment settings can contain API keys.
-/config/*.local.json

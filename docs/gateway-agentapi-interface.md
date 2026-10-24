@@ -241,11 +241,11 @@ Content-Type: application/json
 
 ### 3.1 `create-app` 之后的处理顺序
 
-1. 控制面在 MCP 层校验输入，分配 `app_id`，记录 `state=building`、`build_started_at` 和 `prompt`。
+1. 控制面在 MCP 层校验输入，分配 `app_id`，记录 `state=building`、`build_started_at`、`prompt` 和规范化后的 `player_names`。
 2. 调用 `POST /v1/sessions`，固定智能体版本和环境，写入 `app_id` 元数据。
 3. 保存 `session_id`；同一 `app_id` 只创建一个构建会话。
 4. 注册该会话的事件流消费者。消费者可以在连接建立前注册，AgentAPI 会回放历史事件。
-5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，把用户需求和构建约束交给智能体。
+5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，把用户需求、初始玩家名单和构建约束交给智能体。
 6. 立即向灵矽返回 `app_id` 和 `state=building`；构建在后台继续。
 7. 消费事件流，更新 `building.message`；会话进入 `idle` 后按停止原因处理。
 8. 成功时收集并校验 `/mnt/session/outputs/artifact.tar.gz`，注册应用并进入 `idle`；失败时进入 `error(stage=building)`。
@@ -536,7 +536,7 @@ GET /v1/files/{file_id}/content
 
 `app/` 必须非空；`package.json` 不是必需文件，但存在时必须是合法 JSON。OpenAPI 的 `message` 字段由技能和构建提示约束，控制面做结构检查；后续可以增加更严格的 schema 校验。
 
-校验成功后，控制面保留原始 `artifact.tar.gz`，同时解析 `openapi.yaml` 并存入应用注册表，后续 `send_request` 按该规范转发。
+校验成功后，控制面保留原始 `artifact.tar.gz`，同时解析 `openapi.yaml` 并存入应用注册表，后续 `send-request` 按该规范转发。
 
 ### 4.4 注册与通知
 

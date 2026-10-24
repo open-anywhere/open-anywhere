@@ -39,13 +39,13 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 - 应用生成后可以在 Render 上稳定启动，并通过 OpenAPI 被控制面调用。
 - 应用画面通过 AirPlay 常驻在屏幕上；切换应用不重新建立投屏。
 - Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
+- 控制面重启后从本地 SQLite 恢复应用和构建状态，未完成的构建继续监听，产物下载地址保持有效。
 
 ### 2.2 非目标
 
 - 多租户、计费、应用市场、任意第三方应用托管。
-- 为每个 OpenAPI 操作动态注册一个 MCP Tool；MVP 使用通用的 `send_request`。
+- 为每个 OpenAPI 操作动态注册一个 MCP Tool；MVP 使用稳定的 `get-app-operations` + `send-request`。
 - 服务端主动 TTS 推送；MVP 由灵矽在用户询问时轮询任务状态。
-- 应用状态跨重启持久化；MVP 允许内存态，重启后状态丢失。
 - 在 macOS 上程序化发起 AirPlay 系统镜像；MVP 手动连接，浏览器或 HDMI 兜底。
 - 把 AgentAPI 的沙箱当作应用运行时；AgentAPI 只负责构建。
 
@@ -213,8 +213,8 @@ DELETE /v1/projection-sessions/{session_id}
 
 灵矽通过控制面发现屏幕，并创建、查询、启动和停止应用（`get-screens`、`create-app`、`get-app-status`、`start-app`、`stop-app`）。工具集、状态模型、通知和错误约定见[应用管理 MCP](app-management-mcp.md)。
 
-## 7. Gateway MCP 服务
+## 7. Gateway 实现
 
-Gateway 是单进程 Go 控制层服务，MCP 是协议入口，应用管理、持久注册表、OpenAPI 执行和下游客户端按模块隔离。它实现第 6 章引用的应用管理工具，并通过 `get_openapi(app_id)`、`send_request(app_id, operationId, parameters, requestBody)` 控制应用。
+控制面统一使用 Go，入口为 `cmd/gateway`。MCP 协议接入、应用管理、SQLite 注册表、OpenAPI 校验与执行按模块隔离，AgentAPI、Render、Casting 通过客户端连接。
 
-应用规范来自构建产物注册记录，运行地址来自 Render。`services.json` 只作为独立静态联调模式保留。构建、Render 与 Casting 的 HTTP 链路已用测试替身验证；真实下游部署与主动通知的完成情况见 [Gateway 服务](gateway.md)。
+整合实现保留 Streamable HTTP 与 SSE 两种入口、完整 OpenAPI 获取、主动应用状态通知，并增加受鉴权保护的跨会话接管和异常资源对账。配置、兼容工具、迁移和验证范围见 [Gateway 服务](gateway.md)。
