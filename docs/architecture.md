@@ -54,7 +54,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | Render | 现场的应用运行时，负责启动应用、提供 HTTP、维持 AirPlay |
 | Task | 一次 `create_app` 构建任务，对外用 `task_id` 标识 |
 | App | AgentAPI 产出的、已经在 Render 上运行的应用 |
-| Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档、`launch.json` 和自检报告 |
+| Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档和 `launch.json` |
 | Stage | Render 上常驻的展示页面；AirPlay 镜像的就是它 |
 | OpenAPI | 应用能力的 HTTP 契约，控制面据此校验和转发请求 |
 | launch.json | 应用启动契约，描述可执行文件和参数；端口由部署环境通过 `PORT` 注入 |

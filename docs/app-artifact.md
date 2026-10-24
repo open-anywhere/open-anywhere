@@ -17,14 +17,13 @@ outputs/
     assets/           # 可选，随包提供的静态资源
   openapi.yaml        # OpenAPI 3.1，仅描述 /api/* 业务操作
   launch.json         # 启动契约
-  report.json         # 建议提供的自检报告
 ```
 
 - `outputs/` 是构建端的产物目录名。归档其内容，解压后直接得到 `app/`、`launch.json` 等文件，不额外嵌套一层 `outputs/`。
 - `app/` 必须自包含。前端 JSX、TypeScript、样式和依赖在构建端处理完成；运行端不执行 install 或 build，不依赖构建沙箱里的文件或全局安装的应用依赖。
 - MVP 的 Node.js 程序使用内置模块，或把可打包的依赖预先打包到入口文件；运行端提供约定版本的 Node.js。
 - Go 程序在构建端编译，目标操作系统和 CPU 架构须与运行设备一致，保留执行权限；不能默认 Linux 二进制可在 macOS 运行。
-- `openapi.yaml` 和 `launch.json` 必填。`report.json` 是构建 Agent 的自检记录，供控制面参考，不作为唯一准入依据。
+- `openapi.yaml` 和 `launch.json` 必填。
 
 打包示例：
 
@@ -141,7 +140,7 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 ```text
 请在 outputs/ 中生成一个可直接运行的独立 Web 应用，并遵守以下交付契约：
 
-1. 产物包括 app/、openapi.yaml、launch.json，建议附上 report.json。
+1. 产物包括 app/、openapi.yaml、launch.json。
    前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
 2. launch.json 描述 name、runtimeExecutable、runtimeArgs。
    所有相对路径以 outputs/ 为工作目录。不要写入 port 字段或固定端口参数。
@@ -162,14 +161,13 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 7. 请实际自测：在干净的解压目录中按 launch.json 启动，注入一个测试 PORT；
    验证 /health、/、一个改变状态的业务请求，以及打开的 UI 随之更新。
    停止后换一个可用 PORT 再次启动，确认产物未写死端口。
-   校验 OpenAPI 并核对实现，记录真实的检查结果和失败原因到 report.json。
-   未运行的检查标记为未运行，不得宣称通过。
+   校验 OpenAPI 并核对实现，修复自测发现的问题；未运行的检查不得宣称通过。
 8. 打包 outputs/ 的内容为 tar.gz，使 launch.json 位于归档根目录。
 ```
 
 ## 5. 产物验收
 
-构建 Agent 的自检报告不替代接收方检查。准入检查至少覆盖：
+接收方须独立检查产物。准入检查至少覆盖：
 
 - 归档目录结构、入口文件、运行目标和启动契约符合要求。
 - `launch.json` 不携带端口，OpenAPI 合法且与实际业务操作一致。
