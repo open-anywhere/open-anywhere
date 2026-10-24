@@ -121,7 +121,7 @@ func TestBuilderCompletesBuild(t *testing.T) {
 		t.Fatalf("notes = %+v", notes)
 	}
 	prompts := rec.promptList()
-	if len(prompts) != 1 || !strings.Contains(prompts[0], "做一个小游戏") || !strings.Contains(prompts[0], "launch.json") {
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "做一个小游戏") || !strings.Contains(prompts[0], "app-builder 技能") {
 		t.Fatalf("prompts = %+v", prompts)
 	}
 	if !strings.Contains(prompts[0], `初始玩家（按加入顺序）：["韩鲁鹏","邓军辉"]`) {
@@ -366,14 +366,13 @@ func TestBuildPrompt(t *testing.T) {
 	if strings.Contains(without, "初始玩家（按加入顺序）") {
 		t.Fatalf("prompt has player names without input: %q", without)
 	}
-	if !strings.Contains(without, "user_name") || strings.Contains(without, "身份字段使用 user_id") {
-		t.Fatalf("constraints were not updated: %q", without)
+	if !strings.Contains(without, "请按系统提示词和 app-builder 技能完成构建。") {
+		t.Fatalf("prompt does not reference the system prompt or skill: %q", without)
 	}
-	if !strings.Contains(without, "app-builder 技能") || !strings.Contains(without, "/mnt/session/outputs/artifact.tar.gz") {
-		t.Fatalf("constraints do not reference the skill or artifact path: %q", without)
-	}
-	if strings.Contains(without, "-C outputs .") {
-		t.Fatalf("constraints still include the outputs directory: %q", without)
+	for _, constraint := range []string{"硬性要求", "artifact.tar.gz", "user_name", "launch.json", "不要提问"} {
+		if strings.Contains(without, constraint) {
+			t.Fatalf("prompt should leave %q to the system prompt: %q", constraint, without)
+		}
 	}
 	with := BuildPrompt("做一个游戏", []string{"韩鲁鹏", "邓军辉"})
 	if !strings.Contains(with, `初始玩家（按加入顺序）：["韩鲁鹏","邓军辉"]`) {

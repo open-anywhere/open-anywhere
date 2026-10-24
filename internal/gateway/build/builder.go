@@ -501,24 +501,14 @@ func compact(text string) string {
 	return string(runes[:200])
 }
 
-// BuildPrompt combines the user's request, the initial player names and a short
-// list of hard requirements. The app-builder skill carries the full contract;
-// the message repeats the critical constraints in case the skill is unavailable.
+// BuildPrompt combines the user's request and the initial player names into the
+// short message sent to the build agent. The full contract lives in the agent's
+// system prompt and the app-builder skill, keeping this message lightweight.
 func BuildPrompt(requirement string, playerNames []string) string {
-	prompt := "需求：" + strings.TrimSpace(requirement) + "\n\n"
+	prompt := "需求：" + strings.TrimSpace(requirement)
 	if len(playerNames) > 0 {
 		encoded, _ := json.Marshal(playerNames)
-		prompt += "初始玩家（按加入顺序）：" + string(encoded) + "\n\n"
+		prompt += "\n\n初始玩家（按加入顺序）：" + string(encoded)
 	}
-	return prompt + buildConstraints
+	return prompt + "\n\n请按系统提示词和 app-builder 技能完成构建。"
 }
-
-const buildConstraints = `请使用 app-builder 技能完成构建。硬性要求：
-- 产物写入 /mnt/session/outputs/artifact.tar.gz，归档根目录直接包含 app/、openapi.yaml、launch.json；不要把 outputs/ 目录或 artifact.tar.gz 自身打进归档。
-- app/ 是自包含的 Node.js 应用，入口 app/app.js，读取 PORT 环境变量，实现 GET /health 和 GET /。
-- /api/* 使用 OpenAPI 3.1 描述，operationId 唯一，业务响应包含字符串 message。
-- 玩家身份使用 user_name；提供了初始名单时按给定顺序建立，不编造、增删或改名。
-- 不依赖外部数据库、外部服务或 CDN；运行时不执行安装或构建。
-- 完成后自测、打包并校验。
-
-不要提问；按合理假设完成。`
