@@ -84,7 +84,7 @@ skills/app-builder/
 │   │   └── launch.json
 │   ├── artifact-contract.md     # 应用包、launch.json、运行约定
 │   ├── api-contract.md          # OpenAPI 3.1 与业务响应约定
-│   └── self-test.md             # 自测步骤和检查项
+│   └── self-test.md             # 最小验证清单
 └── scripts/
     └── validate-artifact.sh     # 归档结构和启动契约的静态检查
 ```
@@ -167,9 +167,9 @@ Content-Type: application/json
   "runtime": "claudecode",
   "model": {
     "id": "your-model-id",
-    "effort": {"type": "high"}
+    "effort": {"type": "medium"}
   },
-  "system": "你是 Open Anywhere 的应用构建智能体。按 app-builder 技能完成应用，遵守产物契约并自测。不要提问，不要等待确认。",
+  "system": "<open-anywhere-app-builder 系统提示词全文，见 docs/agent-system-prompts/open-anywhere-app-builder.txt>",
   "tools": [
     {"type": "agent_toolset_20260401"}
   ],
@@ -206,13 +206,15 @@ Content-Type: application/json
 | --- | --- | --- |
 | `runtime` | `claudecode` | 编码能力完整，内置工具开箱即用；技能由 AgentAPI 在沙箱启动前准备 |
 | `model.id` | 部署配置 | 必须支持工具调用；部署前确认模型在当前账户可用 |
-| `model.effort` | `high` 或按模型能力 | 构建任务较长，默认使用较高思考强度 |
+| `model.effort` | `medium` | 构建任务需要推理但不应过度思考；使用适中强度，避免自测和内省占用过多时间 |
 | `tools` | `agent_toolset_20260401` | 只启用运行时内置工具集，不声明 `mcp_toolset` 或自定义工具 |
 | `skills` | 固定 `skill_id` 和版本号字符串 | 一个智能体最多附加 20 个技能；本期只附加一个构建技能 |
 | `mcp_servers` | 省略 | 不接入任何 MCP Server，也不在会话上关联 Vault |
 | `metadata.purpose` | `open-anywhere-app-builder` | 便于在 Portal 和资源列表中识别 |
 
 不配置 MCP 是刻意的边界：构建只需要沙箱内的文件、命令和模型能力；接入 MCP 会增加凭证、网络和工具确认流程，而控制面没有对应的审批逻辑。
+
+`system` 必须使用 `docs/agent-system-prompts/open-anywhere-app-builder.txt` 的全文，而不是一句话摘要。系统提示词承载完整构建契约、产物结构、启动与 HTTP 约束、玩家身份规则、最小验证范围和最终输出要求；技能提供模板和参考文件。两者分工明确后，灵犀侧的用户消息只需要传需求和初始玩家名单。
 
 ### 2.5 版本与发布
 
@@ -245,7 +247,7 @@ Content-Type: application/json
 2. 调用 `POST /v1/sessions`，固定智能体版本和环境，写入 `app_id` 元数据。
 3. 保存 `session_id`；同一 `app_id` 只创建一个构建会话。
 4. 注册该会话的事件流消费者。消费者可以在连接建立前注册，AgentAPI 会回放历史事件。
-5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，把用户需求、初始玩家名单和构建约束交给智能体。
+5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，只把用户需求和初始玩家名单交给智能体；完整构建契约由系统提示词和技能承载。
 6. 立即向灵矽返回 `app_id` 和 `state=building`；构建在后台继续。
 7. 消费事件流，更新 `building.message`；会话进入 `idle` 后按停止原因处理。
 8. 成功时收集并校验 `/mnt/session/outputs/artifact.tar.gz`，注册应用并进入 `idle`；失败时进入 `error(stage=building)`。
@@ -336,7 +338,7 @@ Content-Type: application/json
         "parts": [
           {
             "type": "text",
-            "text": "需求：做一个掷骰子游戏，点击按钮掷出两个骰子，显示点数和最近几次结果。\n\n请使用 app-builder 技能完成构建。硬性要求：\n- 产物写入 /mnt/session/outputs/artifact.tar.gz，归档根目录包含 app/、openapi.yaml、launch.json；\n- app/ 是自包含 Node.js 应用，入口 app/app.js，读取 PORT，实现 GET /health 和 GET /；\n- /api/* 使用 OpenAPI 3.1 描述，业务响应包含 message；\n- 不依赖外部数据库、外部服务或 CDN；\n- 完成后自测、打包并校验。\n不要提问；按合理假设完成。"
+            "text": "需求：做一个掷骰子游戏，点击按钮掷出两个骰子，显示点数和最近几次结果。\n\n初始玩家（按加入顺序）：[\"韩鲁鹏\",\"邓军辉\"]\n\n请按系统提示词和 app-builder 技能完成构建。"
           }
         ]
       }
@@ -345,8 +347,8 @@ Content-Type: application/json
 }
 ```
 
-- `text` 由控制面拼接：前半部分是灵矽整理后的用户需求，后半部分是固定的构建约束。
-- 硬性约束在消息里重复一次，避免技能未加载时智能体缺少关键要求；完整说明仍以技能为准。
+- `text` 由控制面拼接：需求文本、可选的初始玩家名单，以及固定的一句“按系统提示词和 app-builder 技能完成构建”。没有初始玩家时省略名单段落。
+- 构建契约、产物结构、最小验证和禁止事项都在系统提示词与技能中，不在消息里重复，避免智能体把时间花在逐条对照约束上。
 - 不在消息里放入 `app_id`、`session_id`、屏幕信息或任何凭证。
 - 请求返回只表示事件已被接收，构建结果必须从事件流读取。
 

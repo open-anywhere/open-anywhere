@@ -1,6 +1,6 @@
 ---
 name: app-builder
-description: 把用户需求构建为 Open Anywhere 应用包：自包含 Node.js Web 应用、OpenAPI 3.1 业务契约和 launch.json，最终产出 /mnt/session/outputs/artifact.tar.gz。用于 create-app 的云端构建任务，包含猜电影示例模板、契约、自测步骤和静态校验脚本。
+description: 把用户需求构建为 Open Anywhere 应用包：自包含 Node.js Web 应用、OpenAPI 3.1 业务契约和 launch.json，最终产出 /mnt/session/outputs/artifact.tar.gz。用于 create-app 的云端构建任务，包含猜电影示例模板、契约、最小验证步骤和静态校验脚本。
 ---
 
 # Open Anywhere 应用构建
@@ -33,7 +33,7 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 3. **实现后端**：修改 `app/app.js`。只使用 Node.js 内置模块，或在构建期把依赖打包进 `app/`；运行时不执行 `npm install` 或构建命令。
 4. **实现页面**：修改 `app/public/index.html`。页面通过 `fetch` 调用 `/api/*`，并轮询或使用 SSE 自动刷新；不要引用外部 CDN、字体或在线脚本。
 5. **更新契约**：修改 `openapi.yaml`，让它与实际 `/api/*` 操作一一对应；业务成功和错误响应都必须包含字符串 `message`。
-6. **本地自测**：按 `references/self-test.md` 在干净目录中启动，验证 `/health`、`/`、至少一个改变状态的业务操作，并换端口重启。
+6. **最小验证**：按 `references/self-test.md` 做一次静态检查、一次启动、`/health`、`/` 和一个业务操作。不要做浏览器截图、UI 自动化或穷举错误分支。
 7. **打包**：
    ```bash
    cd /mnt/session/outputs
@@ -76,23 +76,20 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 - 日志写 stdout/stderr；不要自行后台化。
 - 产物压缩包不超过 100 MiB，单文件不超过 64 MiB；优先使用内置模块，避免无谓依赖。
 
-## 自测底线
+## 最小验证
 
-没有实际运行的检查不得声称通过。至少完成：
+没有实际运行的检查不得声称通过，但也只做必要检查：
 
-1. 在干净解压目录用测试 `PORT` 启动。
-2. `curl -fsS http://127.0.0.1:$PORT/health` 返回 `{"status":"ok"}`。
-3. `curl -fsS http://127.0.0.1:$PORT/` 返回可加载的 HTML。
-4. 调用一个改变状态的业务操作，再从状态接口或页面确认变化。
-5. 停止进程，换另一个 `PORT` 重新启动，确认没有写死端口。
-6. 发送 `SIGTERM`，确认进程退出。
+1. 运行 `scripts/validate-artifact.sh .` 确认静态检查通过。
+2. 用测试 `PORT` 启动一次，确认 `/health`、`/` 和一个业务操作可用。
+3. 直接打包（不要测试 SIGTERM 或结束进程），打包后再运行一次 `validate-artifact.sh` 检查归档。
 
-详细命令和检查项见 `references/self-test.md`。
+不要截图、跑浏览器或 UI 自动化，不要逐项测试所有错误分支，也不要反复换端口重启。细节见 `references/self-test.md`。
 
 ## 参考文件
 
 - `references/artifact-contract.md`：目录结构、launch.json、进程与运行约定。
 - `references/api-contract.md`：OpenAPI 3.1、业务响应、参数和控制面调用方式。
-- `references/self-test.md`：可执行的启动、验收和排障步骤。
+- `references/self-test.md`：最小验证清单，只做必要检查。
 - `references/app-template/`：最小可运行模板，必须先复制再修改。
 - `scripts/validate-artifact.sh`：归档结构和启动契约的静态检查。
