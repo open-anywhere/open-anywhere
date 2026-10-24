@@ -5,6 +5,8 @@
 
 应用包是 AgentAPI 交付的可独立运行的 Web 应用。包内声明启动方法、页面和业务 API；端口在部署时注入，不固化到产物。本文定义产物格式、应用运行约定及构建 Agent 提示，不定义 Render 的 HTTP 接口。
 
+**一期（MVP）仅支持 Node.js 运行时，`runtimeExecutable` 固定为 `node`。** 其他语言运行时和预编译可执行文件不在一期支持范围内。
+
 ## 1. 交付格式
 
 构建结果打包为 `tar.gz`，发布到运行端可下载的 HTTP(S) URL。下载地址是交付信息，不写入 `launch.json`。解压后的 artifact 根目录如下：
@@ -12,7 +14,7 @@
 ```text
 outputs/
   app/
-    index.js          # Node.js 自包含入口；Go 时替换为预编译可执行文件
+    index.js          # Node.js 自包含入口
     index.html        # UI（可选，也可以由 index.js 内联返回）
     assets/           # 可选，随包提供的静态资源
   openapi.yaml        # OpenAPI 3.1，仅描述 /api/* 业务操作
@@ -22,7 +24,6 @@ outputs/
 - `outputs/` 是构建端的产物目录名。归档其内容，解压后直接得到 `app/`、`launch.json` 等文件，不额外嵌套一层 `outputs/`。
 - `app/` 必须自包含。前端 JSX、TypeScript、样式和依赖在构建端处理完成；运行端不执行 install 或 build，不依赖构建沙箱里的文件或全局安装的应用依赖。
 - MVP 的 Node.js 程序使用内置模块，或把可打包的依赖预先打包到入口文件；运行端提供约定版本的 Node.js。
-- Go 程序在构建端编译，目标操作系统和 CPU 架构须与运行设备一致，保留执行权限；不能默认 Linux 二进制可在 macOS 运行。
 - `openapi.yaml` 和 `launch.json` 必填。
 
 打包示例：
@@ -48,8 +49,8 @@ Node.js 示例：
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `name` | 是 | 应用名称，用于日志、注册表和展示 |
-| `runtimeExecutable` | 是 | 可执行文件，例如 `node` 或 `./app/timer`；必须符合运行端允许的执行策略 |
-| `runtimeArgs` | 是 | 启动参数数组；无参数时使用 `[]`，不含部署端口 |
+| `runtimeExecutable` | 是 | 一期固定为 `node`，其他值不予接受 |
+| `runtimeArgs` | 是 | Node.js 启动参数数组，包含包内入口文件路径，例如 `["app/index.js"]`；不含部署端口 |
 | `healthPath` | 否 | 默认 `/health`；MVP 固定使用 `/health`，若声明必须为该值 |
 | `readyTimeoutMs` | 否 | 就绪超时，单位毫秒，默认 `10000`，须为正整数；运行端可设置上限 |
 
@@ -62,19 +63,7 @@ Node.js 示例：
 | `PORT` | 必填，部署时确定的端口；必须是 1–65535 的整数 |
 | `HOST` | 部署时注入 `0.0.0.0`；未设置时应用默认使用 `0.0.0.0` |
 
-应用不得用写死的端口覆盖注入值。缺少或非法 `PORT` 时，向 stderr 写明原因并以非零状态退出；端口被占用时启动失败，不自行切换端口。不同语言都读取相同的环境变量，不根据 `runtimeExecutable` 猜测或拼接端口参数。
-
-Go 示例：
-
-```json
-{
-  "name": "timer",
-  "runtimeExecutable": "./app/timer",
-  "runtimeArgs": [],
-  "healthPath": "/health",
-  "readyTimeoutMs": 10000
-}
-```
+应用不得用写死的端口覆盖注入值。缺少或非法 `PORT` 时，向 stderr 写明原因并以非零状态退出；端口被占用时启动失败，不自行切换端口。Node.js 应用读取上述环境变量，不根据 `runtimeExecutable` 猜测或拼接端口参数。
 
 ## 3. 应用运行约定
 
@@ -138,11 +127,12 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 下面这段可以作为构建任务的公共约束，与具体应用需求一起交给编码 Agent：
 
 ```text
-请在 outputs/ 中生成一个可直接运行的独立 Web 应用，并遵守以下交付契约：
+请在 outputs/ 中生成一个可直接运行的独立 Node.js Web 应用，并遵守以下交付契约：
 
 1. 产物包括 app/、openapi.yaml、launch.json。
    前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
-2. launch.json 描述 name、runtimeExecutable、runtimeArgs。
+2. 一期仅支持 Node.js。launch.json 的 runtimeExecutable 必须为 node，
+   runtimeArgs 包含包内入口文件路径，例如 ["app/index.js"]，并填写应用 name。
    所有相对路径以 outputs/ 为工作目录。不要写入 port 字段或固定端口参数。
    应用必须读取环境变量 PORT；HOST 默认 0.0.0.0。
    PORT 缺失或非法时退出并说明原因，不擅自使用默认端口。
@@ -169,7 +159,7 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 
 接收方须独立检查产物。准入检查至少覆盖：
 
-- 归档目录结构、入口文件、运行目标和启动契约符合要求。
+- 归档目录结构、入口文件和启动契约符合要求；一期仅接受 `runtimeExecutable: "node"` 的 Node.js 应用。
 - `launch.json` 不携带端口，OpenAPI 合法且与实际业务操作一致。
 - 无 install/build 步骤，仅注入 `HOST`、`PORT` 即可从 artifact 根目录启动。
 - 在就绪时限内，`GET /health` 返回 HTTP `200` 和 `{"status":"ok"}`；缺失该路由则验收失败。
