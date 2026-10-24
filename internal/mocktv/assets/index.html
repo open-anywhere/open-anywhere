@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock TV</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: #0b0d10; color: #e8eaed; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  body { overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  video { width: 100%; height: 100%; object-fit: contain; background: #000; cursor: pointer; }
+  #hud { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; pointer-events: none; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; background: rgba(20,24,30,.72); border: 1px solid rgba(255,255,255,.08); font-size: 13px; backdrop-filter: blur(10px); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #8b949e; transition: background .2s, box-shadow .2s; }
+  .dot.ok { background: #3fb950; box-shadow: 0 0 12px rgba(63,185,80,.6); }
+  .dot.wait { background: #d29922; }
+  .dot.err { background: #f85149; }
+  #actions { display: flex; gap: 8px; pointer-events: auto; }
+  button { border: 1px solid rgba(255,255,255,.12); background: rgba(20,24,30,.72); color: #e8eaed; border-radius: 10px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
+  button:hover { background: rgba(40,46,56,.9); }
+  #overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+  #overlay.show { display: flex; }
+  #overlay .box { text-align: center; padding: 28px 32px; border-radius: 16px; background: rgba(20,24,30,.92); border: 1px solid rgba(255,255,255,.1); box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+  #overlay h1 { font-size: 18px; margin: 0 0 8px; font-weight: 600; }
+  #overlay p { margin: 0 0 18px; color: #9da7b3; font-size: 13px; }
+  #overlay button { padding: 10px 18px; font-size: 14px; }
+  #footer { position: fixed; bottom: 12px; left: 16px; right: 16px; display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: #6e7681; pointer-events: none; }
+  #url { max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 600px) { #footer { display: none; } }
+</style>
+</head>
+<body>
+<div id="stage"><video id="screen" muted playsinline autoplay></video></div>
+<div id="hud">
+  <div class="chip"><span id="dot" class="dot"></span><span id="status">等待投屏…</span></div>
+  <div id="actions">
+    <button id="fullscreen" type="button">全屏</button>
+    <button id="reload" type="button">重连</button>
+  </div>
+</div>
+<div id="footer"><span id="name">Mock TV</span><span id="url"></span></div>
+<div id="overlay"><div class="box"><h1>点击开始播放</h1><p>浏览器阻止了自动播放，点一下继续。</p><button id="start" type="button">播放</button></div></div>
+<script src="/mpegts.js"></script>
+<script>
+(() => {
+  const video = document.getElementById('screen');
+  const dot = document.getElementById('dot');
+  const statusEl = document.getElementById('status');
+  const urlEl = document.getElementById('url');
+  const nameEl = document.getElementById('name');
+  const overlay = document.getElementById('overlay');
+  let player = null;
+  let activeURL = '';
+  let current = { state: 'idle', url: '', name: 'Mock TV' };
+  let retries = 0;
+  let retryTimer = null;
+
+  function setStatus(text, kind) {
+    statusEl.textContent = text;
+    dot.className = 'dot' + (kind ? ' ' + kind : '');
+  }
+
+  function destroy() {
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    activeURL = '';
+    if (!player) return;
+    const old = player;
+    player = null;
+    try { old.pause(); } catch (_) {}
+    try { old.unload(); } catch (_) {}
+    try { old.detachMediaElement(); } catch (_) {}
+    try { old.destroy(); } catch (_) {}
+  }
+
+  function start(url) {
+    if (!url) return;
+    destroy();
+    if (!window.mpegts || !mpegts.isSupported()) {
+      setStatus('浏览器不支持 MSE，请用 Chrome / Edge', 'err');
+      return;
+    }
+    // The player runs in a worker created from a blob URL, where a relative
+    // path has no base to resolve against.
+    const source = new URL('/stream?url=' + encodeURIComponent(url), location.href).toString();
+    const instance = mpegts.createPlayer({ type: 'mse', isLive: true, url: source }, {
+      enableWorker: true,
+      lazyLoad: false,
+      liveBufferLatencyChasing: true,
+      reuseRedirectedURL: true,
+    });
+    player = instance;
+    activeURL = url;
+    instance.attachMediaElement(video);
+    instance.on(mpegts.Events.MEDIA_INFO, () => { retries = 0; });
+    instance.on(mpegts.Events.ERROR, (type, detail, info) => {
+      if (player !== instance || current.state !== 'playing' || retryTimer) return;
+      console.warn('mpegts error', type, detail, info);
+      if (retries++ > 8) {
+        setStatus('播放失败，点“重连”重试', 'err');
+        return;
+      }
+      setStatus('流中断，正在重试…', 'err');
+      retryTimer = setTimeout(() => { retryTimer = null; start(current.url); }, 1500);
+    });
+    try {
+      instance.load();
+      const promise = instance.play();
+      if (promise && typeof promise.catch === 'function') {
+        promise.catch(() => {
+          overlay.classList.add('show');
+          setStatus('等待点击播放', 'wait');
+        });
+      }
+    } catch (err) {
+      console.warn(err);
+      setStatus('播放失败，点“重连”重试', 'err');
+    }
+  }
+
+  function apply(state) {
+    current = state || { state: 'idle', url: '', name: 'Mock TV' };
+    nameEl.textContent = current.name || 'Mock TV';
+    urlEl.textContent = current.url || '';
+    if (current.state === 'playing' && current.url) {
+      overlay.classList.remove('show');
+      if (activeURL === current.url && player) {
+        setStatus('正在播放', 'ok');
+        return;
+      }
+      start(current.url);
+      setStatus('正在播放', 'ok');
+      return;
+    }
+    destroy();
+    overlay.classList.remove('show');
+    if (current.state === 'cued') {
+      setStatus('已收到投屏，等待开始', 'wait');
+    } else {
+      setStatus('等待投屏…', '');
+    }
+  }
+
+  async function sync() {
+    try {
+      const response = await fetch('/api/state', { cache: 'no-store' });
+      apply(await response.json());
+    } catch (_) {
+      setStatus('无法连接 mock-tv', 'err');
+    }
+  }
+
+  const events = new EventSource('/events');
+  events.addEventListener('state', (event) => {
+    try { apply(JSON.parse(event.data)); } catch (_) {}
+  });
+  events.onerror = () => setStatus('与 mock-tv 断开，正在重连…', 'err');
+
+  document.getElementById('reload').addEventListener('click', () => {
+    retries = 0;
+    if (current.state === 'playing' && current.url) {
+      destroy();
+      start(current.url);
+    } else {
+      sync();
+    }
+  });
+  document.getElementById('fullscreen').addEventListener('click', async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch (_) {}
+  });
+  document.getElementById('start').addEventListener('click', () => {
+    overlay.classList.remove('show');
+    video.play().catch(() => {});
+  });
+  video.addEventListener('click', () => { video.play().catch(() => {}); });
+
+  sync();
+})();
+</script>
+</body>
+</html>
