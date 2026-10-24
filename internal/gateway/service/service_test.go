@@ -24,6 +24,18 @@ paths:
   /api/items/{id}:
     post:
       operationId: updateItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: q
+          in: query
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object, properties: {n: {type: integer}}}
       responses:
         "200":
           description: ok
@@ -167,7 +179,10 @@ func (f *fakeCasting) GetSession(_ context.Context, id string) (casting.Session,
 		state = f.states[0]
 		f.states = f.states[1:]
 	}
-	return casting.Session{ID: id, State: state}, nil
+	copy := f.session
+	copy.ID = id
+	copy.State = state
+	return copy, nil
 }
 
 func (f *fakeCasting) StopSession(_ context.Context, id string) (casting.Session, error) {
@@ -231,7 +246,8 @@ func newTestEnv(t *testing.T, catalog *screen.Catalog) *testEnv {
 		registry: app.NewRegistry(),
 		builder:  &fakeBuilder{},
 		render: &fakeRender{
-			instance: readyApp(),
+			instance:    readyApp(),
+			getInstance: readyApp(),
 		},
 		casting: &fakeCasting{
 			target:  testTarget(),
@@ -526,7 +542,9 @@ func TestStartAppTargetFailures(t *testing.T) {
 		if snapshot.State != app.StateError || snapshot.Error == nil || snapshot.Error.Stage != app.StageStarting || snapshot.Error.Code != "TARGET_UNREACHABLE" {
 			t.Fatalf("snapshot = %+v", snapshot)
 		}
-		if snapshot.ScreenID != "tv_1" {
+		// No downstream POST occurred; an offline target must not leave a
+		// phantom reservation that reconciliation can never identify.
+		if snapshot.ScreenID != "" || snapshot.PendingRuntime || snapshot.CleanupPending {
 			t.Fatalf("screen = %q", snapshot.ScreenID)
 		}
 	})

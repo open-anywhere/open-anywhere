@@ -105,7 +105,8 @@ func validateArchive(filename string) (Result, error) {
 		return Result{}, &Error{Code: "ARTIFACT_CORRUPT", Message: "not a gzip archive: " + err.Error()}
 	}
 	defer gz.Close()
-	reader := tar.NewReader(gz)
+	expanded := &io.LimitedReader{R: gz, N: maxTotal + 1}
+	reader := tar.NewReader(expanded)
 
 	files := make(map[string]bool)
 	var (
@@ -143,6 +144,9 @@ func validateArchive(filename string) (Result, error) {
 		if header.Size < 0 || header.Size > maxFileSize || total > maxTotal {
 			return Result{}, &Error{Code: "ARTIFACT_TOO_LARGE", Message: "archive contents exceed the size limit"}
 		}
+		if files[name] {
+			return Result{}, invalid("duplicate archive path %q", name)
+		}
 		files[name] = true
 		switch name {
 		case "launch.json":
@@ -155,6 +159,12 @@ func validateArchive(filename string) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+	}
+	if _, err := io.Copy(io.Discard, expanded); err != nil {
+		return Result{}, invalid("gzip integrity check failed")
+	}
+	if expanded.N <= 0 {
+		return Result{}, invalid("expanded archive too large")
 	}
 	if len(launchData) == 0 {
 		return Result{}, invalid("launch.json not found at archive root")
@@ -208,6 +218,10 @@ func parseLaunch(data []byte, files map[string]bool) (Launch, error) {
 	}
 	if len(value.RuntimeArgs) == 0 {
 		return Launch{}, invalid("runtimeArgs is required")
+	}
+	first := value.RuntimeArgs[0]
+	if !strings.HasPrefix(first, "app/") || path.Clean(first) != first || !files[first] {
+		return Launch{}, invalid("first runtime argument must be the app/ entry file")
 	}
 	entryFound := false
 	for _, arg := range value.RuntimeArgs {

@@ -183,14 +183,14 @@ paths:
 	if operation.Summary != "更新条目" || operation.Description != "修改条目名称并返回最新状态" {
 		t.Fatalf("operation = %+v", operation)
 	}
-	if len(operation.Parameters) != 2 {
+	if len(operation.Parameters) != 3 {
 		t.Fatalf("parameters = %+v", operation.Parameters)
 	}
 	if operation.Parameters[0].Name != "id" || operation.Parameters[0].Description != "覆盖后的说明" || operation.Parameters[0].Schema["type"] != "integer" {
 		t.Fatalf("path parameter = %+v", operation.Parameters[0])
 	}
-	if operation.Parameters[1].Name != "verbose" || operation.Parameters[1].In != "query" {
-		t.Fatalf("query parameter = %+v", operation.Parameters[1])
+	if operation.Parameters[2].Name != "verbose" || operation.Parameters[2].In != "query" {
+		t.Fatalf("query parameter = %+v", operation.Parameters[2])
 	}
 	if operation.RequestBody == nil || !operation.RequestBody.Required || operation.RequestBody.Description != "新的条目字段" {
 		t.Fatalf("body = %+v", operation.RequestBody)
@@ -208,7 +208,7 @@ paths:
 		t.Fatal(err)
 	}
 	restoredOperation, _ := restored.Lookup("updateItem")
-	if len(restoredOperation.Parameters) != 2 || restoredOperation.RequestBody == nil {
+	if len(restoredOperation.Parameters) != 3 || restoredOperation.RequestBody == nil {
 		t.Fatalf("restored = %+v", restoredOperation)
 	}
 }
@@ -227,5 +227,29 @@ func TestParseRejectsMalformedOperationMetadata(t *testing.T) {
 				t.Fatal("expected an error")
 			}
 		})
+	}
+}
+
+func TestFullDocumentAndReferencesPersist(t *testing.T) {
+	source := `{"openapi":"3.1.0","paths":{"/api/x":{"post":{"operationId":"update","requestBody":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Payload"}}}},"responses":{"200":{"description":"ok"}}}}},"components":{"schemas":{"Payload":{"type":"object","required":["count"],"properties":{"count":{"type":"integer"}}}}}}`
+	spec, err := Parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Spec
+	if err = json.Unmarshal(b, &restored); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := restored.Document()
+	if err != nil || doc["components"] == nil {
+		t.Fatal(doc, err)
+	}
+	op, _ := restored.Lookup("update")
+	if op.RequestBody.Schema["type"] != "object" {
+		t.Fatal("unresolved body")
 	}
 }

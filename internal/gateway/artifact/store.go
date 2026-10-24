@@ -65,6 +65,10 @@ func NewStore(dir, baseURL string, repo Repository) (*Store, error) {
 			// The configured directory wins over a stale absolute path from a
 			// previous deployment.
 			item.Path = filepath.Join(store.dir, item.AppID+".tar.gz")
+			item.DownloadURL = store.downloadURL(item.AppID, item.Token)
+			if err := repo.SaveArtifact(item); err != nil {
+				return nil, fmt.Errorf("restore artifact location: %w", err)
+			}
 			store.items[item.AppID] = item
 		}
 	}
@@ -101,7 +105,7 @@ func (s *Store) SaveFile(appID, source string, size int64, digest string) (Item,
 		Size:        actualSize,
 		SHA256:      actualDigest,
 		Token:       token,
-		DownloadURL: s.baseURL + "/artifacts/" + url.PathEscape(appID) + "/artifact.tar.gz?token=" + url.QueryEscape(token),
+		DownloadURL: s.downloadURL(appID, token),
 		StoredAt:    time.Now().UTC(),
 	}
 	if s.repo != nil {
@@ -114,6 +118,10 @@ func (s *Store) SaveFile(appID, source string, size int64, digest string) (Item,
 	s.items[appID] = item
 	s.mu.Unlock()
 	return item, nil
+}
+
+func (s *Store) downloadURL(appID, token string) string {
+	return s.baseURL + "/artifacts/" + url.PathEscape(appID) + "/artifact.tar.gz?token=" + url.QueryEscape(token)
 }
 
 // Get returns the item stored for appID.

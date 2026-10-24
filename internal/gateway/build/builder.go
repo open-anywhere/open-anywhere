@@ -78,10 +78,17 @@ func (b *Builder) Start(ctx context.Context, value app.App) error {
 	}
 	started := b.now()
 	if entry, ok := b.registry.Get(value.ID); ok {
-		entry.Update(func(a *app.App) {
+		if err := entry.Do(func(a *app.App) error {
 			a.SessionID = session.ID
 			a.BuildStartedAt = started
-		})
+			return nil
+		}); err != nil {
+			b.archive(session.ID)
+			return fmt.Errorf("persist build session: %w", err)
+		}
+	} else {
+		b.archive(session.ID)
+		return fmt.Errorf("application record disappeared before build submission")
 	}
 	if err := b.client.SubmitMessage(ctx, session.ID, BuildPrompt(value.Prompt, value.PlayerNames)); err != nil {
 		status := b.sessionStatus(session.ID)
@@ -117,7 +124,11 @@ func (b *Builder) sessionStatus(sessionID string) string {
 }
 
 func (b *Builder) watch(appID, sessionID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), b.cfg.BuildTimeout)
+	deadline := b.now().Add(b.cfg.BuildTimeout)
+	if record, ok := b.registry.Get(appID); ok && !record.Snapshot().BuildStartedAt.IsZero() {
+		deadline = record.Snapshot().BuildStartedAt.Add(b.cfg.BuildTimeout)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	seen := make(map[string]bool)
 	active := false
@@ -276,9 +287,9 @@ func (b *Builder) register(entry *app.Record, result artifact.Result, item artif
 	finished := b.now()
 	applied := false
 	var snapshot app.App
-	entry.Update(func(a *app.App) {
+	err := entry.Do(func(a *app.App) error {
 		if a.State != app.StateBuilding {
-			return
+			return nil
 		}
 		applied = true
 		a.State = app.StateIdle
@@ -297,7 +308,12 @@ func (b *Builder) register(entry *app.Record, result artifact.Result, item artif
 		a.LastAgentMessage = ""
 		a.LastStatusMessage = ""
 		snapshot = *a
+		return nil
 	})
+	if err != nil {
+		b.logf("build %s persist ready failed: %v", snapshot.ID, err)
+		return
+	}
 	if !applied {
 		return
 	}

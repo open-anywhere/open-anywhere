@@ -43,9 +43,12 @@ type Server struct {
 	callTimeout time.Duration
 	version     string
 
-	mu       sync.Mutex
-	sessions map[string]*session
-	logf     func(string, ...any)
+	mu            sync.Mutex
+	sessions      map[string]*session
+	logf          func(string, ...any)
+	Compatibility bool
+	SpeakerProbe  bool
+	AllowClaim    bool
 }
 
 type session struct {
@@ -165,6 +168,9 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		Capabilities: &sdk.ServerCapabilities{Tools: &sdk.ToolCapabilities{ListChanged: false}},
 	})
 	addTools(server, tools, identity, s.callTimeout)
+	if s.Compatibility {
+		addCompatibility(server, tools, identity, s.SpeakerProbe, s.AllowClaim)
+	}
 	binding := &connectionTransport{inner: transport}
 
 	// Register before Connect: Connect writes and flushes the endpoint event,
@@ -211,6 +217,12 @@ func (s *Server) ServeMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
 	}
+	for key, want := range map[string]string{"X-Linx-Device-Id": item.identity.DeviceID, "X-Linx-Agent-Id": item.identity.AgentID, "X-Linx-Session-Id": item.identity.SessionID} {
+		if got := r.Header.Get(key); got != "" && got != want {
+			http.Error(w, "session owner mismatch", 403)
+			return
+		}
+	}
 	item.transport.ServeHTTP(w, r)
 }
 
@@ -229,6 +241,7 @@ func (s *Server) Notify(owner app.Identity, notification app.Notification) {
 		}
 	}
 	s.mu.Unlock()
+	s.logf("mcp: app_status app=%s state=%s subscribers=%d", notification.AppID, notification.State, len(sessions))
 	for _, item := range sessions {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := item.write(ctx, message); err != nil {

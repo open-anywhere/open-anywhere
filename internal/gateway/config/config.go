@@ -19,8 +19,11 @@ import (
 
 // Config is the gateway process configuration.
 type Config struct {
-	ConfigPath string
-	Addr       string
+	MCPToken     string
+	PublicHost   string
+	SpeakerProbe bool
+	ConfigPath   string
+	Addr         string
 
 	AgentAPIURL   string
 	AgentAPIKey   string
@@ -50,8 +53,11 @@ type Config struct {
 // fileConfig mirrors the YAML configuration file. Zero values mean "not set"
 // and fall back to the built-in defaults.
 type fileConfig struct {
-	Addr     string `yaml:"addr"`
-	AgentAPI struct {
+	Addr         string `yaml:"addr"`
+	MCPToken     string `yaml:"mcp_token"`
+	PublicHost   string `yaml:"public_host"`
+	SpeakerProbe bool   `yaml:"speaker_probe"`
+	AgentAPI     struct {
 		BaseURL       string `yaml:"base_url"`
 		APIKey        string `yaml:"api_key"`
 		AgentID       string `yaml:"agent_id"`
@@ -117,8 +123,14 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	}
 
 	var cfg Config
+	cfg.MCPToken = file.MCPToken
+	cfg.PublicHost = file.PublicHost
+	cfg.SpeakerProbe = file.SpeakerProbe
 	flags := flag.NewFlagSet("gateway", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.StringVar(&cfg.MCPToken, "mcp-token", cfg.MCPToken, "MCP bearer token")
+	flags.StringVar(&cfg.PublicHost, "public-host", cfg.PublicHost, "allowed reverse proxy Host")
+	flags.BoolVar(&cfg.SpeakerProbe, "speaker-probe", cfg.SpeakerProbe, "enable diagnostic speaker tool")
 	flags.StringVar(&cfg.ConfigPath, "config", path, "YAML configuration file")
 	flags.StringVar(&cfg.Addr, "addr", env(getenv, "GATEWAY_ADDR", base.Addr), "HTTP listen address")
 	flags.StringVar(&cfg.AgentAPIURL, "agentapi-url", env(getenv, "AGENTAPI_BASE_URL", base.AgentAPIURL), "AgentAPI base URL")

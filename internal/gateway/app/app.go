@@ -48,7 +48,7 @@ type Identity struct {
 }
 
 // Key returns a stable comparison key for the owning device/session.
-func (i Identity) Key() string { return i.DeviceID + "\x00" + i.SessionID }
+func (i Identity) Key() string { return i.DeviceID + "\x00" + i.AgentID + "\x00" + i.SessionID }
 
 // Equal reports whether two identities refer to the same device/session.
 func (i Identity) Equal(other Identity) bool { return i.Key() == other.Key() }
@@ -93,6 +93,9 @@ type App struct {
 	TargetID            string
 	EndpointID          string
 	ProjectionSessionID string
+	PendingRuntime      bool
+	PendingProjection   bool
+	CleanupPending      bool
 
 	StartedAt time.Time
 	StoppedAt time.Time
@@ -146,14 +149,19 @@ func (r *Record) Update(fn func(*App)) {
 // Do runs fn under the record's write lock and persists the result.
 func (r *Record) Do(fn func(*App) error) error {
 	r.mu.Lock()
-	err := fn(&r.app)
-	r.app.Revision++
-	snapshot := r.app
-	r.mu.Unlock()
-	if r.registry != nil {
-		r.registry.persist(snapshot)
+	defer r.mu.Unlock()
+	next := r.app
+	if err := fn(&next); err != nil {
+		return err
 	}
-	return err
+	next.Revision++
+	if r.registry != nil {
+		if err := r.registry.persist(next); err != nil {
+			return err
+		}
+	}
+	r.app = next
+	return nil
 }
 
 // Persister saves application snapshots across restarts.
@@ -252,19 +260,21 @@ func (r *Registry) Remove(id string) {
 	}
 }
 
-func (r *Registry) persist(value App) {
+func (r *Registry) persist(value App) error {
 	r.mu.RLock()
 	persister := r.persister
 	logf := r.logf
 	r.mu.RUnlock()
 	if persister == nil {
-		return
+		return nil
 	}
 	r.persistMu.Lock()
 	defer r.persistMu.Unlock()
 	if err := persister.SaveApp(value); err != nil {
 		logf("registry: save app %s: %v", value.ID, err)
+		return err
 	}
+	return nil
 }
 
 // List returns snapshots of all applications.
@@ -295,7 +305,7 @@ func (r *Registry) FindBuilding(owner Identity) (App, bool) {
 // RunningOnScreen returns the application currently running on screenID.
 func (r *Registry) RunningOnScreen(screenID string) (App, bool) {
 	for _, value := range r.List() {
-		if value.State == StateRunning && value.ScreenID == screenID {
+		if value.ScreenID == screenID && (value.State == StateRunning || value.PendingRuntime || value.PendingProjection || value.CleanupPending || value.InstanceID != "" || value.ProjectionSessionID != "") {
 			return value, true
 		}
 	}

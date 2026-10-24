@@ -3,8 +3,11 @@
 package openapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/httpapi"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -43,6 +46,7 @@ type Operation struct {
 // needs.
 type Spec struct {
 	operations map[string]Operation
+	document   json.RawMessage
 }
 
 // Lookup returns the operation with the given ID.
@@ -70,18 +74,21 @@ func (s *Spec) Operations() []Operation {
 // MarshalJSON persists the indexed operations.
 func (s Spec) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Operations []Operation `json:"operations"`
-	}{Operations: s.Operations()})
+		Operations []Operation     `json:"operations"`
+		Document   json.RawMessage `json:"document,omitempty"`
+	}{Operations: s.Operations(), Document: s.document})
 }
 
 // UnmarshalJSON restores the indexed operations from a database record.
 func (s *Spec) UnmarshalJSON(data []byte) error {
 	var payload struct {
-		Operations []Operation `json:"operations"`
+		Operations []Operation     `json:"operations"`
+		Document   json.RawMessage `json:"document,omitempty"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return err
 	}
+	s.document = payload.Document
 	s.operations = make(map[string]Operation, len(payload.Operations))
 	for _, operation := range payload.Operations {
 		if operation.OperationID == "" {
@@ -117,7 +124,20 @@ func Parse(data []byte) (*Spec, error) {
 	if !ok || len(paths) == 0 {
 		return nil, fmt.Errorf("openapi: paths must be a non-empty object")
 	}
-	spec := &Spec{operations: make(map[string]Operation)}
+	rawJSON, err := json.Marshal(document)
+	if err != nil {
+		return nil, err
+	}
+	_, err = httpapi.FromDocument("spec", "http://127.0.0.1", rawJSON)
+	if err != nil {
+		return nil, err
+	}
+	expanded, err := httpapi.ExpandedDocument(document)
+	if err != nil {
+		return nil, err
+	}
+	paths = expanded["paths"].(map[string]any)
+	spec := &Spec{operations: make(map[string]Operation), document: rawJSON}
 	for path, rawItem := range paths {
 		if !strings.HasPrefix(path, "/api/") {
 			return nil, fmt.Errorf("openapi: path %q must start with /api/", path)
@@ -215,8 +235,8 @@ func parseParameters(raw any) ([]Parameter, error) {
 		}
 		name, _ := item["name"].(string)
 		location, _ := item["in"].(string)
-		if location != "path" && location != "query" {
-			// send-request only supports path and query parameters.
+		if location != "path" && location != "query" && location != "header" {
+			// Unsupported parameter locations are rejected during compilation.
 			continue
 		}
 		if strings.TrimSpace(name) == "" {
@@ -274,4 +294,32 @@ func parseRequestBody(raw any) (*RequestBody, error) {
 		return nil, nil
 	}
 	return body, nil
+}
+
+// Document returns the original application contract, including components and responses.
+func (s *Spec) Document() (map[string]any, error) {
+	if s == nil || len(s.document) == 0 {
+		return nil, fmt.Errorf("full OpenAPI unavailable; revalidate artifact")
+	}
+	var doc map[string]any
+	err := json.Unmarshal(s.document, &doc)
+	return doc, err
+}
+func (s *Spec) Execute(ctx context.Context, base, id string, parameters map[string]any, body any, client *http.Client) (httpapi.Result, error) {
+	if s == nil || len(s.document) == 0 {
+		return httpapi.Result{}, fmt.Errorf("full OpenAPI unavailable; revalidate artifact")
+	}
+	c, err := httpapi.FromDocument("app", base, s.document)
+	if err != nil {
+		return httpapi.Result{}, err
+	}
+	c.SetHTTPClient(client)
+	var raw json.RawMessage
+	if body != nil {
+		raw, err = json.Marshal(body)
+		if err != nil {
+			return httpapi.Result{}, err
+		}
+	}
+	return c.Send(ctx, httpapi.Arguments{ServiceID: "app", OperationID: id, Parameters: parameters, Body: raw})
 }

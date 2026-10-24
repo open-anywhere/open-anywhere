@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,6 +68,19 @@ func serve(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	// Artifact locations follow deployment configuration, including when the
+	// public origin or storage directory changes after a restart.
+	for i := range persisted {
+		value := &persisted[i]
+		if item, ok := artifactStore.Get(value.ID); ok {
+			value.Artifact.Path = item.Path
+			value.Artifact.DownloadURL = item.DownloadURL
+			value.Revision++
+			if err := database.SaveApp(*value); err != nil {
+				return fmt.Errorf("restore app artifact location: %w", err)
+			}
+		}
+	}
 	registry.Load(persisted)
 
 	agentapiClient := agentapi.New(cfg.AgentAPIURL, cfg.AgentAPIKey, cfg.HTTPTimeout)
@@ -89,7 +103,13 @@ func serve(ctx context.Context, cfg config.Config) error {
 		PortMin:           cfg.PortMin,
 		PortMax:           cfg.PortMax,
 	})
+	if err := apps.RecoverRuntime(); err != nil {
+		return err
+	}
 	server.SetTools(apps)
+	server.Compatibility = true
+	server.SpeakerProbe = cfg.SpeakerProbe
+	server.AllowClaim = cfg.MCPToken != ""
 
 	for _, value := range persisted {
 		if value.State != app.StateBuilding {
@@ -102,8 +122,9 @@ func serve(ctx context.Context, cfg config.Config) error {
 	go apps.RunMonitor(ctx)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mcp", server.ServeSSE)
-	mux.HandleFunc("POST /mcp/message", server.ServeMessage)
+	mux.Handle("/mcp", server.StreamableHTTP(cfg.PublicHost, cfg.SpeakerProbe, cfg.MCPToken != ""))
+	mux.HandleFunc("GET /sse", server.ServeSSE)
+	mux.Handle("POST /mcp/message", http.MaxBytesHandler(http.HandlerFunc(server.ServeMessage), 1<<20))
 	mux.HandleFunc("GET /artifacts/{app_id}/{name}", artifactStore.ServeDownload)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		status := "ok"
@@ -120,8 +141,16 @@ func serve(ctx context.Context, cfg config.Config) error {
 	})
 
 	httpServer := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           mux,
+		Addr: cfg.Addr,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/mcp" || r.URL.Path == "/mcp/message" || r.URL.Path == "/sse" {
+				if cfg.MCPToken != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+cfg.MCPToken)) != 1 {
+					http.Error(w, "Unauthorized", 401)
+					return
+				}
+			}
+			mux.ServeHTTP(w, r)
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

@@ -2,17 +2,15 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
@@ -125,13 +123,15 @@ type OperationResult struct {
 
 // Service coordinates applications, builds, Render and casting.
 type Service struct {
-	apps     *app.Registry
-	builder  BuildStarter
-	render   RenderClient
-	casting  CastingClient
-	screens  *screen.Catalog
-	notifier app.Notifier
-	cfg      Config
+	lifecycle sync.Mutex
+	createMu  sync.Mutex
+	apps      *app.Registry
+	builder   BuildStarter
+	render    RenderClient
+	casting   CastingClient
+	screens   *screen.Catalog
+	notifier  app.Notifier
+	cfg       Config
 
 	http *http.Client
 	now  func() time.Time
@@ -206,7 +206,7 @@ func (s *Service) GetScreens(ctx context.Context, _ app.Identity) ([]ScreenView,
 	}
 	running := make(map[string]app.App)
 	for _, value := range s.apps.List() {
-		if value.State == app.StateRunning && value.ScreenID != "" {
+		if value.ScreenID != "" && (value.State == app.StateRunning || value.PendingRuntime || value.PendingProjection || value.CleanupPending || value.InstanceID != "" || value.ProjectionSessionID != "") {
 			running[value.ScreenID] = value
 		}
 	}
@@ -220,6 +220,8 @@ func (s *Service) GetScreens(ctx context.Context, _ app.Identity) ([]ScreenView,
 
 // CreateApp registers an application and starts its build.
 func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt string, playerNames []string) (CreateResult, error) {
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return CreateResult{}, &ToolError{Code: "INVALID_ARGUMENT", Message: "prompt 不能为空"}
@@ -240,6 +242,10 @@ func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt stri
 		State:          app.StateBuilding,
 		BuildStartedAt: s.now(),
 	})
+	if err := persistRuntime(entry, func(*app.App) {}); err != nil {
+		s.apps.Remove(id)
+		return CreateResult{}, err
+	}
 	if err := s.builder.Start(ctx, entry.Snapshot()); err != nil {
 		s.apps.Remove(id)
 		s.logf("create-app %s: %v", id, err)
@@ -312,6 +318,8 @@ func (s *Service) GetAppOperations(ctx context.Context, owner app.Identity, appI
 
 // StartApp starts the application on the screen and waits for projection.
 func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, screenID string) (StatusView, error) {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	if strings.TrimSpace(screenID) == "" {
 		return StatusView{}, &ToolError{Code: "INVALID_ARGUMENT", Message: "screen_id 不能为空"}
 	}
@@ -322,9 +330,15 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	entry.Begin()
 	defer entry.End()
 	value := entry.Snapshot()
+	if !value.Owner.Equal(owner) {
+		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "会话归属已改变"}
+	}
 	switch value.State {
 	case app.StateRunning:
 		if value.ScreenID == screenID {
+			if err := s.verifyRunning(ctx, value); err != nil {
+				return StatusView{}, err
+			}
 			return s.statusView(value), nil
 		}
 		return StatusView{}, &ToolError{Code: "APP_ALREADY_RUNNING", Message: "应用已在其他屏幕运行"}
@@ -343,9 +357,20 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	if other, ok := s.apps.RunningOnScreen(screenID); ok && other.ID != appID {
 		return StatusView{}, &ToolError{Code: "TARGET_BUSY", Message: "目标屏幕已被占用"}
 	}
+	if err := persistRuntime(entry, func(a *app.App) {
+		a.ScreenID = screenID
+		a.TargetID = target.ID
+		a.CleanupPending = true
+	}); err != nil {
+		return StatusView{}, err
+	}
+	value = entry.Snapshot()
 	binding, failure := s.startRuntime(ctx, value, target)
 	if failure != nil {
 		if failure.Code == "APP_ALREADY_RUNNING" {
+			if err := persistRuntime(entry, func(a *app.App) { a.PendingRuntime = false; a.CleanupPending = false; a.ScreenID = ""; a.TargetID = "" }); err != nil {
+				return StatusView{}, err
+			}
 			return StatusView{}, failure.toolError()
 		}
 		entry.Update(func(a *app.App) {
@@ -355,22 +380,20 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 			a.State = app.StateError
 			a.ScreenID = screenID
 			a.Error = &app.Error{Stage: app.StageStarting, Code: failure.Code, Message: failure.Message}
-			a.InstanceID = ""
-			a.Port = 0
-			a.AppBaseURL = ""
-			a.ProjectionSessionID = ""
-			a.TargetID = ""
-			a.EndpointID = ""
-			a.Source = casting.StreamSource{}
+			a.CleanupPending = true
 		})
+		_ = s.reconcile(ctx, entry)
 		s.notifyError(entry.Snapshot(), screenID)
 		return StatusView{}, failure.toolError()
 	}
-	entry.Update(func(a *app.App) {
+	if err := persistRuntime(entry, func(a *app.App) {
 		if a.State != app.StateIdle {
 			return
 		}
 		a.State = app.StateRunning
+		a.PendingRuntime = false
+		a.PendingProjection = false
+		a.CleanupPending = false
 		a.ScreenID = screenID
 		a.InstanceID = binding.instance.InstanceID
 		a.Port = binding.port
@@ -382,7 +405,12 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 		a.StartedAt = s.now()
 		a.StoppedAt = time.Time{}
 		a.Error = nil
-	})
+	}); err != nil {
+		// The downstream IDs were durably stored before this final transition.
+		// Retain them and let the monitor retry cleanup after storage recovers.
+		entry.Update(func(a *app.App) { a.State = app.StateError; a.CleanupPending = true })
+		return StatusView{}, err
+	}
 	return s.statusView(entry.Snapshot()), nil
 }
 
@@ -395,25 +423,33 @@ func (s *Service) StopApp(ctx context.Context, owner app.Identity, appID string)
 	entry.Begin()
 	defer entry.End()
 	value := entry.Snapshot()
+	if !value.Owner.Equal(owner) {
+		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "会话归属已改变"}
+	}
 	switch value.State {
-	case app.StateIdle, app.StateError:
+	case app.StateIdle:
 		return s.statusView(value), nil
+	case app.StateError:
+		if err := s.reconcile(ctx, entry); err != nil {
+			return StatusView{}, err
+		}
+		return s.statusView(entry.Snapshot()), nil
 	case app.StateBuilding:
 		return StatusView{}, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if value.ProjectionSessionID != "" {
-		if _, err := s.casting.StopSession(cleanupCtx, value.ProjectionSessionID); err != nil && !casting.IsStatus(err, http.StatusNotFound) {
+		if stopped, err := s.casting.StopSession(cleanupCtx, value.ProjectionSessionID); (err != nil && !casting.IsStatus(err, http.StatusNotFound)) || (err == nil && stopped.State != casting.SessionStopped) {
 			return StatusView{}, &ToolError{Code: "STOP_FAILED", Message: "停止投屏失败"}
 		}
 	}
 	if value.InstanceID != "" {
-		if _, err := s.render.Delete(cleanupCtx, value.InstanceID); err != nil && !render.IsStatus(err, http.StatusNotFound) {
+		if stopped, err := s.render.Delete(cleanupCtx, value.InstanceID); (err != nil && !render.IsStatus(err, http.StatusNotFound)) || (err == nil && stopped.State != render.StateStopped) {
 			return StatusView{}, &ToolError{Code: "STOP_FAILED", Message: "停止应用失败"}
 		}
 	}
-	entry.Update(func(a *app.App) {
+	if err := persistRuntime(entry, func(a *app.App) {
 		if a.State != app.StateRunning {
 			return
 		}
@@ -428,73 +464,38 @@ func (s *Service) StopApp(ctx context.Context, owner app.Identity, appID string)
 		a.EndpointID = ""
 		a.ProjectionSessionID = ""
 		a.Error = nil
-	})
+	}); err != nil {
+		return StatusView{}, err
+	}
 	return s.statusView(entry.Snapshot()), nil
 }
 
 // SendRequest forwards one OpenAPI operation to a running application.
 func (s *Service) SendRequest(ctx context.Context, owner app.Identity, appID, operationID string, parameters map[string]any, body any) (OperationResult, error) {
-	value, err := s.owned(owner, appID)
+	record, err := s.entry(owner, appID)
 	if err != nil {
+		return OperationResult{}, err
+	}
+	record.Begin()
+	defer record.End()
+	value := record.Snapshot()
+	if !value.Owner.Equal(owner) {
+		return OperationResult{}, &ToolError{Code: "APP_NOT_FOUND", Message: "会话归属已改变"}
+	}
+	if err = s.verifyRunning(ctx, value); err != nil {
 		return OperationResult{}, err
 	}
 	if value.State != app.StateRunning || value.AppBaseURL == "" {
 		return OperationResult{}, &ToolError{Code: "APP_NOT_RUNNING", Message: "应用未在运行"}
 	}
-	operation, ok := value.OpenAPI.Lookup(operationID)
-	if !ok {
+	if _, ok := value.OpenAPI.Lookup(operationID); !ok {
 		return OperationResult{}, &ToolError{Code: "OPERATION_NOT_FOUND", Message: "应用没有该操作"}
 	}
-	operationPath := operation.Path
-	query := url.Values{}
-	for key, raw := range parameters {
-		value, ok := scalarParameter(raw)
-		if !ok {
-			return OperationResult{}, &ToolError{Code: "INVALID_ARGUMENT", Message: "parameters 只支持字符串、数字或布尔值"}
-		}
-		placeholder := "{" + key + "}"
-		if strings.Contains(operationPath, placeholder) {
-			operationPath = strings.ReplaceAll(operationPath, placeholder, url.PathEscape(value))
-			continue
-		}
-		query.Set(key, value)
-	}
-	target := strings.TrimRight(value.AppBaseURL, "/") + operationPath
-	if len(query) > 0 {
-		target += "?" + query.Encode()
-	}
-	var reader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return OperationResult{}, &ToolError{Code: "INVALID_ARGUMENT", Message: "请求体无法序列化"}
-		}
-		reader = bytes.NewReader(data)
-	}
-	request, err := http.NewRequestWithContext(ctx, operation.Method, target, reader)
+	out, err := value.OpenAPI.Execute(ctx, value.AppBaseURL, operationID, parameters, body, s.http)
 	if err != nil {
-		return OperationResult{}, &ToolError{Code: "APP_REQUEST_FAILED", Message: "无法构造应用请求"}
+		return OperationResult{}, &ToolError{Code: "INVALID_ARGUMENT", Message: err.Error()}
 	}
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	request.Header.Set("Accept", "application/json")
-	response, err := s.http.Do(request)
-	if err != nil {
-		return OperationResult{}, &ToolError{Code: "APP_REQUEST_FAILED", Message: "应用请求失败"}
-	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if err != nil {
-		return OperationResult{}, &ToolError{Code: "APP_REQUEST_FAILED", Message: "应用响应读取失败"}
-	}
-	var parsed any
-	if len(data) > 0 {
-		if json.Unmarshal(data, &parsed) != nil {
-			parsed = string(data)
-		}
-	}
-	return OperationResult{Status: response.StatusCode, Body: parsed}, nil
+	return OperationResult{Status: out.Status, Body: out.Data}, nil
 }
 
 // RunMonitor polls running applications until ctx is canceled.
@@ -513,6 +514,14 @@ func (s *Service) RunMonitor(ctx context.Context) {
 
 func (s *Service) checkRunning(ctx context.Context) {
 	for _, value := range s.apps.List() {
+		if value.State == app.StateError && (value.CleanupPending || value.PendingRuntime || value.PendingProjection || value.InstanceID != "" || value.ProjectionSessionID != "") {
+			if record, ok := s.apps.Get(value.ID); ok {
+				record.Begin()
+				_ = s.reconcile(ctx, record)
+				record.End()
+			}
+			continue
+		}
 		if value.State != app.StateRunning {
 			continue
 		}
@@ -569,6 +578,7 @@ func (s *Service) runtimeFailure(value app.App, code, message string) {
 		}
 		applied = true
 		a.State = app.StateError
+		a.CleanupPending = true
 		a.Error = &app.Error{Stage: app.StageRunning, Code: code, Message: message}
 		snapshot = *a
 	})
@@ -576,14 +586,10 @@ func (s *Service) runtimeFailure(value app.App, code, message string) {
 		return
 	}
 	s.logf("app %s runtime failure: %s: %s", value.ID, code, message)
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if snapshot.ProjectionSessionID != "" {
-		_, _ = s.casting.StopSession(cleanupCtx, snapshot.ProjectionSessionID)
-	}
-	if snapshot.InstanceID != "" {
-		_, _ = s.render.Delete(cleanupCtx, snapshot.InstanceID)
-	}
+	entry.Begin()
+	_ = s.reconcile(context.Background(), entry)
+	entry.End()
+
 	s.notifier.Notify(snapshot.Owner, app.Notification{
 		AppID:    snapshot.ID,
 		State:    app.StateError,
@@ -612,6 +618,9 @@ func (f *startFailure) toolError() error {
 }
 
 func (s *Service) startRuntime(ctx context.Context, value app.App, target casting.Target) (startBinding, *startFailure) {
+	persistFailure := func(err error) (startBinding, *startFailure) {
+		return startBinding{}, &startFailure{Code: "PERSISTENCE_FAILED", Message: "无法保存运行状态，停止后续操作", Cause: err}
+	}
 	if target.State != casting.TargetOnline {
 		return startBinding{}, &startFailure{Code: "TARGET_UNREACHABLE", Message: "目标屏幕不可达"}
 	}
@@ -629,13 +638,37 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 		if createErr != nil {
 			break
 		}
+		if err := s.updateRuntime(value.ID, func(a *app.App) { a.Port = port; a.PendingRuntime = true }); err != nil {
+			return persistFailure(err)
+		}
 		instance, createErr = s.render.Create(startCtx, render.CreateRequest{
 			AppID:       value.ID,
 			ArtifactURL: value.Artifact.DownloadURL,
 			Port:        port,
 		})
 		if createErr == nil {
+			if instance.AppID != "" && instance.AppID != value.ID {
+				createErr = errors.New("Render returned foreign app_id")
+				break
+			}
+			if instance.InstanceID == "" {
+				createErr = errors.New("Render returned no instance_id")
+				break
+			}
+			if err := s.updateRuntime(value.ID, func(a *app.App) {
+				a.InstanceID = instance.InstanceID
+				a.PendingRuntime = false
+				a.AppBaseURL = instance.AppBaseURL
+				a.Source = instance.Source
+			}); err != nil {
+				return persistFailure(err)
+			}
 			break
+		}
+		if render.IsCode(createErr, "PORT_IN_USE") || render.IsCode(createErr, "INVALID_REQUEST") || render.IsCode(createErr, "APP_ALREADY_RUNNING") {
+			if err := s.updateRuntime(value.ID, func(a *app.App) { a.PendingRuntime = false }); err != nil {
+				return persistFailure(err)
+			}
 		}
 		if render.IsCode(createErr, "PORT_IN_USE") {
 			excluded[port] = true
@@ -650,18 +683,21 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 		return startBinding{}, &startFailure{Code: "START_FAILED", Message: "应用启动失败", Cause: createErr}
 	}
 	if instance.State != render.StateReady {
-		s.cleanupRuntime(instance.InstanceID, "")
+		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "START_FAILED", Message: "应用未就绪"}
 	}
 	source := instance.Source
 	if source.Type == "" || source.URL == "" {
-		s.cleanupRuntime(instance.InstanceID, "")
+		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "STREAM_START_FAILED", Message: "应用媒体流未就绪"}
 	}
 	endpoint, ok := screen.SelectEndpoint(target, source)
 	if !ok {
-		s.cleanupRuntime(instance.InstanceID, "")
+		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "TARGET_UNREACHABLE", Message: "屏幕不支持该媒体格式"}
+	}
+	if err := s.updateRuntime(value.ID, func(a *app.App) { a.EndpointID = endpoint.ID; a.Source = source; a.PendingProjection = true }); err != nil {
+		return persistFailure(err)
 	}
 	session, err := s.casting.CreateSession(startCtx, casting.CreateSessionRequest{
 		TargetID:   target.ID,
@@ -669,11 +705,17 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 		Source:     source,
 	})
 	if err != nil {
-		s.cleanupRuntime(instance.InstanceID, "")
+		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "PROJECTION_TIMEOUT", Message: "无法建立投屏", Cause: err}
 	}
+	if session.ID == "" {
+		return startBinding{}, &startFailure{Code: "PROJECTION_TIMEOUT", Message: "投屏结果缺少会话标识"}
+	}
+	if err := s.updateRuntime(value.ID, func(a *app.App) { a.ProjectionSessionID = session.ID; a.PendingProjection = false }); err != nil {
+		return persistFailure(err)
+	}
 	if err := s.waitPlaying(startCtx, session.ID); err != nil {
-		s.cleanupRuntime(instance.InstanceID, session.ID)
+		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "PROJECTION_TIMEOUT", Message: "投屏超时", Cause: err}
 	}
 	return startBinding{instance: instance, port: port, source: source, endpoint: endpoint, session: session}, nil
@@ -764,7 +806,7 @@ func (s *Service) entry(owner app.Identity, appID string) (*app.Record, error) {
 	if !ok {
 		return nil, &ToolError{Code: "APP_NOT_FOUND", Message: "应用不存在"}
 	}
-	if !entry.Snapshot().Owner.Equal(owner) {
+	if !entry.Snapshot().Owner.Equal(owner) || entry.Snapshot().Owner.AgentID != owner.AgentID {
 		return nil, &ToolError{Code: "APP_NOT_FOUND", Message: "应用不存在"}
 	}
 	return entry, nil
@@ -843,4 +885,41 @@ func scalarParameter(value any) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// GetOpenAPI exposes the full registered contract for clients that need more than operation summaries.
+func (s *Service) GetOpenAPI(ctx context.Context, owner app.Identity, id string) (map[string]any, error) {
+	a, err := s.owned(owner, id)
+	if err != nil {
+		return nil, err
+	}
+	if a.State == app.StateBuilding {
+		return nil, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
+	}
+	return a.OpenAPI.Document()
+}
+
+func (s *Service) verifyRunning(ctx context.Context, a app.App) error {
+	if a.State != app.StateRunning {
+		return nil
+	}
+	if a.InstanceID != "" {
+		r, err := s.render.Get(ctx, a.InstanceID)
+		if err != nil {
+			return &ToolError{Code: "RUNTIME_UNAVAILABLE", Message: "无法确认应用状态"}
+		}
+		if r.State != render.StateReady {
+			return &ToolError{Code: "APP_NOT_RUNNING", Message: "应用未就绪"}
+		}
+	}
+	if a.ProjectionSessionID != "" {
+		p, err := s.casting.GetSession(ctx, a.ProjectionSessionID)
+		if err != nil {
+			return &ToolError{Code: "PROJECTION_UNAVAILABLE", Message: "无法确认投屏状态"}
+		}
+		if p.State != casting.SessionPlaying {
+			return &ToolError{Code: "APP_NOT_RUNNING", Message: "投屏未播放"}
+		}
+	}
+	return nil
 }

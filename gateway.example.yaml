@@ -39,3 +39,8 @@ timeouts:
   monitor_interval: "5s"
   call: "2m"
   http: "30s"
+
+# 可选：公网代理 Host、入口 Bearer token、声纹参数诊断。真实 token 只填 gateway.yaml。
+public_host: ""
+mcp_token: ""
+speaker_probe: false

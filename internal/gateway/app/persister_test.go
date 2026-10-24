@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -96,5 +97,21 @@ func TestRegistryLoadDoesNotRewrite(t *testing.T) {
 	}
 	if len(registry.List()) != 1 {
 		t.Fatalf("list = %+v", registry.List())
+	}
+}
+
+type failedPersister struct{}
+
+func (failedPersister) SaveApp(App) error      { return fmt.Errorf("disk failed") }
+func (failedPersister) DeleteApp(string) error { return nil }
+func TestClaimTransactionDoesNotPublishOnPersistenceFailure(t *testing.T) {
+	r := NewRegistry()
+	record := r.Add(App{ID: "a", Owner: Identity{DeviceID: "d", AgentID: "a", SessionID: "old"}})
+	r.SetPersister(failedPersister{})
+	if err := record.Do(func(a *App) error { a.Owner.SessionID = "new"; return nil }); err == nil {
+		t.Fatal("save failed but transaction succeeded")
+	}
+	if record.Snapshot().Owner.SessionID != "old" {
+		t.Fatal("failed transfer published")
 	}
 }

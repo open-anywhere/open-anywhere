@@ -243,3 +243,21 @@ func remove(entries []entry, name string) []entry {
 	}
 	return result
 }
+
+func TestEntryOptionsAndDuplicatePathsRejected(t *testing.T) {
+	for _, args := range []string{`["-e","console.log(1)","app/app.js"]`, `["--require","/tmp/module.js","app/app.js"]`} {
+		entries := validEntries()
+		for i := range entries {
+			if entries[i].name == "launch.json" {
+				entries[i].body = `{"name":"test","runtimeExecutable":"node","runtimeArgs":` + args + `}`
+			}
+		}
+		if _, err := Validate(writeArchive(t, entries)); err == nil {
+			t.Fatal("accepted", args)
+		}
+	}
+	entries := append(validEntries(), entry{name: "app/app.js", body: "other"})
+	if _, err := Validate(writeArchive(t, entries)); err == nil {
+		t.Fatal("duplicate accepted")
+	}
+}

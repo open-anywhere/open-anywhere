@@ -54,8 +54,8 @@ func TestRecordDoReturnsError(t *testing.T) {
 	if err := record.Do(func(a *App) error { a.Name = "name"; return want }); !errors.Is(err, want) {
 		t.Fatalf("Do error = %v", err)
 	}
-	if record.Snapshot().Name != "name" {
-		t.Fatal("mutation not applied")
+	if record.Snapshot().Name != "" {
+		t.Fatal("failed transaction published mutation")
 	}
 }
 
