@@ -41,8 +41,10 @@
 | `get-screens` | 查询当前可用屏幕及占用情况 | 无 | `screens` 数组，见第 5 章 |
 | `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt`、可选 `player_names` | `app_id`, `state: building` |
 | `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见第 4 章 |
+| `get-app-operations` | 查询应用声明的 OpenAPI 业务操作 | `app_id` | `app_id`, `state`, `operations` |
 | `start-app` | 在指定屏幕上启动已构建的应用 | `app_id`, `screen_id` | `app_id`, `screen_id`, `state: running` |
 | `stop-app` | 停止运行中的应用 | `app_id` | `app_id`, `state: idle` |
+| `send-request` | 调用应用的业务操作 | `app_id`, `operation_id`, `parameters`, `body` | `status`, `body` |
 
 ### 2.2 应用状态
 
@@ -263,6 +265,33 @@
 
 启动成功后，后续应用操作仍通过既有的 OpenAPI / HTTP 契约完成。
 
+### 6.1 调用应用能力
+
+应用构建完成后，灵矽先调用 `get-app-operations(app_id)` 获取 `operation_id`、说明、路径/查询参数和 JSON 请求体 schema。该工具从应用的 `openapi.yaml` 读取信息，`building` 时返回 `APP_BUILDING`，`error` 时返回 `APP_IN_ERROR`。
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "idle",
+  "operations": [
+    {
+      "operation_id": "rollDice",
+      "method": "POST",
+      "path": "/api/roll",
+      "description": "掷两个骰子并记录结果",
+      "request_body": {
+        "required": false,
+        "schema": {"type": "object", "properties": {"count": {"type": "integer"}}}
+      }
+    }
+  ]
+}
+```
+
+随后用 `send-request` 调用。路径参数放在 `parameters` 中，名称与路径模板一致；其余标量参数作为查询参数；JSON 请求体放在 `body`。返回应用原始 HTTP `status` 和解析后的 `body`。只有 `running` 状态可调用，否则返回 `APP_NOT_RUNNING`；`operation_id` 不在应用 OpenAPI 中时返回 `OPERATION_NOT_FOUND`。
+
+工具列表保持稳定，不随应用动态注册；`get-app-operations` 只返回当前应用的操作，避免灵矽侧工具列表热更新问题。
+
 ## 7. `stop-app`
 
 输入：
@@ -374,8 +403,11 @@ sequenceDiagram
 | `code` | 工具 | 场景 |
 | --- | --- | --- |
 | `INVALID_PLAYER_NAMES` | `create-app` | 名称为空白、类型错误或去除首尾空白后重名 |
-| `APP_BUILDING` | `start-app`, `stop-app` | 应用仍在构建 |
-| `APP_IN_ERROR` | `start-app` | 应用处于 `error` |
+| `APP_BUILDING` | `start-app`, `stop-app`, `get-app-operations` | 应用仍在构建 |
+| `APP_IN_ERROR` | `start-app`, `get-app-operations` | 应用处于 `error` |
 | `APP_ALREADY_RUNNING` | `start-app` | 应用已在其他屏幕运行 |
 | `TARGET_BUSY` | `start-app` | 目标屏幕被其他应用占用 |
 | `STOP_FAILED` | `stop-app` | 停止进程或释放屏幕占用失败 |
+| `APP_NOT_RUNNING` | `send-request` | 应用未在运行 |
+| `OPERATION_NOT_FOUND` | `send-request` | 应用 OpenAPI 中没有该 operationId |
+| `INVALID_ARGUMENT` | 所有工具 | 参数为空、类型错误或无法序列化 |

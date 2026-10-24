@@ -39,13 +39,13 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 - 应用生成后可以在 Render 上稳定启动，并通过 OpenAPI 被控制面调用。
 - 应用画面通过 AirPlay 常驻在屏幕上；切换应用不重新建立投屏。
 - Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
+- 控制面重启后从本地 SQLite 恢复应用和构建状态，未完成的构建继续监听，产物下载地址保持有效。
 
 ### 2.2 非目标
 
 - 多租户、计费、应用市场、任意第三方应用托管。
-- 为每个 OpenAPI 操作动态注册一个 MCP Tool；MVP 使用通用的 `send_request`。
+- 为每个 OpenAPI 操作动态注册一个 MCP Tool；MVP 使用稳定的 `get-app-operations` + `send-request`。
 - 服务端主动 TTS 推送；MVP 由灵矽在用户询问时轮询任务状态。
-- 应用状态跨重启持久化；MVP 允许内存态，重启后状态丢失。
 - 在 macOS 上程序化发起 AirPlay 系统镜像；MVP 手动连接，浏览器或 HDMI 兜底。
 - 把 AgentAPI 的沙箱当作应用运行时；AgentAPI 只负责构建。
 
