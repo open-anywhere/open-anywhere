@@ -411,10 +411,3 @@ sequenceDiagram
 | `APP_NOT_RUNNING` | `send-request` | 应用未在运行 |
 | `OPERATION_NOT_FOUND` | `send-request` | 应用 OpenAPI 中没有该 operationId |
 | `INVALID_ARGUMENT` | 所有工具 | 参数为空、类型错误或无法序列化 |
-
-
-## 10. 会话重连和兼容接入
-
-同设备同智能体重连后可在鉴权入口调用 `list-apps` 找回应用，再显式调用 `claim-app(app_id)` 转移到新 session。持久化成功后旧 session 不再有访问权。缺少 agent、跨设备或跨 agent 拒绝；不开启 MCP 认证时不暴露这两个工具。
-
-服务同时提供 Streamable HTTP `/mcp` 和传统 SSE `/sse` + `/mcp/message`。后台通知只发往活跃 SSE 订阅，工具调用成功不能证明通知已经送达灵矽。`get_openapi` 和 `send_request` 保留为完整规范和旧参数命名兼容入口；详见 [Gateway 服务](gateway.md)。

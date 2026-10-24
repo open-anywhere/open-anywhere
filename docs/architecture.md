@@ -212,9 +212,3 @@ DELETE /v1/projection-sessions/{session_id}
 ## 6. 应用管理 MCP
 
 灵矽通过控制面发现屏幕，并创建、查询、启动和停止应用（`get-screens`、`create-app`、`get-app-status`、`start-app`、`stop-app`）。工具集、状态模型、通知和错误约定见[应用管理 MCP](app-management-mcp.md)。
-
-## 7. Gateway 实现
-
-控制面统一使用 Go，入口为 `cmd/gateway`。MCP 协议接入、应用管理、SQLite 注册表、OpenAPI 校验与执行按模块隔离，AgentAPI、Render、Casting 通过客户端连接。
-
-整合实现保留 Streamable HTTP 与 SSE 两种入口、完整 OpenAPI 获取、主动应用状态通知，并增加受鉴权保护的跨会话接管和异常资源对账。配置、兼容工具、迁移和验证范围见 [Gateway 服务](gateway.md)。
