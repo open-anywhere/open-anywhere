@@ -25,7 +25,7 @@ type Apps interface {
 	CreateApp(ctx context.Context, owner app.Identity, prompt string, playerNames []string) (service.CreateResult, error)
 	GetAppStatus(ctx context.Context, owner app.Identity, appID string) (service.StatusView, error)
 	GetAppOperations(ctx context.Context, owner app.Identity, appID string) (service.OperationsView, error)
-	StartApp(ctx context.Context, owner app.Identity, appID, screenID string) (service.StatusView, error)
+	StartApp(ctx context.Context, owner app.Identity, appID, screenID string, force bool) (service.StatusView, error)
 	StopApp(ctx context.Context, owner app.Identity, appID string) (service.StatusView, error)
 	SendRequest(ctx context.Context, owner app.Identity, appID, operationID string, parameters map[string]any, body any) (service.OperationResult, error)
 }

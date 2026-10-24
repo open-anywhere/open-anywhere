@@ -95,6 +95,8 @@ type StatusView struct {
 	UptimeSeconds        int64      `json:"uptime_seconds,omitempty"`
 	StoppedAt            *time.Time `json:"stopped_at,omitempty"`
 	Error                *app.Error `json:"error,omitempty"`
+	// ReplacedAppID is set when start-app force-stopped another application on the screen.
+	ReplacedAppID string `json:"replaced_app_id,omitempty"`
 }
 
 // OperationView describes one business operation for MCP clients.
@@ -317,7 +319,9 @@ func (s *Service) GetAppOperations(ctx context.Context, owner app.Identity, appI
 }
 
 // StartApp starts the application on the screen and waits for projection.
-func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, screenID string) (StatusView, error) {
+// A screen holds one application at a time: without force an occupied screen is
+// refused with TARGET_BUSY; with force the application on it is stopped first.
+func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, screenID string, force bool) (StatusView, error) {
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
 	if strings.TrimSpace(screenID) == "" {
@@ -354,8 +358,9 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	if err != nil {
 		return StatusView{}, err
 	}
-	if other, ok := s.apps.RunningOnScreen(screenID); ok && other.ID != appID {
-		return StatusView{}, &ToolError{Code: "TARGET_BUSY", Message: "目标屏幕已被占用"}
+	replaced, err := s.claimScreen(ctx, screenID, appID, force)
+	if err != nil {
+		return StatusView{}, err
 	}
 	if err := persistRuntime(entry, func(a *app.App) {
 		a.ScreenID = screenID
@@ -411,7 +416,32 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 		entry.Update(func(a *app.App) { a.State = app.StateError; a.CleanupPending = true })
 		return StatusView{}, err
 	}
-	return s.statusView(entry.Snapshot()), nil
+	view := s.statusView(entry.Snapshot())
+	view.ReplacedAppID = replaced
+	return view, nil
+}
+
+// claimScreen makes screenID free for appID. Another application on it is
+// refused with TARGET_BUSY unless force is set, in which case it is stopped
+// through its own owner (projection first, then the Render instance). The
+// screen is only claimed once it is really free; a failed stop is returned so
+// nothing is projected over an application that is still running.
+func (s *Service) claimScreen(ctx context.Context, screenID, appID string, force bool) (replaced string, err error) {
+	for attempts := 0; attempts < 4; attempts++ {
+		other, busy := s.apps.RunningOnScreen(screenID)
+		if !busy || other.ID == appID {
+			return replaced, nil
+		}
+		if !force {
+			return "", &ToolError{Code: "TARGET_BUSY", Message: "目标屏幕已被占用"}
+		}
+		if _, err := s.StopApp(ctx, other.Owner, other.ID); err != nil {
+			return "", err
+		}
+		replaced = other.ID
+		s.notifier.Notify(other.Owner, app.Notification{AppID: other.ID, State: app.StateIdle, ScreenID: screenID, Message: "屏幕被其他应用接管，已停止"})
+	}
+	return "", &ToolError{Code: "TARGET_BUSY", Message: "无法释放目标屏幕"}
 }
 
 // StopApp stops projection first and then the Render instance.
