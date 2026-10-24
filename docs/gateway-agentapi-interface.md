@@ -11,8 +11,6 @@
 - AgentAPI 侧：一次性准备构建智能体、内置技能模板和云端环境；智能体不使用 MCP。
 - 控制面侧：`create-app` 之后创建构建会话、提交构建任务、订阅会话事件，并在会话进入 `idle` 后收集、校验 `outputs/` 产物。
 
-本文不定义灵矽与控制面之间的 MCP（见 [architecture.md](architecture.md) 第 6 章），也不定义控制面与 Render 之间的运行接口（见 [gateway-render-interface.md](gateway-render-interface.md)）。应用产物的目录、启动契约和构建提示以 [app-artifact.md](app-artifact.md) 为准。
-
 ### 1.1 角色与调用方向
 
 | 组件 | 本文中的职责 | 调用方 |
@@ -56,7 +54,6 @@ x-api-key: $AGENTAPI_API_KEY
 | `GET` | `/v1/files/{file_id}/content` | 下载 `artifact.tar.gz` | 构建结束 |
 | `POST` | `/v1/sessions/{id}/archive` | 归档构建会话 | 构建结束或失败 |
 
-
 ## 2. AgentAPI 侧：智能体准备
 
 准备物在部署或发布阶段创建一次，不随每次 `create-app` 重复创建。控制面保存它们的 ID 和版本，构建时只创建会话。
@@ -76,41 +73,23 @@ x-api-key: $AGENTAPI_API_KEY
 内置技能以自定义技能包上传。技能包在控制面仓库中维护，发布时打包为 zip：
 
 ```text
-skills/open-anywhere-app-builder/
+skills/app-builder/
 ├── SKILL.md
 ├── references/
+│   ├── app-template/            # 参考应用模板，对应 app-artifact.md 的产物结构
+│   │   ├── app/
+│   │   │   ├── app.js
+│   │   │   └── public/index.html
+│   │   ├── openapi.yaml
+│   │   └── launch.json
 │   ├── artifact-contract.md     # 应用包、launch.json、运行约定
 │   ├── api-contract.md          # OpenAPI 3.1 与业务响应约定
 │   └── self-test.md             # 自测步骤和检查项
-├── scripts/
-│   └── validate-artifact.sh     # 归档结构和启动契约的静态检查
-└── assets/
-    ├── launch.json              # 启动契约模板
-    ├── openapi.yaml             # OpenAPI 骨架
-    └── server.js                # 最小 Node.js HTTP 服务骨架
+└── scripts/
+    └── validate-artifact.sh     # 归档结构和启动契约的静态检查
 ```
 
-`SKILL.md` 使用 YAML frontmatter，正文说明适用场景、构建步骤、交付路径和自测要求：
-
-```md
----
-name: open-anywhere-app-builder
-description: 构建可交付给 Open Anywhere Render 的独立 Node.js Web 应用；当任务要求生成页面和 /api 接口时使用。
----
-
-# Open Anywhere 应用构建
-
-1. 在会话工作目录的 `outputs/` 中构建应用，产物包含 `app/`、`openapi.yaml` 和 `launch.json`。
-2. `app/` 是自包含的 Node.js 应用，入口为 `app/app.js`；依赖在构建时打包，运行时不执行 install 或 build。优先使用 Node.js 内置模块和纯 JS 依赖，避免需要编译的原生模块。
-3. 应用读取环境变量 `PORT`，监听 `HOST`（默认 `0.0.0.0`）；实现 `GET /health` 和 `GET /`，业务接口位于 `/api/*`。
-4. 业务响应为 JSON，必须包含字符串 `message`；用户标识使用 `user_id`。
-5. 按 `references/self-test.md` 在干净目录启动应用，验证 `/health`、`/` 和一个改变状态的业务请求，并换端口再次启动。
-6. 用 `scripts/validate-artifact.sh` 检查产物，修复发现的问题。
-7. 只把最终压缩包写入 `/mnt/session/outputs/artifact.tar.gz`（注意与构建目录 `outputs/` 区分）；不要在该目录留下构建中间文件。
-8. 完成后用简短文字报告应用名称、入口、已验证的接口和产物大小，不要等待用户确认。
-```
-
-模板内容与 [app-artifact.md](app-artifact.md) 保持一致。`references/artifact-contract.md` 可以由该文档生成或人工同步；契约变更时重新上传技能版本，并更新智能体。
+`references/app-template/` 是可直接复制的最小 Node.js 应用，`SKILL.md` 要求先复制模板再按需求修改，避免智能体从零搭建。模板放在 `references/` 而不是 `assets/`：`assets/` 容易被当作仅供展示的素材，智能体不保证读取和使用。模板内容跟随 [app-artifact.md](app-artifact.md) 更新。
 
 上传技能：
 
@@ -121,7 +100,7 @@ Content-Type: multipart/form-data
 
 | part | 类型 | 内容 |
 | --- | --- | --- |
-| `files` | `application/zip` | 保留顶层目录的技能 zip，例如 `open-anywhere-app-builder/SKILL.md` |
+| `files` | `application/zip` | 保留顶层目录的技能 zip，例如 `app-builder/SKILL.md` |
 
 成功响应：
 
@@ -153,10 +132,7 @@ Content-Type: application/json
   "name": "open-anywhere-builder",
   "config": {
     "type": "cloud",
-    "networking": {
-      "type": "limited",
-      "allowed_hosts": ["registry.npmjs.org"]
-    }
+    "networking": {"type": "unrestricted"}
   }
 }
 ```
@@ -169,16 +145,13 @@ Content-Type: application/json
   "name": "open-anywhere-builder",
   "config": {
     "type": "cloud",
-    "networking": {
-      "type": "limited",
-      "allowed_hosts": ["registry.npmjs.org"]
-    }
+    "networking": {"type": "unrestricted"}
   }
 }
 ```
 
-- 智能体只需要访问 npm registry 安装构建期依赖；模型服务主机由 AgentAPI 自动放行，不需要写入 `allowed_hosts`。
-- 如使用 npm 镜像，把镜像域名加入 `allowed_hosts`。若构建确实需要其他外部依赖，再显式增加主机；不建议直接改为 `unrestricted`。
+- 构建期不限制出站网络：智能体可以访问包管理器、镜像和其他构建依赖，不需要维护 `allowed_hosts`。
+- 网络放开只用于构建；产出的应用仍要求运行期自包含，不依赖外部服务或 CDN（见 [app-artifact.md](app-artifact.md)）。
 - 环境不配置 MCP 相关选项，也不挂载 GitHub 仓库、记忆存储或输入文件。
 
 ### 2.4 创建构建智能体
@@ -196,7 +169,7 @@ Content-Type: application/json
     "id": "your-model-id",
     "effort": {"type": "high"}
   },
-  "system": "你是 Open Anywhere 的应用构建智能体。按 open-anywhere-app-builder 技能完成应用，遵守产物契约并自测。不要提问，不要等待确认。",
+  "system": "你是 Open Anywhere 的应用构建智能体。按 app-builder 技能完成应用，遵守产物契约并自测。不要提问，不要等待确认。",
   "tools": [
     {"type": "agent_toolset_20260401"}
   ],
@@ -363,7 +336,7 @@ Content-Type: application/json
         "parts": [
           {
             "type": "text",
-            "text": "需求：做一个掷骰子游戏，点击按钮掷出两个骰子，显示点数和最近几次结果。\n\n请使用 open-anywhere-app-builder 技能完成构建。硬性要求：\n- 产物写入 /mnt/session/outputs/artifact.tar.gz，归档根目录包含 app/、openapi.yaml、launch.json；\n- app/ 是自包含 Node.js 应用，入口 app/app.js，读取 PORT，实现 GET /health 和 GET /；\n- /api/* 使用 OpenAPI 3.1 描述，业务响应包含 message；\n- 不依赖外部数据库、外部服务或 CDN；\n- 完成后自测、打包并校验。\n不要提问；按合理假设完成。"
+            "text": "需求：做一个掷骰子游戏，点击按钮掷出两个骰子，显示点数和最近几次结果。\n\n请使用 app-builder 技能完成构建。硬性要求：\n- 产物写入 /mnt/session/outputs/artifact.tar.gz，归档根目录包含 app/、openapi.yaml、launch.json；\n- app/ 是自包含 Node.js 应用，入口 app/app.js，读取 PORT，实现 GET /health 和 GET /；\n- /api/* 使用 OpenAPI 3.1 描述，业务响应包含 message；\n- 不依赖外部数据库、外部服务或 CDN；\n- 完成后自测、打包并校验。\n不要提问；按合理假设完成。"
           }
         ]
       }
@@ -440,8 +413,8 @@ data: {"type":"session.status_idle","id":"evt_01J...","stop_reason":{"type":"end
 
 ### 3.6 超时与中断
 
-- 构建超时由控制面控制，默认 20 分钟，必须小于 AgentAPI 沙箱的默认运行时长（1 小时），为产物收集和清理留出时间。
-- 超时后发送 `user.interrupt`，最多等待 30 秒让会话回到 `idle`，然后归档会话并按 `BUILD_FAILED` 处理。
+- 构建超时由控制面控制，默认 60 分钟。AgentAPI 的沙箱运行时长默认 1 小时，部署时需要调高（例如 2 小时），并为产物收集和清理留出时间；CLI 命令执行上限也按需一并调高。
+- 超时后发送 `user.interrupt`，最多等待 5 分钟让会话回到 `idle`；仍未回到 `idle` 时归档会话并按 `BUILD_FAILED` 处理。
 
 ```http
 POST /v1/sessions/{id}/events
@@ -500,7 +473,7 @@ tar -czf /mnt/session/outputs/artifact.tar.gz -C outputs .
 
 ### 4.2 收集产物
 
-会话进入 `idle` 且 `stop_reason.type=end_turn` 后，产物收集可能比 `idle` 晚几秒。控制面先查询一次；没有找到时按 2 秒、5 秒、10 秒的间隔最多重试三次，仍找不到则判定产物缺失。
+会话进入 `idle` 且 `stop_reason.type=end_turn` 后，产物收集可能比 `idle` 晚几秒。控制面先查询一次；没有找到时按 5 秒、15 秒、30 秒的间隔最多重试三次，仍找不到则判定产物缺失。
 
 ```http
 GET /v1/files?scope_id={session_id}
@@ -543,7 +516,7 @@ GET /v1/files?scope_id={session_id}
 GET /v1/files/{file_id}/content
 ```
 
-- 下载设置 30 秒超时；404/410 视为文件尚未就绪，按 1、2、4 秒重试，仍失败则按产物下载失败处理。
+- 下载设置 5 分钟超时；404/410 视为文件尚未就绪，按 5、15、30 秒重试，仍失败则按产物下载失败处理。
 - 先把响应写入临时文件，边写边计数；超过 100 MiB 立即中止并删除临时文件。
 - 下载完成后计算 `sha256(artifact.tar.gz)`，保存摘要和字节数。
 
@@ -625,13 +598,13 @@ MVP 不做自动修复轮次。构建失败后由用户重新发起 `create-app`
 
 | 操作 | 超时 | 重试策略 |
 | --- | --- | --- |
-| `POST /v1/sessions` | 10 秒 | 不盲目重试；超时后查询会话状态，无法确认则失败 |
-| `POST /v1/sessions/{id}/events` | 10 秒 | 不重复提交；先读取事件历史确认是否已接收 |
+| `POST /v1/sessions` | 30 秒 | 不盲目重试；超时后查询会话状态，无法确认则失败 |
+| `POST /v1/sessions/{id}/events` | 30 秒 | 不重复提交；先读取事件历史确认是否已接收 |
 | SSE 事件流 | 长连接 | 断线按 1/2/4/8/15 秒退避重连，回放并按事件 ID 去重 |
-| `GET /v1/files` | 5 秒 | 2/5/10 秒三次重试，之后判定产物缺失 |
-| `GET /v1/files/{id}/content` | 30 秒 | 1/2/4 秒三次重试 |
-| `POST /v1/sessions/{id}/archive` | 10 秒 | 尽力重试，不阻塞应用注册 |
-| 整体构建 | 20 分钟 | 超时中断并归档，不自动重启 |
+| `GET /v1/files` | 10 秒 | 5/15/30 秒三次重试，之后判定产物缺失 |
+| `GET /v1/files/{id}/content` | 5 分钟 | 5/15/30 秒三次重试 |
+| `POST /v1/sessions/{id}/archive` | 30 秒 | 尽力重试，不阻塞应用注册 |
+| 整体构建 | 60 分钟 | 超时中断并归档，不自动重启 |
 
 幂等与并发：
 
@@ -643,7 +616,7 @@ MVP 不做自动修复轮次。构建失败后由用户重新发起 `create-app`
 ## 7. 安全与边界
 
 - 构建智能体不配置 `mcp_servers`、`mcp_toolset`、自定义工具或 `vault_ids`，不接收输入文件；它只能使用沙箱内置工具和技能。
-- 环境网络默认使用 `limited`，只放行 npm registry；不使用构建产物连接外部服务。
+- 构建环境不限制出站网络，便于安装依赖；构建产物仍要求运行期自包含，不依赖外部服务。
 - AgentAPI API Key 只保存在控制面，不进入提示词、日志、MCP 响应或 Render。
 - 会话 `metadata` 只包含 `app_id`；不放设备标识、声纹或用户隐私数据。
 - 构建产物视为不可信输入：控制面在交给 Render 前完成归档结构和启动契约校验；Render 会再次校验摘要和归档。
@@ -653,6 +626,6 @@ MVP 不做自动修复轮次。构建失败后由用户重新发起 `create-app`
 
 已按 AgentAPI 文档核对：智能体、技能和环境资源，会话创建，`user.message`，SSE 事件类型与停止原因，Files API 的产物收集与 100 MiB 限制，会话归档。
 
-尚未在真实 AgentAPI 上验证：`claudecode` 加载自定义技能后的实际行为、`limited` 网络下 npm 安装构建依赖、产物文件在 `idle` 后的出现延迟、SSE 断线回放与去重、20 分钟构建超时是否适合实际模型速度。
+尚未在真实 AgentAPI 上验证：`claudecode` 加载自定义技能后的实际行为、构建期依赖安装与整体耗时、产物文件在 `idle` 后的出现延迟、SSE 断线回放与去重、60 分钟构建超时是否适合实际模型速度。
 
 这些是实现阶段需要优先验证的假设；验证结果应回写到本文和技能模板。
