@@ -46,12 +46,23 @@ func NewService(registry *Registry, adapters map[string]Adapter) *Service {
 	return &Service{registry: registry, adapters: copied, sessions: make(map[string]*record), active: make(map[string]string)}
 }
 
-func (s *Service) ListTargets() []api.Target { return s.registry.List() }
+func (s *Service) ListTargets() []api.Target {
+	targets := s.registry.List()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range targets {
+		targets[i].ActiveSessionID = s.active[targets[i].ID]
+	}
+	return targets
+}
 func (s *Service) GetTarget(id string) (api.Target, error) {
 	d, ok := s.registry.Get(id)
 	if !ok {
 		return api.Target{}, ErrNotFound
 	}
+	s.mu.Lock()
+	d.Target.ActiveSessionID = s.active[id]
+	s.mu.Unlock()
 	return d.Target, nil
 }
 

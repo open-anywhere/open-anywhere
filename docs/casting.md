@@ -30,6 +30,27 @@ curl http://localhost:8080/v1/targets
 curl http://localhost:8080/v1/targets/TARGET_ID
 ```
 
+Target 有本服务管理的活动会话时，列表和详情会包含 `active_session_id`；空闲时省略该字段。例如：
+
+```json
+{
+  "id": "TARGET_ID",
+  "name": "客厅电视",
+  "state": "online",
+  "active_session_id": "projection-SESSION_ID",
+  "endpoints": []
+}
+```
+
+上例省略了 Endpoint 内容。拿到 `active_session_id` 后，可以查询播放状态或停止投屏：
+
+```sh
+curl http://localhost:8080/v1/projection-sessions/projection-SESSION_ID
+curl -X DELETE http://localhost:8080/v1/projection-sessions/projection-SESSION_ID
+```
+
+该字段表示本服务的设备占用，包含正在启动的会话，以及失败后尚未清理成功的会话；它不代表电视一定正在播放。它不会触发设备状态查询，也不反映其他应用发起的投屏。电视自行停止后，查询 Session 会刷新状态并释放占用。服务重启后不保留该字段对应的会话。
+
 Client 根据返回的 `target.id` 和 `endpoint.id` 创建会话：
 
 ```sh

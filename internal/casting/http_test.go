@@ -151,3 +151,59 @@ func TestHTTPServer(t *testing.T) {
 		t.Fatalf("%s %v", body, err)
 	}
 }
+
+func TestHTTPTargetLinksToActiveSession(t *testing.T) {
+	s, _ := setup(&fakeAdapter{state: api.SessionPlaying})
+	h := NewHandler(s)
+	check := func(want string) {
+		t.Helper()
+		for _, path := range []string{"/v1/targets", "/v1/targets/tv"} {
+			w := httpCall(t, h, "GET", path, "", "")
+			if w.Code != 200 {
+				t.Fatalf("%s: %d", path, w.Code)
+			}
+			var target map[string]any
+			if path == "/v1/targets" {
+				var body struct {
+					Targets []map[string]any `json:"targets"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+					t.Fatal(err)
+				}
+				target = body.Targets[0]
+			} else {
+				if err := json.Unmarshal(w.Body.Bytes(), &target); err != nil {
+					t.Fatal(err)
+				}
+			}
+			value, exists := target["active_session_id"]
+			if want == "" {
+				if exists {
+					t.Fatalf("idle target exposes stale session: %+v", target)
+				}
+			} else if value != want {
+				t.Fatalf("want active session %s, got %+v", want, target)
+			}
+		}
+	}
+	check("")
+	data, _ := json.Marshal(testRequest())
+	w := httpCall(t, h, "POST", "/v1/projection-sessions", string(data), "application/json")
+	if w.Code != 201 {
+		t.Fatal(w.Body.String())
+	}
+	var session api.Session
+	if err := json.Unmarshal(w.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	check(session.ID)
+	detail := httpCall(t, h, "GET", "/v1/projection-sessions/"+session.ID, "", "")
+	if detail.Code != 200 {
+		t.Fatal(detail.Body.String())
+	}
+	stopped := httpCall(t, h, "DELETE", "/v1/projection-sessions/"+session.ID, "", "")
+	if stopped.Code != 200 {
+		t.Fatal(stopped.Body.String())
+	}
+	check("")
+}

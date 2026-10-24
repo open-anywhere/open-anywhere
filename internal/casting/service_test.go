@@ -334,3 +334,102 @@ func TestCanceledStartStillCleansUpDevice(t *testing.T) {
 		t.Fatalf("cleanup inherited canceled request: %v", err)
 	}
 }
+
+func assertTargetSession(t *testing.T, s *Service, want string) {
+	t.Helper()
+	target, err := s.GetTarget("tv")
+	if err != nil || target.ActiveSessionID != want {
+		t.Fatalf("target session: want %q, got %+v %v", want, target, err)
+	}
+	targets := s.ListTargets()
+	if len(targets) != 1 || targets[0].ActiveSessionID != want {
+		t.Fatalf("target list: want session %q, got %+v", want, targets)
+	}
+}
+
+func TestTargetReportsActiveSessionLifecycle(t *testing.T) {
+	a := &fakeAdapter{state: api.SessionPlaying}
+	s, r := setup(a)
+	ctx := context.Background()
+	assertTargetSession(t, s, "")
+	first, err := s.CreateSession(ctx, testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTargetSession(t, s, first.ID)
+	// Rediscovery updates device metadata, not its service-owned reservation.
+	r.Upsert(testDevice())
+	assertTargetSession(t, s, first.ID)
+	a.stopErr = errors.New("Stop failed")
+	if _, err := s.StopSession(ctx, first.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatal(err)
+	}
+	assertTargetSession(t, s, first.ID)
+	a.stopErr = nil
+	if _, err := s.StopSession(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertTargetSession(t, s, "")
+	second, err := s.CreateSession(ctx, testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StopSession(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertTargetSession(t, s, second.ID)
+	a.state = api.SessionStopped
+	if _, err := s.GetSession(ctx, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertTargetSession(t, s, "")
+}
+
+func TestTargetReportsReservationWhileStarting(t *testing.T) {
+	a := &fakeAdapter{state: api.SessionPlaying, entered: make(chan struct{}), resume: make(chan struct{})}
+	s, _ := setup(a)
+	done := make(chan api.Session, 1)
+	go func() {
+		session, err := s.CreateSession(context.Background(), testRequest())
+		if err != nil {
+			t.Error(err)
+		}
+		done <- session
+	}()
+	<-a.entered
+	target, err := s.GetTarget("tv")
+	if err != nil || target.ActiveSessionID == "" {
+		t.Errorf("starting session not visible: %+v %v", target, err)
+	}
+	assertTargetSession(t, s, target.ActiveSessionID)
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() { s.ListTargets(); _, _ = s.GetTarget("tv") })
+	}
+	wg.Wait()
+	close(a.resume)
+	session := <-done
+	if session.ID != target.ActiveSessionID {
+		t.Fatalf("reservation changed: %s / %s", target.ActiveSessionID, session.ID)
+	}
+}
+
+func TestTargetReportsFailedCleanupReservation(t *testing.T) {
+	a := &fakeAdapter{startErr: errors.New("Play failed"), stopErr: errors.New("Stop failed")}
+	s, _ := setup(a)
+	failed, err := s.CreateSession(context.Background(), testRequest())
+	if !errors.Is(err, ErrUpstream) {
+		t.Fatal(err)
+	}
+	assertTargetSession(t, s, failed.ID)
+	a.stopErr = nil
+	if _, err := s.StopSession(context.Background(), failed.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertTargetSession(t, s, "")
+	a.startErr = errors.New("still failing")
+	if _, err := s.CreateSession(context.Background(), testRequest()); !errors.Is(err, ErrUpstream) {
+		t.Fatal(err)
+	}
+	assertTargetSession(t, s, "")
+}

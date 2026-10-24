@@ -26,6 +26,9 @@ type Target struct {
 	Name      string      `json:"name"`
 	State     TargetState `json:"state"`
 	Endpoints []Endpoint  `json:"endpoints"`
+	// ActiveSessionID identifies this service's current reservation, including
+	// sessions that are starting or whose failure cleanup has not succeeded.
+	ActiveSessionID string `json:"active_session_id,omitempty"`
 }
 
 type Endpoint struct {
