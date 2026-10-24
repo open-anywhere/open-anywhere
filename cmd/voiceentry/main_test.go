@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -54,5 +55,12 @@ func TestCommandHelpAndStartError(t *testing.T) {
 	var out bytes.Buffer
 	if code := command([]string{"-serve"}, &out, func(voiceentry.Config) error { return errors.New("boom") }); code != 1 || !strings.Contains(out.String(), "boom") {
 		t.Fatalf("code=%d out=%q", code, out.String())
+	}
+}
+
+func TestRunReportsConfigurationErrors(t *testing.T) {
+	cfg := voiceentry.Config{DevicePath: filepath.Join(t.TempDir(), "missing.json"), Text: "你好"}
+	if err := run(cfg); err == nil {
+		t.Fatal("run succeeded without a device file")
 	}
 }

@@ -97,18 +97,21 @@ type App struct {
 	conns      chan connCmd
 	runCtx     context.Context
 
+	media      media
+	cmdTimeout time.Duration
+
 	// The fields below belong to the run loop.
 	session *linx.Session
 	down    bool
-	codec   *audio.Codec
-	player  *audio.Player
+	codec   codec
+	player  pcmPlayer
 }
 
 // New loads the device credentials and wires the components together without
 // touching the network.
 func New(cfg Config) (*App, error) {
 	cfg.applyDefaults()
-	a := &App{cfg: cfg, transport: &transport{}, conns: make(chan connCmd)}
+	a := &App{cfg: cfg, transport: &transport{}, conns: make(chan connCmd), media: systemMedia(), cmdTimeout: 45 * time.Second}
 	d, err := linx.LoadDevice(cfg.DevicePath)
 	switch {
 	case err == nil:
@@ -195,7 +198,7 @@ func (a *App) setupWebAudio() {
 		a.api.SetPlaybackSampleRate(a.session.AudioParams().SampleRate)
 	}
 	a.api.SetOpusHandler(a.transport.SendAudio)
-	codec, err := audio.NewCodec()
+	codec, err := a.media.newCodec()
 	if err != nil {
 		return
 	}
@@ -263,22 +266,22 @@ func (a *App) startAudioSource() (func(), error) {
 	if a.session == nil {
 		return nil, errors.New("设备未注册")
 	}
-	codec, err := audio.NewCodec()
+	codec, err := a.media.newCodec()
 	if err != nil {
 		return nil, err
 	}
 	a.codec = codec
-	var source *audio.Source
+	var source frameSource
 	if a.cfg.File != "" {
-		source, err = audio.NewFileSource(a.cfg.File, 3)
+		source, err = a.media.fileSource(a.cfg.File)
 	} else {
-		source, err = audio.NewMicSource(a.cfg.Mic)
+		source, err = a.media.micSource(a.cfg.Mic)
 	}
 	if err != nil {
 		return nil, err
 	}
 	if !a.cfg.NoPlay {
-		a.player, _ = audio.NewPlayer(a.session.AudioParams().SampleRate)
+		a.player, _ = a.media.newPlayer(a.session.AudioParams().SampleRate)
 	}
 	go func() {
 		for {
@@ -294,7 +297,7 @@ func (a *App) startAudioSource() (func(), error) {
 			_ = a.transport.SendAudio(packet)
 		}
 	}()
-	return func() { source.Close() }, nil
+	return func() { _ = source.Close() }, nil
 }
 
 // command asks the run loop to disconnect or reconnect and waits for the result.
@@ -302,8 +305,8 @@ func (a *App) command(reconnect bool) error {
 	c := connCmd{reconnect: reconnect, done: make(chan error, 1)}
 	select {
 	case a.conns <- c:
-	case <-time.After(45 * time.Second):
-		return errors.New("client is busy reconnecting")
+	case <-time.After(a.cmdTimeout):
+		return errors.New("voice entry is busy reconnecting")
 	case <-a.runCtx.Done():
 		return a.runCtx.Err()
 	}

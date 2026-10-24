@@ -25,13 +25,25 @@ type fakeLinx struct {
 	srv      *httptest.Server
 	msgs     chan map[string]any
 	sessions atomic.Int32
+	binary   chan int // sizes of binary (audio) frames received
 	// dropFirst closes the first connection right after the greeting.
 	dropFirst bool
+	// silent never answers a user text; closeOnDetect hangs up when one arrives;
+	// audioReply adds a binary frame to every reply.
+	silent, closeOnDetect, audioReply bool
+	// refuseFrom hangs up before the greeting from this session number on (0 = never).
+	refuseFrom int32
 }
 
 func newFakeLinx(t *testing.T, dropFirst bool) *fakeLinx {
 	t.Helper()
-	f := &fakeLinx{msgs: make(chan map[string]any, 64), dropFirst: dropFirst}
+	return newFakeLinxWith(t, &fakeLinx{dropFirst: dropFirst})
+}
+
+func newFakeLinxWith(t *testing.T, f *fakeLinx) *fakeLinx {
+	t.Helper()
+	f.msgs = make(chan map[string]any, 64)
+	f.binary = make(chan int, 64)
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -43,6 +55,9 @@ func newFakeLinx(t *testing.T, dropFirst bool) *fakeLinx {
 			return
 		}
 		n := f.sessions.Add(1)
+		if f.refuseFrom > 0 && n >= f.refuseFrom {
+			return
+		}
 		send := func(m map[string]any) {
 			b, _ := json.Marshal(m)
 			_ = c.Write(ctx, websocket.MessageText, b)
@@ -56,6 +71,10 @@ func newFakeLinx(t *testing.T, dropFirst bool) *fakeLinx {
 			if err != nil {
 				return
 			}
+			if typ == websocket.MessageBinary {
+				f.binary <- len(b)
+				continue
+			}
 			if typ != websocket.MessageText {
 				continue
 			}
@@ -63,12 +82,21 @@ func newFakeLinx(t *testing.T, dropFirst bool) *fakeLinx {
 			_ = json.Unmarshal(b, &m)
 			f.msgs <- m
 			if m["type"] == "listen" && m["state"] == "detect" {
+				if f.closeOnDetect {
+					return
+				}
+				if f.silent {
+					continue
+				}
 				reply := "播报"
 				if text, ok := m["text"].(string); ok && m["text_response"] == nil {
 					send(map[string]any{"type": "stt", "text": text})
 					reply = "收到:" + text
 				}
 				send(map[string]any{"type": "tts", "state": "start"})
+				if f.audioReply {
+					_ = c.Write(ctx, websocket.MessageBinary, []byte{7, 7, 7})
+				}
 				send(map[string]any{"type": "tts", "state": "sentence_start", "text": reply})
 				send(map[string]any{"type": "tts", "state": "stop", "is_aborted": false})
 			}
@@ -135,7 +163,8 @@ func TestOneShotAnnounceAndMissingDevice(t *testing.T) {
 }
 
 // startResident runs a resident client on a loopback listener and returns its base URL.
-func startResident(t *testing.T, cfg Config) (base string, stop func() error) {
+// startResident runs a resident app; tweak, if given, adjusts the App before it runs.
+func startResident(t *testing.T, cfg Config, tweak ...func(*App)) (base string, stop func() error) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -145,6 +174,9 @@ func startResident(t *testing.T, cfg Config) (base string, stop func() error) {
 	a, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, f := range tweak {
+		f(a)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

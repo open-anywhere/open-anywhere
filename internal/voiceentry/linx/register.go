@@ -18,13 +18,16 @@ const APIURL = "https://xrobo.qiniu.com"
 // NewIdentity creates a fresh virtual device identity: a locally administered
 // unicast MAC and a random UUID v4 client id. Token and WSURL stay empty until
 // the platform binds the device.
+// randRead is replaced in tests to exercise entropy failures.
+var randRead = rand.Read
+
 func NewIdentity() (Device, error) {
 	m := make([]byte, 6)
 	u := make([]byte, 16)
-	if _, err := rand.Read(m); err != nil {
+	if _, err := randRead(m); err != nil {
 		return Device{}, err
 	}
-	if _, err := rand.Read(u); err != nil {
+	if _, err := randRead(u); err != nil {
 		return Device{}, err
 	}
 	m[0] = 0x02

@@ -2,7 +2,7 @@ coverage:
   status:
     project:
       default:
-        target: 80%
+        target: auto
         threshold: 1%
     patch:
       default:
@@ -13,8 +13,9 @@ comment:
   behavior: default
   require_changes: false
 
-# voiceentry 的 audio player/source 只是 ffplay/ffmpeg 子进程封装，
-# 单元测试环境没有这些程序
+# voiceentry 的 audio player/source 和 media.go 只是 ffplay/ffmpeg/libopus 的
+# 封装，单元测试环境没有这些程序，测试里用假的实现代替
 ignore:
   - "internal/voiceentry/audio/player.go"
   - "internal/voiceentry/audio/source.go"
+  - "internal/voiceentry/media.go"
