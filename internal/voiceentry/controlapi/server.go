@@ -96,9 +96,21 @@ func (s *Server) SetRegistration(fn func(context.Context, register.Request) (reg
 	s.register = fn
 }
 
+// requirePost turns away state-changing endpoints reached with any other
+// method. sameOriginOnly cannot help here: a browser request made by an <img>
+// tag or a link preview is a GET with no Origin header, and without this check
+// it would still pause, abort or speak on the device.
+func requirePost(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodPost {
+		return true
+	}
+	w.Header().Set("Allow", http.MethodPost)
+	http.Error(w, "POST required", http.StatusMethodNotAllowed)
+	return false
+}
+
 func (s *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+	if !requirePost(w, r) {
 		return
 	}
 	// Requiring JSON forces a CORS preflight, so other sites cannot trigger this blindly.
@@ -141,8 +153,7 @@ func (s *Server) reconnectLinx(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) connectionAction(w http.ResponseWriter, r *http.Request, fn func() error, status string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+	if !requirePost(w, r) {
 		return
 	}
 	if fn == nil {
@@ -204,7 +215,7 @@ func (s *Server) playback(w http.ResponseWriter, r *http.Request) {
 // packet until the connection or the request is gone.
 func (s *Server) streamPlayback(parent context.Context, c playbackConn, ch <-chan []byte, rate int) {
 	ctx := c.CloseRead(parent)
-	if err := c.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(`{"sample_rate":%d}`, rate))); err != nil {
+	if err := c.Write(ctx, websocket.MessageText, fmt.Appendf(nil, `{"sample_rate":%d}`, rate)); err != nil {
 		return
 	}
 	for {
@@ -258,6 +269,9 @@ func (s *Server) console(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pause(w http.ResponseWriter, r *http.Request) {
+	if !requirePost(w, r) {
+		return
+	}
 	if err := s.controller.Pause(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -266,6 +280,9 @@ func (s *Server) pause(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
+	if !requirePost(w, r) {
+		return
+	}
 	if err := s.controller.Resume(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -276,6 +293,9 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.statusFn())
 }
 func (s *Server) announce(w http.ResponseWriter, r *http.Request) {
+	if !requirePost(w, r) {
+		return
+	}
 	var in struct {
 		Text string `json:"text"`
 	}
@@ -290,6 +310,9 @@ func (s *Server) announce(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
 }
 func (s *Server) say(w http.ResponseWriter, r *http.Request) {
+	if !requirePost(w, r) {
+		return
+	}
 	var in struct {
 		Text string `json:"text"`
 	}
@@ -304,6 +327,9 @@ func (s *Server) say(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "sent"})
 }
 func (s *Server) abort(w http.ResponseWriter, r *http.Request) {
+	if !requirePost(w, r) {
+		return
+	}
 	if err := s.controller.Abort(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return

@@ -84,7 +84,10 @@ func serve(ctx context.Context, cfg config.Config) error {
 	registry.Load(persisted)
 
 	agentapiClient := agentapi.New(cfg.AgentAPIURL, cfg.AgentAPIKey, cfg.HTTPTimeout)
-	renderClient := render.New(cfg.RenderURL, cfg.HTTPTimeout)
+	// A start request may legitimately use the whole startup budget, so the
+	// client's per-request deadline must not cut it short at the ordinary
+	// HTTP timeout (30s by default) while Render is still starting the app.
+	renderClient := render.New(cfg.RenderURL, cfg.StartTimeout+cfg.HTTPTimeout)
 	castingClient := casting.NewClient(cfg.CastingURL, cfg.HTTPTimeout)
 
 	server := mcp.New(nil, cfg.CallTimeout)

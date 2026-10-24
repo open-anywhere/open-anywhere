@@ -665,3 +665,37 @@ func TestUserMessageMapsArtifactCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchBacksOffAfterConsecutiveStreamFailures(t *testing.T) {
+	rec := &recorder{}
+	stream := func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}
+	server := builderTestServer(t, stream, nil, "running", rec)
+	defer server.Close()
+
+	builder, registry, _ := newTestBuilder(t, server.URL, &fakeNotifier{})
+	builder.cfg.BuildTimeout = 30 * time.Millisecond
+	var mu sync.Mutex
+	var delays []time.Duration
+	builder.sleepFn = func(_ context.Context, d time.Duration) bool {
+		mu.Lock()
+		delays = append(delays, d)
+		mu.Unlock()
+		return true
+	}
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	registry.Add(app.App{ID: "app_1", Owner: owner, State: app.StateBuilding, BuildStartedAt: time.Now()})
+
+	builder.watch("app_1", "ses_1")
+
+	mu.Lock()
+	got := append([]time.Duration(nil), delays...)
+	mu.Unlock()
+	if len(got) < 3 {
+		t.Fatalf("reconnect attempts = %v", got)
+	}
+	if got[0] != time.Second || got[1] != 2*time.Second || got[2] != 4*time.Second {
+		t.Fatalf("backoff did not grow across failed connections: %v", got[:3])
+	}
+}

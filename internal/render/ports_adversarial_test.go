@@ -156,11 +156,22 @@ func TestAdversarialLsofErrorModes(t *testing.T) {
 		}
 	})
 
-	t.Run("stderr", func(t *testing.T) {
-		fakeLsof(t, "echo boom >&2; exit 0")
+	t.Run("stderr warning with zero exit is usable", func(t *testing.T) {
+		fakeLsof(t, "echo 'lsof: WARNING: can\\047t stat() /mnt' >&2; printf 'n*:1234\\n'; exit 0")
+		ports, err := systemPorts(context.Background())
+		if err != nil {
+			t.Fatalf("warning on stderr must not fail a successful listing: %v", err)
+		}
+		if !reflect.DeepEqual(ports, []int{1234}) {
+			t.Fatalf("ports = %v", ports)
+		}
+	})
+
+	t.Run("stderr is reported with a real failure", func(t *testing.T) {
+		fakeLsof(t, "echo boom >&2; exit 2")
 		_, err := lsof(context.Background(), "-iTCP", "-sTCP:LISTEN", "-Fn")
 		if err == nil || !strings.Contains(err.Error(), "boom") {
-			t.Fatalf("expected stderr error, got %v", err)
+			t.Fatalf("expected stderr detail, got %v", err)
 		}
 	})
 

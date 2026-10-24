@@ -642,6 +642,9 @@ func TestStopApp(t *testing.T) {
 	if view.State != app.StateIdle {
 		t.Fatalf("view = %+v", view)
 	}
+	if view.StoppedAt == nil || view.StoppedAt.IsZero() {
+		t.Fatalf("stop response is missing stopped_at: %+v", view)
+	}
 	snapshot := entry.Snapshot()
 	if snapshot.State != app.StateIdle || snapshot.ScreenID != "" || snapshot.InstanceID != "" || snapshot.ProjectionSessionID != "" || snapshot.StoppedAt.IsZero() {
 		t.Fatalf("snapshot = %+v", snapshot)
@@ -912,6 +915,31 @@ func occupiedScreenEnv(t *testing.T) (*testEnv, app.Identity, *app.Record) {
 	env.registry.Add(other)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	return env, owner, env.registry.Add(idleApp(t, owner))
+}
+
+func TestStartAppForceKeepsTheAppWhenTheScreenIsOffline(t *testing.T) {
+	env, owner, _ := occupiedScreenEnv(t)
+	env.casting.target.State = casting.TargetOffline
+	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", true); toolCode(t, err) != "TARGET_UNREACHABLE" {
+		t.Fatalf("err = %v", err)
+	}
+	if len(env.casting.stoppedIDs()) != 0 || len(env.render.deletedIDs()) != 0 {
+		t.Fatal("force takeover must not stop anything before the target is validated")
+	}
+	other, ok := env.registry.Get("app_other")
+	if !ok || other.Snapshot().State != app.StateRunning {
+		t.Fatalf("the app on the offline screen was changed: %+v", other.Snapshot())
+	}
+}
+
+func TestVerifyRunningAcceptsPausedProjection(t *testing.T) {
+	env := newTestEnv(t, nil)
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	value := runningApp(owner)
+	env.casting.session = casting.Session{ID: "ps_1", State: casting.SessionPaused}
+	if err := env.svc.verifyRunning(context.Background(), value); err != nil {
+		t.Fatalf("paused projection must stay addressable: %v", err)
+	}
 }
 
 func TestStartAppForceReplacesTheAppOnTheScreen(t *testing.T) {

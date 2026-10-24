@@ -46,16 +46,20 @@ func lsof(ctx context.Context, args ...string) ([]byte, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if stderr.Len() > 0 {
-		return nil, fmt.Errorf("lsof: %s", stderr.String())
-	}
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 && len(out) == 0 {
+			// Exit status 1 means "no matching sockets". Warnings on stderr (for
+			// example macOS "can't stat()" messages) do not change that result.
 			return nil, nil
+		}
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return nil, fmt.Errorf("lsof: %w: %s", err, detail)
 		}
 		return nil, err
 	}
+	// A zero exit status means the listing is usable even when lsof printed
+	// warnings about unrelated mounts.
 	return out, nil
 }
 func systemPorts(ctx context.Context) ([]int, error) {

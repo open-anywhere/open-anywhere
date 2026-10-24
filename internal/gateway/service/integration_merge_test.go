@@ -27,14 +27,16 @@ func TestReconcileLostRenderResponse(t *testing.T) {
 		t.Fatal(env.render.deleted)
 	}
 }
-func TestReconcileRetainsUnknownAndFailedCleanup(t *testing.T) {
+func TestReconcileResolvesMissingInstanceAndRetainsFailedCleanup(t *testing.T) {
 	env := newTestEnv(t, nil)
 	record := env.registry.Add(app.App{ID: "a", State: app.StateError, ScreenID: "screen", PendingRuntime: true})
-	if err := env.svc.reconcile(context.Background(), record); err == nil {
-		t.Fatal("unknown released")
+	// Render answers and lists no instance for this app, so there is nothing
+	// left to protect: the unknown outcome is resolved instead of held open.
+	if err := env.svc.reconcile(context.Background(), record); err != nil {
+		t.Fatal(err)
 	}
-	if record.Snapshot().ScreenID == "" {
-		t.Fatal("reservation lost")
+	if snapshot := record.Snapshot(); snapshot.PendingRuntime || snapshot.ScreenID != "" {
+		t.Fatalf("reservation kept without a Render instance: %+v", snapshot)
 	}
 	record.Update(func(a *app.App) { a.PendingRuntime = false; a.InstanceID = "instance"; a.CleanupPending = true })
 	env.render.deleteErr = errors.New("network down")

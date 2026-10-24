@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // edgeSpec is the smallest document that compiles successfully.
@@ -694,5 +696,34 @@ func TestEdgeConcurrentSend(t *testing.T) {
 	}
 	if calls.Load() != workers {
 		t.Fatalf("calls = %d", calls.Load())
+	}
+}
+
+func TestEdgeFromDocumentWithTimeout(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(60 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer slow.Close()
+
+	doc := []byte(edgeSpec)
+	timedOut, err := FromDocumentWithTimeout("app", slow.URL, doc, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := timedOut.Send(context.Background(), Arguments{ServiceID: "app", OperationID: "ping"}); err == nil {
+		t.Fatal("expected the compiled timeout to fire")
+	} else {
+		requireCode(t, err, "TIMEOUT")
+	}
+
+	patient, err := FromDocumentWithTimeout("app", slow.URL, doc, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := patient.Send(context.Background(), Arguments{ServiceID: "app", OperationID: "ping"})
+	if err != nil || !out.OK {
+		t.Fatalf("send = %+v, %v", out, err)
 	}
 }

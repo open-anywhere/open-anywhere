@@ -90,7 +90,7 @@ func (t *Transport) Status(ctx context.Context, d core.Device) (api.SessionState
 	if err != nil {
 		return "", err
 	}
-	switch state {
+	switch strings.TrimSpace(state) {
 	case "PLAYING":
 		return api.SessionPlaying, nil
 	case "PAUSED_PLAYBACK":

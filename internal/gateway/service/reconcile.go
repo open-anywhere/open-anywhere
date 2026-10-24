@@ -46,24 +46,31 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 			}
 		}
 		if found == "" {
-			return &ToolError{Code: "RECONCILIATION_PENDING", Message: "Render 结果未确认，保留占用"}
+			// ListPorts succeeded and knows no instance for this app, so there is
+			// no runtime to adopt or clean up. Keeping the reservation would
+			// leave the application and its screen occupied forever.
+			if err := persistRuntime(record, func(v *app.App) { v.PendingRuntime = false }); err != nil {
+				return err
+			}
+			a = record.Snapshot()
+		} else {
+			instance, err := s.render.Get(ctx, found)
+			if err != nil {
+				return err
+			}
+			if instance.AppID != a.ID {
+				return fmt.Errorf("foreign Render instance")
+			}
+			if err := persistRuntime(record, func(v *app.App) {
+				v.InstanceID = found
+				v.PendingRuntime = false
+				v.Source = instance.Source
+				v.AppBaseURL = instance.AppBaseURL
+			}); err != nil {
+				return err
+			}
+			a = record.Snapshot()
 		}
-		instance, err := s.render.Get(ctx, found)
-		if err != nil {
-			return err
-		}
-		if instance.AppID != a.ID {
-			return fmt.Errorf("foreign Render instance")
-		}
-		if err := persistRuntime(record, func(v *app.App) {
-			v.InstanceID = found
-			v.PendingRuntime = false
-			v.Source = instance.Source
-			v.AppBaseURL = instance.AppBaseURL
-		}); err != nil {
-			return err
-		}
-		a = record.Snapshot()
 	}
 	if a.PendingProjection {
 		target, err := s.casting.GetTarget(ctx, a.TargetID)

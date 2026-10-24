@@ -617,11 +617,23 @@ func networkError(err error, ctx context.Context) error {
 
 // FromDocument compiles a registered artifact without fetching a remote specification.
 func FromDocument(id, baseURL string, document []byte) (*Controller, error) {
+	return FromDocumentWithTimeout(id, baseURL, document, 10000)
+}
+
+// FromDocumentWithTimeout is FromDocument with an explicit per-request timeout.
+// A non-positive timeout falls back to ten seconds.
+func FromDocumentWithTimeout(id, baseURL string, document []byte, timeoutMS int) (*Controller, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !safePath(u.Path) || strings.Contains(u.EscapedPath(), "%") {
 		return nil, failure("INVALID_CONFIG", "Invalid application base URL")
 	}
-	e, err := compileDocument(Service{ID: id, BaseURL: baseURL, TimeoutMS: 10000}, document)
+	switch {
+	case timeoutMS <= 0:
+		timeoutMS = 10000
+	case timeoutMS > 120000:
+		timeoutMS = 120000
+	}
+	e, err := compileDocument(Service{ID: id, BaseURL: baseURL, TimeoutMS: timeoutMS}, document)
 	if err != nil {
 		return nil, err
 	}

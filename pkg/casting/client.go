@@ -32,6 +32,10 @@ type ClientError struct {
 	Status  int
 	Code    string
 	Message string
+	// SessionID identifies a projection session that the service created but
+	// could not clean up. It is set on creation failures so callers can query
+	// or retry stopping that session instead of leaking the device occupation.
+	SessionID string
 }
 
 func (e *ClientError) Error() string {
@@ -78,8 +82,9 @@ func decodeError(response *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	var payload struct {
 		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			SessionID string `json:"session_id"`
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(body, &payload)
@@ -90,7 +95,7 @@ func decodeError(response *http.Response) error {
 	if message == "" {
 		message = response.Status
 	}
-	return &ClientError{Status: response.StatusCode, Code: payload.Error.Code, Message: message}
+	return &ClientError{Status: response.StatusCode, Code: payload.Error.Code, Message: message, SessionID: payload.Error.SessionID}
 }
 
 // ListTargets returns the casting targets currently known to the service.
