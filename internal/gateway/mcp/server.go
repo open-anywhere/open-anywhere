@@ -49,11 +49,43 @@ type Server struct {
 }
 
 type session struct {
-	identity   app.Identity
-	transport  *sdk.SSEServerTransport
+	identity  app.Identity
+	transport *sdk.SSEServerTransport
+	cancel    context.CancelFunc
+
+	// mu guards connection and sdk, which are attached after the session is
+	// registered but before server.Connect returns.
+	mu         sync.Mutex
 	connection sdk.Connection
 	sdk        *sdk.ServerSession
-	cancel     context.CancelFunc
+}
+
+func (s *session) attach(sdkSession *sdk.ServerSession, connection sdk.Connection) {
+	s.mu.Lock()
+	s.sdk = sdkSession
+	s.connection = connection
+	s.mu.Unlock()
+}
+
+func (s *session) close() {
+	s.mu.Lock()
+	sdkSession := s.sdk
+	s.mu.Unlock()
+	if sdkSession != nil {
+		_ = sdkSession.Close()
+	}
+}
+
+// write sends a message to the client. Sessions registered but not yet
+// connected have no client to deliver to, so the message is dropped.
+func (s *session) write(ctx context.Context, message jsonrpc.Message) error {
+	s.mu.Lock()
+	connection := s.connection
+	s.mu.Unlock()
+	if connection == nil {
+		return nil
+	}
+	return connection.Write(ctx, message)
 }
 
 // New creates an MCP server. SetTools may be called later to break the wiring
@@ -89,7 +121,7 @@ func (s *Server) Close() {
 	s.mu.Unlock()
 	for _, item := range sessions {
 		item.cancel()
-		_ = item.sdk.Close()
+		item.close()
 	}
 }
 
@@ -134,18 +166,14 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 	})
 	addTools(server, tools, identity, s.callTimeout)
 	binding := &connectionTransport{inner: transport}
-	sdkSession, err := server.Connect(ctx, binding, nil)
-	if err != nil {
-		http.Error(w, "connection failed", http.StatusInternalServerError)
-		return
-	}
 
+	// Register before Connect: Connect writes and flushes the endpoint event,
+	// so a client may POST to it before Connect returns. Registering afterwards
+	// races with that first POST and serves it a 404.
 	item := &session{
-		identity:   identity,
-		transport:  transport,
-		connection: binding.connection,
-		sdk:        sdkSession,
-		cancel:     cancel,
+		identity:  identity,
+		transport: transport,
+		cancel:    cancel,
 	}
 	s.mu.Lock()
 	s.sessions[sessionID] = item
@@ -154,6 +182,15 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		delete(s.sessions, sessionID)
 		s.mu.Unlock()
+	}()
+
+	sdkSession, err := server.Connect(ctx, binding, nil)
+	if err != nil {
+		http.Error(w, "connection failed", http.StatusInternalServerError)
+		return
+	}
+	item.attach(sdkSession, binding.connection)
+	defer func() {
 		_ = sdkSession.Close()
 	}()
 
@@ -194,7 +231,7 @@ func (s *Server) Notify(owner app.Identity, notification app.Notification) {
 	s.mu.Unlock()
 	for _, item := range sessions {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := item.connection.Write(ctx, message); err != nil {
+		if err := item.write(ctx, message); err != nil {
 			s.logf("mcp: notify %s: %v", notification.AppID, err)
 		}
 		cancel()
