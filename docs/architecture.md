@@ -20,7 +20,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 系统只有两条契约：
 
 1. **MCP**：灵矽云与控制面之间。灵矽只看见 MCP Tool，不直接接触 AgentAPI 或 Render。
-2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。
+2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。产物结构、启动约定和构建提示见[应用包设计](app-artifact.md)。
 
 核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容。**
 
@@ -54,10 +54,10 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | Render | 现场的应用运行时，负责启动应用、提供 HTTP、维持 AirPlay |
 | Task | 一次 `create_app` 构建任务，对外用 `task_id` 标识 |
 | App | AgentAPI 产出的、已经在 Render 上运行的应用 |
-| Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档、`launch.json` 和自检报告 |
+| Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档和 `launch.json` |
 | Stage | Render 上常驻的展示页面；AirPlay 镜像的就是它 |
 | OpenAPI | 应用能力的 HTTP 契约，控制面据此校验和转发请求 |
-| launch.json | 应用启动契约，描述可执行文件、参数和端口 |
+| launch.json | 应用启动契约，描述可执行文件和参数；端口由部署环境通过 `PORT` 注入 |
 
 ## 4. 系统上下文
 
