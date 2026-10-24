@@ -6,6 +6,8 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.84.0
 	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327
 	github.com/chromedp/chromedp v0.14.2
+	github.com/coder/websocket v1.8.12
+	github.com/hraban/opus v0.0.0-20260708213942-bde8e4304501
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	go.yaml.in/yaml/v3 v3.0.4
