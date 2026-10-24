@@ -84,12 +84,14 @@ skills/app-builder/
 │   │   └── launch.json
 │   ├── artifact-contract.md     # 应用包、launch.json、运行约定
 │   ├── api-contract.md          # OpenAPI 3.1 与业务响应约定
-│   └── self-test.md             # 最小验证清单
+│   └── self-test.md             # 模板复制与自测脚本用法
 └── scripts/
+    ├── init-template.sh         # 一条命令复制模板到产物目录
+    ├── self-test.sh             # 静态检查、启动验证、业务操作抽查、打包与归档校验
     └── validate-artifact.sh     # 归档结构和启动契约的静态检查
 ```
 
-`references/app-template/` 是可直接复制的最小 Node.js 应用，当前实现了一个猜电影示例：玩家加入、根据线索提交电影名、答对得分并进入下一轮。`SKILL.md` 要求先复制模板再按需求修改，避免智能体从零搭建；实际业务替换模板中的电影玩法和接口，但保留产物与身份约定。模板放在 `references/` 而不是 `assets/`：`assets/` 容易被当作仅供展示的素材，智能体不保证读取和使用。模板内容跟随 [app-artifact.md](app-artifact.md) 更新。
+`references/app-template/` 是可直接复制的最小 Node.js 应用，当前实现了一个猜电影示例：玩家加入、根据线索提交电影名、答对得分并进入下一轮。构建时由 `scripts/init-template.sh` 一条命令复制模板，由 `scripts/self-test.sh` 一条命令完成静态检查、启动验证、业务操作抽查、打包和归档校验，避免智能体逐个读文件搬运或分步手工验证。`SKILL.md` 要求先复制模板再按需求修改，避免智能体从零搭建；实际业务替换模板中的电影玩法和接口，但保留产物与身份约定。模板放在 `references/` 而不是 `assets/`：`assets/` 容易被当作仅供展示的素材，智能体不保证读取和使用。模板内容跟随 [app-artifact.md](app-artifact.md) 更新。
 
 上传技能：
 
@@ -230,11 +232,13 @@ Content-Type: application/json
 }
 ```
 
+`agent_version` 可选：省略或设为 `0` 时，新建会话使用智能体当时的最新版本；显式设置则固定到该版本。会话一旦创建就固定解析出的版本，不随智能体后续更新漂移。
+
 发布流程：
 
 1. 修改技能内容，重新打包并上传，得到新的 `skill_version`。
 2. 用当前 `agent_version` 更新智能体，替换 `skills` 数组，得到新的 `agent_version`。
-3. 更新控制面配置；此后新建的会话使用新版本。
+3. 控制面配置未固定 `agent_version` 时无需更新配置，此后新建的会话自动使用新版本；固定了版本的部署则按需升级配置。
 4. 已在运行的构建会话继续使用创建时固定的版本，不中途切换。
 
 更新智能体时必须携带当前 `version`；版本不匹配返回 `409`，应重新读取智能体后重试，不能用旧版本覆盖。控制面启动时调用 `GET /v1/agents/{agent_id}` 检查智能体存在且 `status=ready`，并确认环境未归档；检查失败则拒绝新的 `create-app`，避免每个构建都重复失败。
@@ -244,7 +248,7 @@ Content-Type: application/json
 ### 3.1 `create-app` 之后的处理顺序
 
 1. 控制面在 MCP 层校验输入，分配 `app_id`，记录 `state=building`、`build_started_at`、`prompt` 和规范化后的 `player_names`。
-2. 调用 `POST /v1/sessions`，固定智能体版本和环境，写入 `app_id` 元数据。
+2. 调用 `POST /v1/sessions`，按配置固定智能体版本（未配置时取创建时的最新版本）和环境，写入 `app_id` 元数据。
 3. 保存 `session_id`；同一 `app_id` 只创建一个构建会话。
 4. 注册该会话的事件流消费者。消费者可以在连接建立前注册，AgentAPI 会回放历史事件。
 5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，只把用户需求和初始玩家名单交给智能体；完整构建契约由系统提示词和技能承载。

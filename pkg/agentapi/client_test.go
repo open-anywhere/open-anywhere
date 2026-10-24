@@ -185,6 +185,37 @@ func TestClientSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestCreateSessionWithoutVersionOmitsField(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Agent struct {
+				Version int `json:"version"`
+			} `json:"agent"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode create session: %v", err)
+			return
+		}
+		if body.Agent.Version != 0 {
+			t.Errorf("agent.version = %d, want field omitted", body.Agent.Version)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":"ses_2","status":"idle"}`)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := New(server.URL, "secret", 2*time.Second)
+	session, err := client.CreateSession(context.Background(), "agent_1", 0, "env_1", "", nil)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if session.ID != "ses_2" {
+		t.Fatalf("session = %+v", session)
+	}
+}
+
 func TestEventStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

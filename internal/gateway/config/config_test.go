@@ -89,7 +89,7 @@ func TestValidateRejectsMissingAndInvalidValues(t *testing.T) {
 		"missing artifact":  func(c *Config) { c.ArtifactBaseURL = "" },
 		"missing artifacts": func(c *Config) { c.ArtifactsDir = "" },
 		"missing db":        func(c *Config) { c.DBPath = "" },
-		"bad version":       func(c *Config) { c.AgentVersion = 0 },
+		"bad version":       func(c *Config) { c.AgentVersion = -1 },
 		"bad ports":         func(c *Config) { c.PortMin = 0 },
 		"bad range":         func(c *Config) { c.PortMax = 1 },
 		"bad timeout":       func(c *Config) { c.BuildTimeout = 0 },
@@ -107,6 +107,17 @@ func TestValidateRejectsMissingAndInvalidValues(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsLatestAgentVersion(t *testing.T) {
+	cfg, err := Parse(nil, envLookup(fullEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AgentVersion = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func TestParseInvalidEnvironmentFallsBack(t *testing.T) {
 	env := map[string]string{
 		"AGENTAPI_AGENT_VERSION": "nope",
@@ -117,7 +128,7 @@ func TestParseInvalidEnvironmentFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.AgentVersion != 1 || cfg.BuildTimeout != 60*time.Minute || cfg.PortMin != 39000 || cfg.DBPath != "open-anywhere.gateway.db" {
+	if cfg.AgentVersion != 0 || cfg.BuildTimeout != 60*time.Minute || cfg.PortMin != 39000 || cfg.DBPath != "open-anywhere.gateway.db" {
 		t.Fatalf("cfg = %+v", cfg)
 	}
 }
