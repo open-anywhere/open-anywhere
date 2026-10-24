@@ -1,38 +1,42 @@
 # 控制面与 Render 接口设计
 
-> 状态：Proposal（供 PR 评审）
-> 版本：v0.1
+> 状态：Proposal（设计约定，尚未实现）
 > 日期：2026-10-24
 
-## 1. 范围
+Render 接收控制面分配的应用 ID、应用包下载地址和运行端口，下载并启动 Node.js 应用，用 Chromium 持续渲染页面，再将画面编码为可通过 HTTP 拉取的实时媒体流。控制面将该流交给独立的 Casting 服务播放。
 
-本文定义控制面（gateway）与 Render 之间的 HTTP 契约：
+应用包结构、`launch.json` 和构建要求见[应用包设计](app-artifact.md)；投屏控制接口见 [Casting 服务](casting.md)。本文定义 Render 的职责、接口及运行生命周期。
 
-- 控制面把 artifact tar.gz 交给 Render；
-- Render 解包 artifact、按 `launch.json` 启动应用、完成健康检查并返回媒体流地址；
-- 控制面查询、停止 run，转发应用 HTTP 请求，拉取媒体流。
+## 1. 职责与边界
 
-### 1.1 角色与调用方向
+| 组件 | 职责 |
+| --- | --- |
+| 控制面 | 选择 Render、确定应用端口、维护应用与实例映射，调用 Casting 将流投放到指定屏幕 |
+| Render | 下载和校验应用包、管理应用进程、健康检查、Chromium 页面、捕获编码及媒体流服务 |
+| 应用 | 提供 `/` 页面、`/health` 和 OpenAPI 描述的业务操作，维护业务状态 |
+| Casting | 发现屏幕、建立和停止投屏会话，让屏幕拉取 Render 提供的媒体流 |
 
-| 组件 | 本文中的职责 | 调用方 |
-| --- | --- | --- |
-| 控制面（gateway） | 打包 artifact、调度 Render、转发应用请求、管理 run 生命周期 | 灵矽（MCP） |
-| Render | 解包 artifact、按 `launch.json` 启动、健康检查、提供应用 HTTP 与媒体流 | 控制面 |
+一期仅支持 Node.js。Render 不安装应用依赖、不编译 JSX、不执行构建任务，也不处理声纹、业务意图或游戏规则。Node.js、Chromium 和捕获编码所需组件由运行环境预先提供。
 
-控制面是唯一调用方：Render 不感知灵矽，也不管理投屏会话；媒体流交给控制面后续的投屏编排使用。
+Render 启动请求不包含 `screen_id`、`target_id` 或投屏协议。Render 准备好媒体流后，由控制面选择屏幕并调用 Casting。
 
-### 1.2 契约原则
+```mermaid
+flowchart LR
+  C[控制面] -->|app_id + artifact_url + port| R[Render]
+  R -->|下载 tar.gz| A[产物存储]
+  R -->|启动，注入 HOST / PORT| N[Node.js 应用]
+  N -->|页面 / 状态更新| B[Chromium]
+  B --> F[捕获 / 编码]
+  F --> S[HTTP 实时媒体流]
+  R -->|返回 source| C
+  C -->|目标屏幕 + source| P[Casting]
+  P -->|播放控制| T[电视]
+  T -->|HTTP 拉流| S
+```
 
-- 内部接口使用 HTTP + JSON；artifact 用 tar.gz 传输。
-- `app_id` 是控制面分配的业务标识，Render 以它为 run 的主键。
-- `render_id`、应用端口和运行目录只在 Render 内部使用，不通过 MCP 返回。
-- 写接口按业务键幂等：控制面可能因超时重发，Render 不得重复创建进程或媒体流。
+### 1.1 应用包结构与启动契约
 
-## 2. Artifact 包
-
-### 2.1 目录结构
-
-控制面在构建完成后得到 `outputs/` 产物目录，归档其内容为 `artifact.tar.gz` 交给 Render。归档根目录如下，不再嵌套 `outputs/`：
+构建端将 `outputs/` 的内容归档为 tar.gz，发布为 Render 能访问的 HTTP(S) 下载地址。归档根目录如下，不嵌套 `outputs/`：
 
 ```text
 app/
@@ -47,19 +51,13 @@ openapi.yaml
 launch.json
 ```
 
-| 路径 | 作用 | 使用方 |
-| --- | --- | --- |
-| `app/` | 应用代码与静态资源 | Render |
-| `launch.json` | 启动契约 | Render |
-| `openapi.yaml` | 应用 HTTP 能力契约 | 控制面 |
+`app/app.js` 是 Node.js 入口，`app/package.json` 提供应用元信息，`app/public/index.html` 是 UI 页面。`package.json` 不触发依赖安装或构建；程序与静态资源必须自包含，依赖在构建端预先打包。应用通过 `GET /` 提供页面，通过 `GET /health` 提供健康检查。
 
-Render 只依赖 `app/` 和 `launch.json`，忽略 `openapi.yaml`。`openapi.yaml` 和 `launch.json` 必填，`app/` 必须自包含；Render 不执行 install 或 build，也不依赖构建环境中的全局依赖，并提供约定版本的 Node.js。应用的 `GET /`、`GET /health` 和 `/api/*` 约定见 [app-artifact.md](app-artifact.md)。
-
-### 2.2 launch.json
+根目录 `launch.json` 示例：
 
 ```json
 {
-  "name": "掷骰子游戏",
+  "name": "quiz",
   "runtimeExecutable": "node",
   "runtimeArgs": ["app/app.js"],
   "healthPath": "/health",
@@ -67,217 +65,258 @@ Render 只依赖 `app/` 和 `launch.json`，忽略 `openapi.yaml`。`openapi.yam
 }
 ```
 
-| 字段 | 必填 | 约束 |
-| --- | --- | --- |
-| `name` | 是 | 非空，应用展示名称 |
-| `runtimeExecutable` | 是 | 一期固定为 `node`，其他值拒绝 |
-| `runtimeArgs` | 是 | 入口文件路径等启动参数，例如 `["app/app.js"]`；不含端口，不经过 shell |
-| `healthPath` | 否 | 默认 `/health`；MVP 若声明必须为 `/health` |
-| `readyTimeoutMs` | 否 | 就绪超时，单位毫秒，默认 `10000`，须为正整数；Render 可设置上限 |
+工作目录是归档根目录。Render 读取启动契约并注入 `HOST`、`PORT`，不把 `app_id` 或部署端口写入包。`openapi.yaml` 描述 `/api/*` 业务操作，控制面据此发起 HTTP 调用；Render 校验产物格式，不理解业务语义。完整字段和应用要求见[应用包设计](app-artifact.md)。
 
-`launch.json` 没有 `port` 字段，也不在参数中固定 `--port`。Render 注入 `PORT` 和 `HOST=0.0.0.0`，应用必须据此监听；所有相对路径以归档根目录为基准，进程工作目录也是该目录。Render 直接执行 `runtimeExecutable`，不拼接 shell 命令，也不对 `runtimeArgs` 做变量展开。
+## 2. 启动应用
 
-### 2.3 归档包
-
-控制面把 `outputs/` 的内容打成 `tar.gz`：
-
-```bash
-tar -czf artifact.tar.gz -C outputs .
+```http
+POST /v1/apps
+Content-Type: application/json
 ```
 
-- 归档根目录直接是 `app/`、`openapi.yaml`、`launch.json`，不再嵌套 `outputs/`。
-- 包内不允许符号链接、硬链接、绝对路径和 `..`；Render 遇到任一情况直接拒绝。
-- 压缩包大小上限 100 MiB。
-- 控制面计算 `sha256(artifact.tar.gz)`，作为 `artifact_sha256` 传给 Render；Render 校验后才能解包。
+```json
+{
+  "app_id": "app-quiz",
+  "artifact_url": "https://example.com/artifacts/quiz.tar.gz",
+  "port": 39101
+}
+```
 
-## 3. 控制面 ↔ Render
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `app_id` | 是 | 控制面创建应用时分配的非空字符串 ID，启动时原样传入，不由 Render 重新生成 |
+| `artifact_url` | 是 | Render 能直接下载的 HTTP(S) 应用包 URL，格式为 tar.gz；不是本地路径或页面地址 |
+| `port` | 是 | 本次部署的应用监听端口，1–65535 的整数，由控制面确定并传入 |
 
-### 3.1 接口
+一期固定这三个输入，不提供省略端口后的自动分配。URL 可以是带有效期的下载地址，有效期须覆盖下载过程。`app_id` 和端口都是部署信息，不写入应用包，Render 也不修改 `launch.json`。
+
+### 2.1 端口与实例
+
+**一期同一个 `app_id` 全局同时只能有一个活动运行实例。** `instance_id` 仅用于区分先后两次运行，不表示同一应用支持多个并行副本。
+
+- 控制面可以先用 `GET /v1/ports` 查看已占用端口，再用 `GET /v1/ports/{port}` 检查候选端口，最后把选定的端口传入启动请求，详见 2.4。
+- `app_id` 标识控制面创建的应用，停止后再次启动仍沿用同一个值。Render 为每次新启动分配 `instance_id`，标识这一次运行，用于查询和停止；实例记录、日志及应用端口占用记录均关联传入的 `app_id`。控制面维护 `app_id → Render / instance_id` 的映射。
+- 已有实例正在启动、运行、停止或仍有未清理资源时，拒绝重复创建，返回 `409 APP_ALREADY_RUNNING`，并附带已有的 `app_id` 和 `instance_id`。即使改用不同 `port`、`artifact_url` 或 Render 节点，也不能并行启动同一应用；旧实例确认停止且资源全部释放后才可再次启动。
+- 控制面按 `app_id` 原子登记全局运行占用，防止并发请求被调度到不同 Render；Render 同时校验本机的应用占用。无法确认旧实例已停止时，不得切换节点启动新实例。
+- Render 校验并预留自己管理的端口，防止并发启动重复使用。已有活动实例占用该端口时返回 `409 PORT_IN_USE`。
+- 控制面之前观察到端口空闲，不代表进程启动时仍然空闲。最终以应用绑定端口是否成功为准；绑定失败不得把该端口上其他服务的健康响应当作本次启动成功。
+- Render 不自动换端口。控制面收到冲突后可以选择其他端口，重新发起启动。
+- 不同 `app_id` 可以使用相同包启动独立实例，实例之间不共享内存状态。创建操作不按 URL 幂等；请求结果不明时，不应直接换端口重复创建。
+
+### 2.2 启动步骤
+
+1. 校验输入，原子检查并登记 `app_id` 的活动实例及端口预留，创建关联该 `app_id` 的实例记录和独立工作目录。
+2. 下载并解压应用包，确认 artifact 根目录直接包含 `launch.json`、`openapi.yaml` 和 `app/`。下载、解压有大小和时间限制；归档条目不得逃逸工作目录。
+3. 校验启动契约和 OpenAPI，仅接受 `runtimeExecutable: "node"`；入口文件必须在包内。
+4. 以 artifact 根目录为 cwd，按 `runtimeArgs` 参数数组启动 Node.js，注入 `HOST=0.0.0.0` 和请求中的 `PORT`。通过进程 API 执行，不拼接 shell 命令或 `--port` 参数。
+5. 等待 `http://127.0.0.1:<port>/health` 返回 HTTP `200` 和 JSON `{"status":"ok"}`，并确认本次应用进程持续存活。就绪超时使用 `launch.json` 的 `readyTimeoutMs`，默认 10000 毫秒；运行端可设置上限。
+6. 使用独立 Chromium 页面打开 `http://127.0.0.1:<port>/`，等待页面成功加载并取得可捕获的画面。不能用持续网络空闲作为唯一就绪条件，因为页面可能使用 SSE 或轮询。
+7. 持续捕获页面、编码并提供 HTTP 媒体流。确认输出已经产生可用媒体数据后，实例进入 `ready`，启动请求返回成功。
+
+下载、页面加载和媒体准备分别有运行端配置的超时，启动请求还受总超时约束；`readyTimeoutMs` 仅约束应用就绪检查。任一步失败都终止启动，并清理已创建的资源。
+
+### 2.3 成功响应
+
+启动请求同步等待 Render 准备完成，成功返回 `201 Created`，并设置 `Location: /v1/apps/<instance_id>`：
+
+```json
+{
+  "app_id": "app-quiz",
+  "instance_id": "instance-quiz-001",
+  "state": "ready",
+  "port": 39101,
+  "app_base_url": "http://192.168.31.203:39101",
+  "source": {
+    "type": "stream",
+    "url": "http://192.168.31.203:8765/streams/instance-quiz-001/live.ts",
+    "format": "mpegts",
+    "video_codec": "h264",
+    "audio_codec": ""
+  }
+}
+```
+
+- `app_base_url` 是控制面可访问的应用 HTTP 地址，用于调用 `/api/*`；远程控制面不能使用 Render 自己的 `127.0.0.1`。部署环境必须提供可达地址及网络路径。
+- `source.url` 是电视可访问的实时媒体地址，不是 UI URL，也不是应用包下载地址。
+- 应用端口与媒体服务端口独立。示例中的 `8765` 是 Render 自身的媒体服务配置，不属于创建应用请求的参数。
+- `source` 可直接作为 Casting 创建投屏会话的 `source`。示例为纯视频，`audio_codec` 为空字符串；仅在实际包含 AAC 音轨时声明 `aac`。
+- Render 的 `ready` 表示应用、页面和媒体输出已就绪，不表示电视已播放。控制面仍须等 Casting 确认 `playing`，才能对灵矽返回整体应用 `running`。
+
+### 2.4 端口查询
+
+两个接口查询的是 Render 所在主机上的 **TCP 端口**，以应用绑定 `0.0.0.0:<port>` 时是否冲突为判断范围，不是查询 HTTP 路由是否存在。需要同时考虑 Render 的实例预留记录和操作系统中的端口占用；不能只检查应用注册表。
+
+**检查指定端口：**
+
+```http
+GET /v1/ports/39101
+```
+
+端口空闲时返回 `200`：
+
+```json
+{
+  "port": 39101,
+  "occupied": false,
+  "owner": null
+}
+```
+
+已被 Render 管理的应用预留或使用时，同样返回 `200`：
+
+```json
+{
+  "app_id": "app-quiz",
+  "port": 39101,
+  "occupied": true,
+  "owner": "app",
+  "instance_id": "instance-quiz-001"
+}
+```
+
+`owner` 取值为 `app`（Render 管理的应用实例）、`render`（Render 自身的 API 或媒体服务）、`external`（其他程序）或空闲时的 `null`。只有 `app` 返回 `app_id` 和 `instance_id`；不暴露其他程序的进程详情。
+
+**列出当前占用端口：**
+
+```http
+GET /v1/ports
+```
+
+返回 `200`，列表按端口升序排列，仅包含已占用项：
+
+```json
+{
+  "ports": [
+    {
+      "port": 8765,
+      "occupied": true,
+      "owner": "render"
+    },
+    {
+      "app_id": "app-quiz",
+      "port": 39101,
+      "occupied": true,
+      "owner": "app",
+      "instance_id": "instance-quiz-001"
+    },
+    {
+      "port": 39102,
+      "occupied": true,
+      "owner": "external"
+    }
+  ]
+}
+```
+
+列表合并 Render 的预留记录和系统中可检测到的 TCP 占用，按端口去重。应用尚在启动、正在停止或清理失败但资源未释放时，预留端口也属于 `occupied: true`。不能因为尚未监听或进程刚退出就提前将它标为空闲。
+
+操作系统占用枚举需要适配部署平台；若检查失败或权限不足，返回 `503 PORT_INSPECTION_FAILED`，不能用空列表或 `occupied: false` 代替未知结果。系统枚举仍可能存在时差或漏掉尚未监听的绑定，因此列表用于筛选，指定端口查询还须结合实际绑定探测；探测失败且无法确认为占用时也返回检查错误。
+
+查询不预留端口，也不保证随后启动成功。控制面选好端口后仍通过 `POST /v1/apps` 提交；Render 在启动时处理并发预留及实际绑定，冲突返回 `409 PORT_IN_USE`。控制面不应终止其他程序以抢占端口。
+
+## 3. 状态查询与停止
+
+服务接口汇总：
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| `POST` | `/v1/runs` | 上传 artifact 并启动应用 |
-| `GET` | `/v1/runs/{app_id}` | 查询 run 状态 |
-| `DELETE` | `/v1/runs/{app_id}` | 停止 run |
-| `ANY` | `/v1/runs/{app_id}/app/{path...}` | 转发应用 HTTP 请求 |
-| `GET` | `/v1/runs/{app_id}/stream.ts` | 拉取媒体流 |
-| `GET` | `/healthz` | Render 健康检查 |
+| `GET` | `/v1/ports` | 列出当前已占用的 TCP 端口，包括预留端口和其他程序占用 |
+| `GET` | `/v1/ports/{port}` | 检查指定 TCP 端口是否被占用及占用来源 |
+| `POST` | `/v1/apps` | 下载应用包并启动应用、页面和媒体输出 |
+| `GET` | `/v1/apps/{instance_id}` | 查询实例当前状态 |
+| `DELETE` | `/v1/apps/{instance_id}` | 停止实例并清理资源 |
+| `GET` | `/healthz` | Render 服务自身健康检查；与应用的 `/health` 区分 |
 
-除 artifact 上传外，请求和响应均使用 JSON。`GET /healthz` 返回 `{"status":"ok"}`，控制面用它确认 Render 可达。
+实例状态属于 Render 内部运行契约，不改变架构文档中面向灵矽的应用状态：
 
-### 3.2 启动应用
-
-```http
-POST /v1/runs
-Content-Type: multipart/form-data
-```
-
-| part | 类型 | 内容 |
-| --- | --- | --- |
-| `metadata` | `application/json` | 启动参数 |
-| `artifact` | `application/gzip` | `artifact.tar.gz` |
-
-`metadata`：
-
-```json
-{
-  "app_id": "app_01J...",
-  "screen_id": "tv-living-room",
-  "artifact_sha256": "..."
-}
-```
-
-成功响应 `201 Created`：
-
-```json
-{
-  "app_id": "app_01J...",
-  "screen_id": "tv-living-room",
-  "render_id": "render-living-room-1",
-  "state": "running",
-  "stream_url": "http://192.168.31.50:9000/v1/runs/app_01J.../stream.ts",
-  "started_at": "2026-10-24T08:30:00Z"
-}
-```
-
-`stream_url` 只在 `state=running` 时出现，指向 Render 提供的 MPEG-TS 直播流，编码为 H.264/AAC，局域网内设备可直接拉取。
-
-`state` 取值：
-
-| state | 含义 |
+| 状态 | 含义 |
 | --- | --- |
-| `starting` | 正在解包、启动或健康检查 |
-| `running` | 应用健康，媒体流可用 |
-| `failed` | 启动失败，或运行中进程退出、断流 |
-| `stopped` | 已停止 |
+| `starting` | 下载、应用启动、页面加载或媒体准备中 |
+| `ready` | 应用健康，页面与媒体输出正常 |
+| `error` | 启动或持续运行失败，携带结构化错误 |
+| `stopping` | 正在关闭资源，端口尚未释放 |
+| `stopped` | 所有实例资源已释放 |
 
-`failed` 时响应带 `error`：
+`GET` 返回 `200`；`ready` 响应与启动成功的实例结构一致。`starting`、`stopping` 和 `stopped` 返回 `app_id`、`instance_id`、`state`、`port`，不提供可用 `source`。失败示例：
 
 ```json
 {
-  "app_id": "app_01J...",
-  "screen_id": "tv-living-room",
-  "render_id": "render-living-room-1",
-  "state": "failed",
-  "started_at": "2026-10-24T08:30:00Z",
+  "app_id": "app-quiz",
+  "instance_id": "instance-quiz-001",
+  "state": "error",
+  "port": 39101,
   "error": {
+    "stage": "running",
     "code": "APP_EXITED",
-    "message": "process exited with code 1"
+    "message": "应用进程已退出"
   }
 }
 ```
 
-### 3.3 Render 的处理顺序
+Render 持续监测应用进程、应用健康、浏览器和媒体输出。确认失效后标记 `error`，撤下可用流并清理该实例的资源；一期不自动重启，以免在用户不知情时重置应用内存状态。控制面查询到运行错误后，更新整体应用状态并停止关联的投屏会话。
 
-1. 校验 metadata 和归档包大小，计算并比对 `artifact_sha256`。
-2. 解包到新的运行目录；拒绝链接、绝对路径和 `..`，要求根目录包含 `app/` 和 `launch.json`，且没有 `outputs/` 这一层。
-3. 确认 `screen_id` 非空，把 run 绑定到该屏幕对应的 Stage；读取根目录的 `launch.json` 并校验字段，`runtimeExecutable` 必须为 `node`。
-4. 以归档根目录为工作目录，直接执行 `node` 和 `runtimeArgs`，不经过 shell；不执行 install 或 build。
-5. 分配空闲端口，注入 `PORT` 和 `HOST=0.0.0.0`；在 `readyTimeoutMs` 内请求 `GET /health`，要求 HTTP `200` 且响应 `{"status":"ok"}`。
-6. 启动 Stage（Chromium 打开 `http://127.0.0.1:{port}/`）和媒体流，流就绪后返回 `running` 与 `stream_url`。
-
-就绪超时取 `readyTimeoutMs`（默认 10 秒），Render 可设置上限。超时或任一步失败时，Render 负责终止进程、删除运行目录并释放端口。
-
-### 3.4 幂等与并发
-
-- 同一 `app_id` 已在运行且 `artifact_sha256` 相同：返回 `200 OK` 和现有 run，不重复启动。
-- 同一 `app_id` 已在运行但 digest 不同：返回 `409 APP_ALREADY_RUNNING`，不替换正在运行的实例。
-- 同一 `app_id` 已停止或失败：删除旧运行目录后重新启动。
-- 并发请求按 `app_id` 串行化，避免重复创建进程和媒体流。
-
-### 3.5 查询与停止
-
-```http
-GET /v1/runs/{app_id}
-```
-
-```http
-DELETE /v1/runs/{app_id}
-```
-
-`GET` 返回 run 状态；`app_id` 不存在时返回 `404 RUN_NOT_FOUND`。
-
-`DELETE` 先向进程发送 `SIGTERM`，等待应用退出；超时后强制终止，再删除运行目录。成功或目标已不存在都返回 `204`。run 进入 `failed` 时带 `error.code`：
-
-| code | 场景 |
-| --- | --- |
-| `APP_EXITED` | 应用进程退出 |
-| `STREAM_STOPPED` | 媒体流中断 |
-
-应用启动后，控制面按固定间隔（建议 5 秒）轮询 `GET /v1/runs/{app_id}`；状态不再是 `running` 时，把应用置为 `error(stage=running, ...)`。
-
-### 3.6 应用 HTTP 转发
-
-```http
-ANY /v1/runs/{app_id}/app/{path...}
-```
-
-Render 把请求转发到 `http://127.0.0.1:{port}/{path}`，保留方法、查询参数、请求体和内容类型，把应用响应原样返回。控制面按 `app_id` 路由到对应 Render，端口不出 Render。
-
-### 3.7 媒体流
-
-```http
-GET /v1/runs/{app_id}/stream.ts
-```
-
-返回 `video/mp2t`，仅在 `running` 时可用。`stream_url` 是该地址的绝对 URL。Render 不管理投屏会话，只保证流在 run 生命周期内可拉取。
-
-### 3.8 错误模型
-
-错误响应：
+`DELETE` 等待清理完成后返回 `200`：
 
 ```json
 {
-  "error": {
-    "code": "INVALID_ARTIFACT",
-    "message": "launch.json not found at archive root"
-  }
+  "app_id": "app-quiz",
+  "instance_id": "instance-quiz-001",
+  "state": "stopped",
+  "port": 39101
 }
 ```
 
-| HTTP | code | 场景 |
+停止流程关闭媒体输出和浏览器页面，向应用发送 `SIGTERM`；超过退出宽限期后强制结束进程。确认进程、连接和媒体任务结束后，释放端口与临时工作目录。清理失败时保留记录及资源占用，返回错误，允许重试 `DELETE`。
+
+对已知的 `stopped` 实例重复停止返回相同结果；未知实例返回 `404`。一期实例记录保存在内存中，服务重启后不承诺恢复，正常关闭服务时应清理所有子进程和媒体任务。
+
+Render 停止不会自动调用 Casting。控制面正常停止应用时应先停止关联投屏，再停止 Render 实例，避免电视持续拉取已关闭的流。
+
+## 4. 错误约定
+
+错误响应统一包含 `error.stage`、`error.code` 和 `error.message`；已分配实例时附带顶层 `app_id` 和 `instance_id`，便于查询和清理。阶段沿用 `starting`、`running`，不增加 `projection` 阶段。
+
+端口查询尚未进入应用生命周期，其错误仅包含 `error.code` 和 `error.message`，不附带 `stage`。端口参数必须为 1–65535 的整数；非法参数返回 `400 INVALID_REQUEST`。
+
+| 场景 | HTTP 状态 | code 示例 |
 | --- | --- | --- |
-| 400 | `INVALID_REQUEST` | metadata 缺失或 JSON 非法 |
-| 409 | `APP_ALREADY_RUNNING` | 同一 `app_id` 已有不同 artifact 的 run |
-| 413 | `ARTIFACT_TOO_LARGE` | tar 超过 100 MiB |
-| 422 | `ARTIFACT_MISMATCH` | digest 与 tar 内容不一致 |
-| 422 | `INVALID_ARTIFACT` | 归档结构或 `launch.json` 非法 |
-| 422 | `UNSUPPORTED_RUNTIME` | `runtimeExecutable` 不是 `node` |
-| 504 | `START_TIMEOUT` | 健康检查或媒体流准备超时 |
-| 500 | `START_FAILED` | 其他启动失败 |
+| app_id、URL、端口或 JSON 输入非法 | `400` | `INVALID_REQUEST` |
+| 查询或停止未知实例 | `404` | `INSTANCE_NOT_FOUND` |
+| 端口已占用 | `409` | `PORT_IN_USE` |
+| 同一应用已有活动实例或未清理资源 | `409` | `APP_ALREADY_RUNNING` |
+| 端口查询或系统占用枚举失败 | `503` | `PORT_INSPECTION_FAILED` |
+| 产物结构、OpenAPI 或运行时不符合约定 | `422` | `INVALID_ARTIFACT` |
+| 应用下载失败 | `502` | `ARTIFACT_DOWNLOAD_FAILED` |
+| 进程启动、健康检查或页面加载失败 | `502` | `APP_START_FAILED`、`APP_HEALTH_FAILED`、`PAGE_LOAD_FAILED` |
+| 捕获或编码启动失败 | `502` | `STREAM_START_FAILED` |
+| 下载、应用就绪或媒体准备超时 | `504` | `START_TIMEOUT` |
+| 停止时资源清理失败 | `500` | `STOP_FAILED` |
 
-## 4. start-app 时序与错误映射
+持续运行中的 `APP_EXITED`、`APP_UNHEALTHY`、`BROWSER_EXITED`、`STREAM_FAILED` 通过实例的 `error` 状态表达。查询成功仍返回 `200`，由响应中的实例状态说明业务失败。
 
-灵矽调用 MCP `start-app` 的部分见 [architecture.md](architecture.md) 6.4；投屏编排不在本文展开。控制面与 Render 的交互：
+## 5. 页面与媒体输出
 
-```mermaid
-sequenceDiagram
-  autonumber
-  participant C as 控制面
-  participant R as Render
+Chromium 负责运行页面，捕获编码组件负责把画面转换为 MPEG-TS/H.264；仅打开 Chromium 并不会自动得到视频流。分辨率、帧率、编码器和媒体监听地址是 Render 部署配置，一期不加入启动请求。
 
-  Note over C: artifact.tar.gz 已就绪
-  C->>R: POST /v1/runs（metadata + artifact.tar.gz）
-  R->>R: 解包、启动、健康检查、准备媒体流
-  R-->>C: 201 Run{stream_url}
-  Note over C: 控制面随后按 screen_id 建立投屏会话
-```
+运行端需选定并验证目标系统可用的捕获方案，例如独立浏览器窗口配合屏幕捕获和 FFmpeg。具体捕获实现尚待验证；不能把页面截图接口视为已经支持稳定音视频串流。若捕获窗口，必须确保采集目标是应用页面，不是整个用户桌面。
 
-Render 错误到 MCP 错误的映射：
+媒体地址须支持电视持续拉取以及播放过程中重新连接。新连接需要得到可解码的流起点，编码输出应包含周期性关键帧和必要的 MPEG-TS 信息。启动时即使还没有电视连接，Render 也应能够确认媒体输出已准备好。
 
-| Render 结果 | MCP 错误 |
-| --- | --- |
-| `INVALID_ARTIFACT` / `ARTIFACT_MISMATCH` / `ARTIFACT_TOO_LARGE` | `stage=starting`, `START_FAILED` |
-| `UNSUPPORTED_RUNTIME` | `stage=starting`, `START_FAILED` |
-| `START_TIMEOUT` / `START_FAILED` | `stage=starting`, `START_FAILED` |
-| 运行中 `APP_EXITED` | `stage=running`, `APP_EXITED` |
-| 运行中 `STREAM_STOPPED` | `stage=running`, `PROJECTION_DISCONNECTED` |
+一期可先提供纯视频；需要页面声音时，额外实现音频捕获、AAC 编码和音画同步后再声明 AAC。实际电视的编码兼容性、缓冲延迟和播放恢复需要实机验证。
 
-## 5. 超时与重试
+业务状态更新仍通过应用的 HTTP API 完成：控制面调用应用，应用用 SSE 或轮询更新页面，Chromium 呈现新画面，媒体流持续输出。Render 无须理解“答题”“加分”等操作。
 
-| 操作 | 超时 | 重试策略 |
-| --- | --- | --- |
-| `POST /v1/runs` | 默认 10 秒就绪超时（`readyTimeoutMs`），整体 30 秒 | 同一 digest 可重试，Render 幂等 |
-| `GET /v1/runs/{app_id}` | 5 秒间隔轮询 | 持续轮询，直到 run 停止 |
-| `DELETE /v1/runs/{app_id}` | 10 秒 | 幂等，可重试 |
-| 媒体流拉取 | 长连接 | 断开后由投屏侧重连，不重启 run |
+## 6. 验收场景
+
+1. 提供控制面分配的 `app_id`、符合应用包契约的 Node.js tar.gz URL 和空闲端口，Render 返回 `ready`、应用地址及可拉取媒体流。
+2. 外部 HTTP 客户端调用应用业务操作，Chromium 中已打开的页面自动更新，投屏画面能观察到变化。
+3. 缺失 `/health`、入口文件或合法 OpenAPI 时启动失败，不能返回 `ready`。
+4. 同端口并发启动只有一个实例能占用；端口已被其他程序占用时，不把其他程序误认成新应用。
+5. 应用退出、浏览器退出或编码中断后，实例进入 `error`；控制面能够据此处理整体应用失败。
+6. 停止后相关进程、流连接和端口被释放；重复停止已知实例成功；清理失败可以重试。
+7. 将返回的 `source` 交给现有 Casting 服务，使用真实屏幕验证拉流和播放；Render 的 `ready` 与 Casting 的 `playing` 分别检查。
+8. 端口查询和列表能够区分空闲、应用预留、Render 自身服务及其他程序占用；清理完成后应用预留从列表消失，检查失败时返回错误而非误报空闲。
+9. 查询空闲后被其他程序抢先绑定，启动仍返回端口冲突，控制面可另选端口重试。
+10. 启动、状态查询、停止及应用端口占用结果携带同一个 `app_id`；同一应用在相同或不同端口、包地址及 Render 节点上的并发启动，全局最多接受一个。旧实例停止并清理后才允许再次启动，并使用新 `instance_id`。
+
+本文定义预期行为，不代表 Render、Chromium 捕获或上述接口已经实现。
