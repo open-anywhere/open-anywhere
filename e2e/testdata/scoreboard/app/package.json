@@ -1,0 +1,7 @@
+{
+  "name": "render-e2e-scoreboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-contained deterministic scoreboard for Render E2E",
+  "engines": { "node": ">=20" }
+}

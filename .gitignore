@@ -1,4 +1,11 @@
 coverage.out
 coverage.html
-
+.render-data/
+e2e/artifacts/
+e2e/results/
+render-e2e-coverage.out
+gateway.yaml
+open-anywhere.gateway.db
+open-anywhere.gateway.db-*
+artifacts/
 .device.json

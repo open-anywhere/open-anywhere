@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>猜电影</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #13100d;
+      --surface: #1b1713;
+      --line: #352d25;
+      --text: #f1e7d7;
+      --muted: #a89b8a;
+      --accent: #d99a4e;
+      --good: #8fbf7f;
+      --bad: #cf7b68;
+      --serif: "Songti SC", "Noto Serif CJK SC", "STSong", Georgia, serif;
+      --sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 12% -10%, rgb(217 154 78 / 16%), transparent 45%),
+        radial-gradient(circle at 92% 8%, rgb(217 154 78 / 8%), transparent 40%),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+    }
+    .stage {
+      width: min(920px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 48px 0 64px;
+    }
+    .masthead {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .kicker {
+      margin: 0 0 6px;
+      color: var(--accent);
+      font-size: 12px;
+      letter-spacing: 0.18em;
+    }
+    h1 {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: clamp(40px, 8vw, 72px);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      line-height: 1;
+    }
+    .round {
+      margin: 0;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .message {
+      min-height: 24px;
+      margin: 18px 0 24px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .message.error {
+      color: var(--bad);
+    }
+    .clue-panel {
+      padding: 20px 24px;
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--accent);
+      background: var(--surface);
+    }
+    .clue-panel h2,
+    .panel h2 {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+    }
+    .clue-panel ol {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .clue-panel li {
+      display: flex;
+      gap: 14px;
+      align-items: baseline;
+    }
+    .clue-index {
+      color: var(--accent);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    .clue-panel p {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: 20px;
+      line-height: 1.6;
+    }
+    .columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .panel {
+      padding: 20px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgb(255 255 255 / 2.5%), transparent), var(--surface);
+    }
+    form {
+      display: grid;
+      gap: 10px;
+    }
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+    .field span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    input,
+    select,
+    button {
+      font: inherit;
+    }
+    input,
+    select {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      background: #120f0c;
+      color: var(--text);
+    }
+    input:focus-visible,
+    select:focus-visible,
+    button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    button {
+      padding: 11px 16px;
+      border: 1px solid var(--accent);
+      border-radius: 2px;
+      background: var(--accent);
+      color: #21170d;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled,
+    input:disabled,
+    select:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+    .scoreboard,
+    .recent {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .scoreboard li {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px dotted var(--line);
+    }
+    .scoreboard li:last-child {
+      padding-bottom: 0;
+      border-bottom: 0;
+    }
+    .score {
+      color: var(--accent);
+      font-family: var(--serif);
+      font-size: 24px;
+      font-variant-numeric: tabular-nums;
+    }
+    .recent li {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .recent-round {
+      color: var(--accent);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .recent .guess {
+      overflow: hidden;
+      color: var(--text);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .recent .correct {
+      margin-left: auto;
+      color: var(--good);
+    }
+    .recent .wrong {
+      margin-left: auto;
+      color: var(--bad);
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    footer {
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    @media (max-width: 720px) {
+      .stage {
+        padding-top: 32px;
+      }
+      .columns {
+        grid-template-columns: 1fr;
+      }
+      .masthead {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .clue-panel p {
+        font-size: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <header class="masthead">
+      <div>
+        <p class="kicker">线索 · 猜测 · 得分</p>
+        <h1>猜电影</h1>
+      </div>
+      <p class="round" id="round">第 1 轮</p>
+    </header>
+
+    <p class="message" id="message" role="status" aria-live="polite">正在连接…</p>
+
+    <section class="clue-panel" aria-labelledby="clue-heading">
+      <h2 id="clue-heading">本轮线索</h2>
+      <ol id="clues"></ol>
+    </section>
+
+    <div class="columns">
+      <section class="panel" aria-labelledby="join-heading">
+        <h2 id="join-heading">加入游戏</h2>
+        <form id="join-form">
+          <label class="field">
+            <span>玩家名字</span>
+            <input id="player-name" name="user_name" maxlength="40" placeholder="输入名字" autocomplete="off">
+          </label>
+          <button type="submit">加入</button>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="guess-heading">
+        <h2 id="guess-heading">提交猜测</h2>
+        <form id="guess-form">
+          <label class="field">
+            <span>玩家</span>
+            <select id="player-select"></select>
+          </label>
+          <label class="field">
+            <span>电影名</span>
+            <input id="guess-input" name="guess" maxlength="60" placeholder="先加入玩家" autocomplete="off">
+          </label>
+          <button type="submit" id="guess-button">提交猜测</button>
+        </form>
+      </section>
+    </div>
+
+    <div class="columns">
+      <section class="panel" aria-labelledby="score-heading">
+        <h2 id="score-heading">计分板</h2>
+        <ul class="scoreboard" id="players"></ul>
+      </section>
+
+      <section class="panel" aria-labelledby="recent-heading">
+        <h2 id="recent-heading">最近猜测</h2>
+        <ul class="recent" id="recent"></ul>
+      </section>
+    </div>
+
+    <footer>答对后自动进入下一轮。输入完整电影名，空格和常见标点会被忽略。</footer>
+  </main>
+
+  <script>
+    const roundEl = document.getElementById('round');
+    const messageEl = document.getElementById('message');
+    const cluesEl = document.getElementById('clues');
+    const playersEl = document.getElementById('players');
+    const recentEl = document.getElementById('recent');
+    const joinFormEl = document.getElementById('join-form');
+    const nameEl = document.getElementById('player-name');
+    const guessFormEl = document.getElementById('guess-form');
+    const playerSelectEl = document.getElementById('player-select');
+    const guessInputEl = document.getElementById('guess-input');
+    const guessButtonEl = document.getElementById('guess-button');
+
+    let selectedName = '';
+
+    async function api(path, options) {
+      const response = await fetch(path, options);
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error('服务器返回了无法解析的响应');
+      }
+      if (!response.ok) {
+        throw new Error(data.message || '请求失败');
+      }
+      return data;
+    }
+
+    function showError(message) {
+      messageEl.textContent = message;
+      messageEl.classList.add('error');
+    }
+
+    function emptyItem(text) {
+      const item = document.createElement('li');
+      item.className = 'empty';
+      item.textContent = text;
+      return item;
+    }
+
+    function renderClues(clues) {
+      if (!clues || clues.length === 0) {
+        cluesEl.replaceChildren(emptyItem('等待线索'));
+        return;
+      }
+      const items = clues.map((clue, index) => {
+        const item = document.createElement('li');
+        const marker = document.createElement('span');
+        marker.className = 'clue-index';
+        marker.textContent = String(index + 1).padStart(2, '0');
+        const text = document.createElement('p');
+        text.textContent = clue;
+        item.append(marker, text);
+        return item;
+      });
+      cluesEl.replaceChildren(...items);
+    }
+
+    function renderPlayers(players) {
+      const names = players.map((player) => player.user_name);
+      if (!names.includes(selectedName)) {
+        selectedName = names[0] || '';
+      }
+
+      if (players.length === 0) {
+        playersEl.replaceChildren(emptyItem('还没有玩家'));
+      } else {
+        const items = players.map((player) => {
+          const item = document.createElement('li');
+          const name = document.createElement('span');
+          name.textContent = player.user_name;
+          const score = document.createElement('span');
+          score.className = 'score';
+          score.textContent = String(player.score);
+          item.append(name, score);
+          return item;
+        });
+        playersEl.replaceChildren(...items);
+      }
+
+      const options = names.map((name) => new Option(name, name, false, name === selectedName));
+      playerSelectEl.replaceChildren(...options);
+      playerSelectEl.disabled = names.length === 0;
+      guessInputEl.disabled = names.length === 0;
+      guessButtonEl.disabled = names.length === 0;
+      guessInputEl.placeholder = names.length === 0 ? '先加入玩家' : '输入电影名';
+    }
+
+    function renderRecent(recent) {
+      if (!recent || recent.length === 0) {
+        recentEl.replaceChildren(emptyItem('还没有猜测'));
+        return;
+      }
+      const items = recent.map((entry) => {
+        const item = document.createElement('li');
+        const round = document.createElement('span');
+        round.className = 'recent-round';
+        round.textContent = `第 ${entry.round} 轮`;
+        const name = document.createElement('span');
+        name.textContent = entry.user_name;
+        const guess = document.createElement('span');
+        guess.className = 'guess';
+        guess.textContent = `《${entry.guess}》`;
+        const mark = document.createElement('span');
+        mark.className = entry.correct ? 'correct' : 'wrong';
+        mark.textContent = entry.correct ? '✓' : '×';
+        item.append(round, name, guess, mark);
+        return item;
+      });
+      recentEl.replaceChildren(...items);
+    }
+
+    function render(data) {
+      roundEl.textContent = `第 ${data.round} 轮`;
+      messageEl.textContent = data.message || '';
+      messageEl.classList.remove('error');
+      renderClues(data.clues);
+      renderPlayers(data.players || []);
+      renderRecent(data.recent);
+    }
+
+    joinFormEl.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const name = nameEl.value.trim();
+      if (!name) {
+        showError('请输入玩家名字');
+        return;
+      }
+      try {
+        const data = await api('/api/join', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ user_name: name }),
+        });
+        selectedName = name;
+        nameEl.value = '';
+        render(data);
+      } catch (error) {
+        showError(error.message);
+      }
+    });
+
+    playerSelectEl.addEventListener('change', () => {
+      selectedName = playerSelectEl.value;
+    });
+
+    guessFormEl.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!playerSelectEl.value) {
+        showError('先加入一位玩家');
+        return;
+      }
+      const guess = guessInputEl.value.trim();
+      if (!guess) {
+        showError('请输入电影名');
+        return;
+      }
+      try {
+        const data = await api('/api/guess', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ user_name: playerSelectEl.value, guess }),
+        });
+        selectedName = playerSelectEl.value;
+        guessInputEl.value = '';
+        render(data);
+      } catch (error) {
+        showError(error.message);
+      }
+    });
+
+    async function refresh() {
+      try {
+        render(await api('/api/state'));
+      } catch {
+        showError('连接中断，正在重试…');
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>

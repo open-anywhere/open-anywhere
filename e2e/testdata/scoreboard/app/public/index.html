@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Open Anywhere · 双队计分板</title><link rel="stylesheet" href="/styles.css"></head>
+<body>
+  <header><span class="brand">OPEN ANYWHERE <span class="divider">/</span> PLAY</span><span class="round" id="round">ROUND 01</span></header>
+  <main>
+    <div class="intro"><span class="eyebrow">THE SCOREBOARD</span><h1>轮到你，拿下一分。</h1><p>两支队伍，一场好比赛。</p></div>
+    <section class="teams" aria-label="比赛计分板">
+      <article class="team red"><div class="team-name"><span>01 / 红队</span><span>RED</span></div><strong id="red-score">00</strong><button type="button" data-team="red">红队加一分 <span>＋</span></button></article>
+      <article class="team blue"><div class="team-name"><span>02 / 蓝队</span><span>BLUE</span></div><strong id="blue-score">00</strong><button type="button" data-team="blue">蓝队加一分 <span>＋</span></button></article>
+    </section>
+    <footer><div class="last"><div id="state-color" aria-hidden="true"></div><span id="last-team" aria-live="polite">等待第一分</span></div><button id="reset" type="button">重新开始 ↗</button><span id="status" role="status">连接中</span></footer>
+  </main>
+  <script src="/ui.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "name": "guess-the-movie",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Open Anywhere guess-the-movie example app",
+  "main": "app.js"
+}

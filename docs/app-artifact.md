@@ -9,26 +9,25 @@
 
 ## 1. 交付格式
 
-构建结果打包为 `tar.gz`，发布到运行端可下载的 HTTP(S) URL。下载地址是交付信息，不写入 `launch.json`。解压后的 artifact 根目录如下：
+构建结果打包为 `tar.gz`，发布到运行端可下载的 HTTP(S) URL。下载地址是交付信息，不写入 `launch.json`。构建端输出到 `outputs/`；归档其内容，解压后的 artifact 根目录如下：
 
 ```text
-outputs/
-  app/
-    app.js            # Node.js 自包含入口
-    package.json      # 应用元信息；依赖须预打包，运行端不 install
-    public/
-      index.html      # UI
-      styles.css      # 可选
-      ui.js           # 可选
-    assets/           # 可选，随包提供的静态资源
-  openapi.yaml        # OpenAPI 3.1，仅描述 /api/* 业务操作
-  launch.json         # 启动契约
+app/
+├── app.js
+├── package.json        # 应用元信息；依赖须预打包
+├── public/
+│   ├── index.html
+│   ├── styles.css      # 可选
+│   └── ui.js           # 可选
+└── assets/             # 可选
+openapi.yaml
+launch.json
 ```
 
 - `outputs/` 是构建端的产物目录名。归档其内容，解压后直接得到 `app/`、`launch.json` 等文件，不额外嵌套一层 `outputs/`。
 - `app/` 必须自包含。前端 JSX、TypeScript、样式和依赖在构建端处理完成；运行端不执行 install 或 build，不依赖构建沙箱里的文件或全局安装的应用依赖。
 - MVP 的 Node.js 程序使用内置模块，或把可打包的依赖预先打包到入口文件；运行端提供约定版本的 Node.js。
-- `openapi.yaml` 和 `launch.json` 必填。
+- `app/app.js`、`app/package.json`、`app/public/index.html`、`openapi.yaml` 和 `launch.json` 必填；样式、页面脚本和其他资源按需提供。
 
 打包示例：
 
@@ -82,7 +81,7 @@ Node.js 示例：
 | `/api/*` | 必需，提供 OpenAPI 中声明的业务操作 |
 | `GET /openapi.json` | 推荐，返回与根目录 `openapi.yaml` 等价的 JSON 格式规范 |
 
-`/` 指 HTTP 根路径，不是归档根目录里的某个 HTML 文件。页面可以由程序内联返回，也可以从 `app/public/index.html` 提供；运行端只需用 Chromium 访问 `/`，不需要寻找 HTML 文件或理解前端框架。
+`/` 指 HTTP 根路径，不是归档根目录里的某个 HTML 文件。应用通过该路径提供 `app/public/index.html` 页面；运行端只需用 Chromium 访问 `/`，不需要寻找 HTML 文件或理解前端框架。
 
 UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作后，已经打开的 UI 必须自动更新，MVP 可采用轮询或 SSE。应用应同时支持页面操作和外部 HTTP 调用，不依赖灵矽才能使用。
 
@@ -95,13 +94,15 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 - 使用相对服务地址，如 `servers: [{url: "/"}]`，避免把构建机器的主机和端口写进规范。调用方按实际部署地址解析。
 - 业务 API 的成功和错误响应均为 JSON 对象，schema 中把 `message` 声明为必需字符串。`message` 表达操作结果，供控制面作为优先 TTS 候选；实际是否播报由语音入口决定。
 - 健康检查、规范文档及 SSE 事件不受业务响应 `message` 约束。
-- 应用的用户标识使用通用 `user_id`，不包含灵矽声纹字段或 MCP 协议。身份识别由调用方完成，应用只处理业务身份。
+- 一期应用直接以 `user_name` 作为本局玩家唯一标识和展示名称；用户名就是身份键，不另行生成 `user_id` 或维护 ID 映射。身份识别由调用方完成，应用只接收名字，不接入声纹或 MCP 协议。
+
+构建输入如果包含 `player_names`，生成应用按该顺序初始化玩家，将每个名称作为 `user_name`，在玩家查询或状态 API 中返回。加入和业务请求均去除名称首尾空白，禁止空名和重名，按名字精确定位玩家。本局内名字保持不变，改名和跨重启持久化不在 MVP 范围内。初始玩家尚未准备好，需通过应用确认操作更新状态。名单为空或省略时按应用需求提供后续加入能力，不编造参与者名称。输入字段定义见 [create-app](app-management-mcp.md#3-create-app)。
 
 例如，知识竞赛的提交回答接口可以接收：
 
 ```json
 {
-  "user_id": "u1",
+  "user_name": "韩鲁鹏",
   "answer": "地球"
 }
 ```
@@ -112,11 +113,13 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 {
   "message": "已收到回答",
   "answer_id": "answer-001",
-  "user_id": "u1"
+  "user_name": "韩鲁鹏"
 }
 ```
 
 这里仅演示字段约定，具体业务路径、评分规则和状态模型由应用自己的 OpenAPI 定义。
+
+这是一期生成应用的身份契约调整。仓库中的 quiz 示例仍使用 `user_id`，应在后续实现中同步更新其代码与 OpenAPI；本次文档修改不表示示例已迁移。通用 Gateway 仍按应用实际 OpenAPI 校验和执行，不自动把 `user_name` 改写成 `user_id`。
 
 ### 3.3 进程与依赖
 
@@ -128,12 +131,14 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 
 ## 4. 给构建 Agent 的提示
 
-下面这段可以作为构建任务的公共约束，与具体应用需求一起交给编码 Agent：
+下面这段可以作为构建任务的公共约束，与具体应用需求一起交给编码 Agent。当前 AgentAPI 构建智能体的完整系统提示词见 [open-anywhere-app-builder.txt](agent-system-prompts/open-anywhere-app-builder.txt)，实际构建以该提示词和 `app-builder` 技能为准；本节保留产物契约摘要。
 
 ```text
 请在 outputs/ 中生成一个可直接运行的独立 Node.js Web 应用，并遵守以下交付契约：
 
-1. 产物包括 app/、openapi.yaml、launch.json。app/ 以 app.js 为入口，可包含 package.json、public/ 和 assets/；前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
+1. 产物包括 app/、openapi.yaml、launch.json。app/ 必须包含 app.js、package.json
+   和 public/index.html；可选 public/styles.css、public/ui.js 和 assets/。
+   前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
 2. 一期仅支持 Node.js。launch.json 的 runtimeExecutable 必须为 node，
    runtimeArgs 包含包内入口文件路径，例如 ["app/app.js"]，并填写应用 name。
    所有相对路径以 outputs/ 为工作目录。不要写入 port 字段或固定端口参数。
@@ -149,12 +154,15 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
    业务成功/错误响应都是 JSON，包含必需的字符串 message。
    不把 /health 加入业务操作列表；它不需要 message 字段。
    不写死部署地址或端口。若提供 /openapi.json，其内容须与 YAML 等价。
-6. 应用身份字段使用 user_id，不接入声纹、灵矽或 MCP。
+6. 应用用 user_name 同时表示本局玩家身份和展示名称，不另行生成 user_id。
+   若构建输入提供 player_names，按顺序建立初始玩家 user_name；玩家或状态 API
+   返回名字。去除首尾空白、拒绝空名和重名，按名字精确匹配；本局内不改名。
+   未登记名字不能直接答题或计分。初始玩家未准备好，不接入声纹、灵矽或 MCP。
+   名单为空或省略时不得编造姓名，按需求支持运行时加入。
    应用以前台进程运行，日志写 stdout/stderr，收到 SIGTERM 时退出并清理资源。
-7. 请实际自测：在干净的解压目录中按 launch.json 启动，注入一个测试 PORT；
-   验证 /health、/、一个改变状态的业务请求，以及打开的 UI 随之更新。
-   停止后换一个可用 PORT 再次启动，确认产物未写死端口。
-   校验 OpenAPI 并核对实现，修复自测发现的问题；未运行的检查不得宣称通过。
+7. 只做最小验证：运行静态校验脚本；用测试 PORT 启动一次，验证 /health、/ 和一个
+   改变状态的业务请求；直接打包后再次运行静态校验。不要截图、跑 UI 自动化、
+   逐项遍历错误分支、反复换端口，或测试 SIGTERM/进程退出。未运行的检查不得宣称通过。
 8. 打包 outputs/ 的内容为 tar.gz，使 launch.json 位于归档根目录。
 ```
 

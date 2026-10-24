@@ -1,0 +1,41 @@
+# Open Anywhere 控制面配置示例。
+# 复制为 gateway.yaml 后按需修改；gateway.yaml 不会提交到仓库。
+# 优先级：命令行 flag > 环境变量 > 本文件 > 内置默认值。
+
+addr: ":8090"
+
+agentapi:
+  base_url: "https://agent.qiniuapi.com"
+  api_key: "replace-with-agentapi-key"
+  agent_id: "agent_replace_me"
+  agent_version: 1
+  environment_id: "env_replace_me"
+
+render:
+  base_url: "http://127.0.0.1:8091"
+
+casting:
+  base_url: "http://127.0.0.1:8080"
+
+# 屏幕映射 JSON 文件；留空时直接使用投屏服务发现的目标。
+screens: ""
+
+artifacts:
+  dir: "artifacts"
+  # Render 下载产物使用的地址，必须是 Render 能访问的绝对 HTTP(S) URL。
+  base_url: "http://192.168.31.203:8090"
+
+database:
+  path: "open-anywhere.gateway.db"
+
+ports:
+  min: 39000
+  max: 39999
+
+timeouts:
+  build: "60m"
+  start: "60s"
+  projection: "30s"
+  monitor_interval: "5s"
+  call: "2m"
+  http: "30s"
