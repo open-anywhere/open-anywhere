@@ -411,6 +411,38 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	if err != nil {
 		return StatusView{}, err
 	}
+	// failStart records a start that never got as far as a running application.
+	// The application is marked before reconciliation so a crash between the
+	// two never leaves it looking idle with reservations behind.
+	failStart := func(failure *startFailure) (StatusView, error) {
+		if failure.Code == "APP_ALREADY_RUNNING" {
+			if err := persistRuntime(entry, func(a *app.App) { a.PendingRuntime = false; a.CleanupPending = false; a.ScreenID = ""; a.TargetID = "" }); err != nil {
+				return StatusView{}, err
+			}
+			return StatusView{}, failure.toolError()
+		}
+		entry.Update(func(a *app.App) {
+			if a.State != app.StateIdle {
+				return
+			}
+			a.State = app.StateError
+			a.ScreenID = screenID
+			a.Error = &app.Error{Stage: app.StageStarting, Code: failure.Code, Message: failure.Message}
+			a.CleanupPending = true
+		})
+		_ = s.reconcile(ctx, entry)
+		s.notifyError(entry.Snapshot(), screenID)
+		return StatusView{}, failure.toolError()
+	}
+	// Validate the target before force-stopping whatever is on it: a screen
+	// that is now offline or cannot carry Render's profile must not lose the
+	// application it is currently showing.
+	if target.State != casting.TargetOnline {
+		return failStart(&startFailure{Code: "TARGET_UNREACHABLE", Message: "目标屏幕不可达"})
+	}
+	if _, ok := screen.DiscoverableEndpoint(target); !ok {
+		return failStart(&startFailure{Code: "TARGET_UNREACHABLE", Message: "屏幕不支持该媒体格式"})
+	}
 	// A casting session nobody in the control plane can account for cannot be
 	// stopped through force either. Refuse before starting a Render instance.
 	if target.ActiveSessionID != "" {
@@ -439,24 +471,7 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	value = entry.Snapshot()
 	binding, failure := s.startRuntime(ctx, value, target)
 	if failure != nil {
-		if failure.Code == "APP_ALREADY_RUNNING" {
-			if err := persistRuntime(entry, func(a *app.App) { a.PendingRuntime = false; a.CleanupPending = false; a.ScreenID = ""; a.TargetID = "" }); err != nil {
-				return StatusView{}, err
-			}
-			return StatusView{}, failure.toolError()
-		}
-		entry.Update(func(a *app.App) {
-			if a.State != app.StateIdle {
-				return
-			}
-			a.State = app.StateError
-			a.ScreenID = screenID
-			a.Error = &app.Error{Stage: app.StageStarting, Code: failure.Code, Message: failure.Message}
-			a.CleanupPending = true
-		})
-		_ = s.reconcile(ctx, entry)
-		s.notifyError(entry.Snapshot(), screenID)
-		return StatusView{}, failure.toolError()
+		return failStart(failure)
 	}
 	if err := persistRuntime(entry, func(a *app.App) {
 		if a.State != app.StateIdle {
@@ -810,6 +825,18 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 		Source:     source,
 	})
 	if err != nil {
+		// A failed creation can still leave a session behind when the service
+		// could not clean it up. Persist that ID so cleanup stops it instead of
+		// leaking the device occupation.
+		var clientErr *casting.ClientError
+		if errors.As(err, &clientErr) && clientErr.SessionID != "" {
+			if persistErr := s.updateRuntime(value.ID, func(a *app.App) {
+				a.ProjectionSessionID = clientErr.SessionID
+				a.PendingProjection = false
+			}); persistErr != nil {
+				return persistFailure(persistErr)
+			}
+		}
 		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "PROJECTION_TIMEOUT", Message: "无法建立投屏", Cause: err}
 	}
@@ -939,6 +966,10 @@ func (s *Service) statusView(value app.App) StatusView {
 	case app.StateIdle:
 		view.Name = value.Name
 		view.BuildDurationSeconds = int64(value.BuildDuration.Seconds())
+		if !value.StoppedAt.IsZero() {
+			stopped := value.StoppedAt.UTC().Truncate(time.Second)
+			view.StoppedAt = &stopped
+		}
 	case app.StateRunning:
 		view.Name = value.Name
 		view.ScreenID = value.ScreenID
@@ -1025,7 +1056,9 @@ func (s *Service) verifyRunning(ctx context.Context, a app.App) error {
 		if err != nil {
 			return &ToolError{Code: "PROJECTION_UNAVAILABLE", Message: "无法确认投屏状态"}
 		}
-		if p.State != casting.SessionPlaying {
+		// A paused screen still belongs to this application; only stopped or
+		// failed sessions mean the projection is gone.
+		if p.State != casting.SessionPlaying && p.State != casting.SessionPaused {
 			return &ToolError{Code: "APP_NOT_RUNNING", Message: "投屏未播放"}
 		}
 	}

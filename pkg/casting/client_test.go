@@ -83,6 +83,21 @@ func TestClientLifecycle(t *testing.T) {
 	}
 }
 
+func TestClientErrorCarriesTheLeakedSessionID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		io.WriteString(w, `{"error":{"code":"device_control_failed","message":"start failed","session_id":"ps_leaked"}}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second)
+	_, err := client.CreateSession(context.Background(), CreateSessionRequest{TargetID: "tv_1", EndpointID: "ep_1"})
+	var clientErr *ClientError
+	if !errors.As(err, &clientErr) || clientErr.Code != "device_control_failed" || clientErr.SessionID != "ps_leaked" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
 func TestClientErrors(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/targets", func(w http.ResponseWriter, r *http.Request) {

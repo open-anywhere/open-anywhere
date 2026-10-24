@@ -183,6 +183,25 @@ func TestStartAppResetAfterAlreadyRunningIsNotDurable(t *testing.T) {
 	}
 }
 
+func TestStartAppPersistsTheSessionFromACreationError(t *testing.T) {
+	env := newTestEnv(t, nil)
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	entry := env.registry.Add(idleApp(t, owner))
+	env.casting.createErr = &casting.ClientError{Status: 502, Code: "device_control_failed", Message: "start failed", SessionID: "ps_leaked"}
+	// Cleanup also fails, so the session ID has to survive in the record.
+	env.casting.stopErr = errors.New("device unreachable")
+
+	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
+		t.Fatalf("err = %v", err)
+	}
+	if got := entry.Snapshot().ProjectionSessionID; got != "ps_leaked" {
+		t.Fatalf("session from the creation error was lost: %q", got)
+	}
+	if stopped := env.casting.stoppedIDs(); len(stopped) != 1 || stopped[0] != "ps_leaked" {
+		t.Fatalf("cleanup did not target the leaked session: %v", stopped)
+	}
+}
+
 func TestStartAppKeepsAConcurrentRunningState(t *testing.T) {
 	env := newTestEnv(t, nil)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
@@ -738,7 +757,7 @@ func TestReleaseFailedStartKeepsTheUnknownOutcomeWhenItCannotPersist(t *testing.
 	}
 }
 
-func TestReleaseFailedStartPropagatesAReconciliationToolError(t *testing.T) {
+func TestReleaseFailedStartBlocksRestartWhenRenderIsUnreachable(t *testing.T) {
 	env := newTestEnv(t, nil)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	value := builtApp(t, "app_1", 0, app.StateError)
@@ -746,11 +765,36 @@ func TestReleaseFailedStartPropagatesAReconciliationToolError(t *testing.T) {
 	value.Error = &app.Error{Stage: app.StageStarting, Code: "PROJECTION_TIMEOUT"}
 	value.PendingRuntime = true
 	value.CleanupPending = true
-	env.registry.Add(value)
-	// No Render instance can be identified, so reconciliation keeps the
-	// reservation and reports a tool-level error that must not be rewritten.
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "RECONCILIATION_PENDING" {
+	entry := env.registry.Add(value)
+	// Render cannot be queried, so the previous start stays unresolved and the
+	// retry is refused as a tool error rather than leaking the reservation.
+	env.render.listErr = errors.New("render unreachable")
+	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "CLEANUP_PENDING" {
 		t.Fatalf("err = %v", err)
+	}
+	if !entry.Snapshot().PendingRuntime {
+		t.Fatal("the unresolved reservation was dropped without checking Render")
+	}
+}
+
+func TestReleaseFailedStartDropsReservationWhenRenderHasNoInstance(t *testing.T) {
+	env := newTestEnv(t, nil)
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	value := builtApp(t, "app_1", 0, app.StateError)
+	value.Owner = owner
+	value.Error = &app.Error{Stage: app.StageStarting, Code: "PROJECTION_TIMEOUT"}
+	value.PendingRuntime = true
+	value.CleanupPending = true
+	value.ScreenID = "tv_1"
+	entry := env.registry.Add(value)
+	// Render answers the port query and reports no instance for app_1: the
+	// unknown start outcome is resolved and the retry must proceed.
+	view, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+	if err != nil {
+		t.Fatalf("StartApp: %v", err)
+	}
+	if view.State != app.StateRunning || entry.Snapshot().PendingRuntime {
+		t.Fatalf("view = %+v pending=%v", view, entry.Snapshot().PendingRuntime)
 	}
 }
 

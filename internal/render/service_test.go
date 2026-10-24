@@ -246,6 +246,7 @@ func TestConfigurationAndClosedService(t *testing.T) {
 	for _, cfg := range []Config{
 		{Width: 321}, {FPS: 31}, {StartupTimeout: time.Millisecond}, {PublicURL: "ftp://example.com"},
 		{PublicURL: "http://localhost:8090", AppHost: "bad/host"},
+		{WorkDir: t.TempDir(), PublicURL: "http://:8090"},
 		{PublicURL: "http://localhost:8090"},
 	} {
 		if s, err := New(cfg); err == nil {

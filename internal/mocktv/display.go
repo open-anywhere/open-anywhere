@@ -130,9 +130,9 @@ func (d *Display) cue(raw string) {
 	d.url = raw
 	d.playing = false
 	state := d.stateLocked()
+	d.broadcastLocked(state)
 	d.mu.Unlock()
 	d.logf("mock-tv: cued %s", raw)
-	d.broadcast(state)
 }
 
 // play starts the cued stream.
@@ -145,9 +145,9 @@ func (d *Display) play() {
 	}
 	d.playing = true
 	state := d.stateLocked()
+	d.broadcastLocked(state)
 	d.mu.Unlock()
 	d.logf("mock-tv: playing %s", state.URL)
-	d.broadcast(state)
 }
 
 // stop clears the screen.
@@ -156,9 +156,9 @@ func (d *Display) stop() {
 	d.playing = false
 	d.url = ""
 	state := d.stateLocked()
+	d.broadcastLocked(state)
 	d.mu.Unlock()
 	d.logf("mock-tv: stopped")
-	d.broadcast(state)
 }
 
 // transportState is the UPnP AVTransport state returned to the casting
@@ -172,9 +172,9 @@ func (d *Display) transportState() string {
 	return "STOPPED"
 }
 
-func (d *Display) broadcast(state State) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+// broadcastLocked publishes state while the caller holds d.mu, so concurrent
+// state changes cannot deliver an older snapshot after a newer one.
+func (d *Display) broadcastLocked(state State) {
 	for ch := range d.clients {
 		select {
 		case ch <- state:

@@ -56,6 +56,27 @@ func TestControlEndpointsAcceptRequests(t *testing.T) {
 	}
 }
 
+func TestControlEndpointsRefuseGET(t *testing.T) {
+	s, ts := newStartedServer(t)
+	before := s.statusFn().State
+	for _, path := range []string{"/say", "/announce", "/pause", "/resume", "/abort"} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("GET %s=%d, want 405", path, resp.StatusCode)
+		}
+		if allow := resp.Header.Get("Allow"); allow != http.MethodPost {
+			t.Errorf("GET %s Allow=%q", path, allow)
+		}
+	}
+	if after := s.statusFn().State; after != before {
+		t.Errorf("GET changed state from %q to %q", before, after)
+	}
+}
+
 func TestEventsStreamsPublishedEvents(t *testing.T) {
 	s, ts := newStartedServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

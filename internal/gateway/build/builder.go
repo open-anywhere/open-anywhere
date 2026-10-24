@@ -139,7 +139,7 @@ func (b *Builder) watch(appID, sessionID string) {
 			return
 		}
 		stream := b.client.OpenEventStream(ctx, sessionID)
-		reconnects = 0
+		received := false
 		for {
 			event, err := stream.Next()
 			if err != nil {
@@ -152,6 +152,12 @@ func (b *Builder) watch(appID, sessionID string) {
 					b.logf("build %s: event stream read: %v", appID, err)
 				}
 				break
+			}
+			if !received {
+				// Only a stream that actually delivered an event resets the
+				// backoff; consecutive failed connections keep growing it.
+				received = true
+				reconnects = 0
 			}
 			if event.ID != "" {
 				if seen[event.ID] {

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -309,7 +310,14 @@ func (s *Spec) Execute(ctx context.Context, base, id string, parameters map[stri
 	if s == nil || len(s.document) == 0 {
 		return httpapi.Result{}, fmt.Errorf("full OpenAPI unavailable; revalidate artifact")
 	}
-	c, err := httpapi.FromDocument("app", base, s.document)
+	timeoutMS := 0
+	if client != nil && client.Timeout > 0 {
+		timeoutMS = min(int(client.Timeout/time.Millisecond), 120000)
+		if timeoutMS < 1 {
+			timeoutMS = 1
+		}
+	}
+	c, err := httpapi.FromDocumentWithTimeout("app", base, s.document, timeoutMS)
 	if err != nil {
 		return httpapi.Result{}, err
 	}

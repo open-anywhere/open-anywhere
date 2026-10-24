@@ -120,8 +120,8 @@ func New(cfg Config) (*Service, error) {
 		return nil, errors.New("startup timeout must be at least one second")
 	}
 	u, err := url.Parse(cfg.PublicURL)
-	if err != nil || u.Scheme != "http" || u.Host == "" || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return nil, errors.New("public URL must be an http origin")
+	if err != nil || u.Scheme != "http" || u.Host == "" || u.Hostname() == "" || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return nil, errors.New("public URL must be an http origin with a host")
 	}
 	cfg.PublicURL = strings.TrimRight(cfg.PublicURL, "/")
 	if cfg.AppHost == "" {
