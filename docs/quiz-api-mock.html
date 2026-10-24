@@ -208,15 +208,15 @@
     ];
 
     const endpoints = [
-      { group: 'State', id: 'state', method: 'GET', path: '/sessions/quiz-session-001/state', label: 'getGameState', desc: '获取当前玩家、阶段、比分和下一步动作。', body: '', hint: '只读接口。适合灵矽在不确定当前上下文时先查询。' },
-      { group: 'Players', id: 'players', method: 'POST', path: '/sessions/quiz-session-001/players', label: 'registerPlayer', desc: '添加玩家并绑定灵矽返回的匿名声纹标识。', body: '{\n  "user_id": "u4",\n  "display_name": "新玩家",\n  "voiceprint_id": "vp_new"\n}', hint: 'MVP 中三位玩家已预置；可以再添加一位验证动态加入。' },
-      { group: 'Players', id: 'ready', method: 'POST', path: '/sessions/quiz-session-001/players/p1/ready', label: 'playerReady', desc: '将一个玩家标记为已就位，并返回剩余未就位玩家。', body: '', hint: '把 path 里的 p1 改成 p2 或 p3，逐个发送。' },
-      { group: 'Game', id: 'start', method: 'POST', path: '/sessions/quiz-session-001/start', label: 'startGame', desc: '所有必要玩家就位后开始第一题。', body: '', hint: '开始后会返回题目、朗读提示和 agent-only judge_context。' },
-      { group: 'Answer', id: 'answers', method: 'POST', path: '/sessions/quiz-session-001/answers', label: 'submitAnswer', desc: '题目朗读完成后，提交声纹匹配的玩家和语音转写文本。', body: '{\n  "user_id": "u2",\n  "transcript": "火车进站",\n  "voice_confidence": 0.97\n}', hint: '这里模拟灵矽先完成声纹识别，再把答案交给应用。' },
-      { group: 'Answer', id: 'evaluate', method: 'POST', path: '/sessions/quiz-session-001/answers/answer-001/evaluate', label: 'evaluateAnswer', desc: '提交灵矽对玩家答案的判断结果，应用据此更新比分。', body: '{\n  "answer_right": true,\n  "reason": "回答正确"\n}', hint: '先发送 submitAnswer，拿到真实 answer_id 后再发送本接口。' },
-      { group: 'Game', id: 'pause', method: 'POST', path: '/sessions/quiz-session-001/pause', label: 'pauseGame', desc: '暂停游戏，不推进题目和计分。', body: '', hint: '暂停后可以用 resume 继续。' },
-      { group: 'Game', id: 'resume', method: 'POST', path: '/sessions/quiz-session-001/resume', label: 'resumeGame', desc: '继续当前游戏。', body: '', hint: '继续后恢复到暂停前的阶段。' },
-      { group: 'Game', id: 'reset', method: 'POST', path: '/sessions/quiz-session-001/reset', label: 'resetGame', desc: '清空本局进度和比分，开始新一局。', body: '', hint: '这是一个可重复调用的演示重置按钮。' }
+      { group: 'State', id: 'state', method: 'GET', path: '/sessions/quiz-session-001/state', label: 'getGameState', desc: '获取当前玩家、阶段、比分和下一步动作。', body: '{}', hint: '只读接口。Body 已准备为 {}，直接发送即可。' },
+      { group: 'Players', id: 'players', method: 'POST', path: '/sessions/quiz-session-001/players', label: 'registerPlayer', desc: '添加玩家并绑定灵矽返回的匿名声纹标识。', body: '{\n  "user_id": "",\n  "display_name": "",\n  "voiceprint_id": ""\n}', hint: '把三个空字符串填入即可；MVP 中三位玩家已预置，也可以再添加一位。' },
+      { group: 'Players', id: 'ready', method: 'POST', path: '/sessions/quiz-session-001/players/p1/ready', label: 'playerReady', desc: '将一个玩家标记为已就位，并返回剩余未就位玩家。', body: '{}', hint: 'Body 已准备为 {}；把 path 里的 p1 改成 p2 或 p3，逐个发送。' },
+      { group: 'Game', id: 'start', method: 'POST', path: '/sessions/quiz-session-001/start', label: 'startGame', desc: '所有必要玩家就位后开始第一题。', body: '{}', hint: 'Body 已准备为 {}；开始后会返回题目、朗读提示和 agent-only judge_context。' },
+      { group: 'Answer', id: 'answers', method: 'POST', path: '/sessions/quiz-session-001/answers', label: 'submitAnswer', desc: '题目朗读完成后，提交声纹匹配的玩家和语音转写文本。', body: '{\n  "user_id": "",\n  "transcript": "",\n  "voice_confidence": 0\n}', hint: '填入声纹匹配后的 user_id、语音转写文本和置信度即可。' },
+      { group: 'Answer', id: 'evaluate', method: 'POST', path: '/sessions/quiz-session-001/answers/answer-001/evaluate', label: 'evaluateAnswer', desc: '提交灵矽对玩家答案的判断结果，应用据此更新比分。', body: '{\n  "answer_right": false,\n  "reason": ""\n}', hint: '把 answer_right 改为 true/false，reason 填写给用户播报的简短解释。' },
+      { group: 'Game', id: 'pause', method: 'POST', path: '/sessions/quiz-session-001/pause', label: 'pauseGame', desc: '暂停游戏，不推进题目和计分。', body: '{}', hint: 'Body 已准备为 {}；暂停后可以用 resume 继续。' },
+      { group: 'Game', id: 'resume', method: 'POST', path: '/sessions/quiz-session-001/resume', label: 'resumeGame', desc: '继续当前游戏。', body: '{}', hint: 'Body 已准备为 {}；继续后恢复到暂停前的阶段。' },
+      { group: 'Game', id: 'reset', method: 'POST', path: '/sessions/quiz-session-001/reset', label: 'resetGame', desc: '清空本局进度和比分，开始新一局。', body: '{}', hint: 'Body 已准备为 {}；这是一个可重复调用的演示重置按钮。' }
     ];
 
     const initialState = () => ({
