@@ -2,7 +2,7 @@ coverage:
   status:
     project:
       default:
-        target: auto
+        target: 80%
         threshold: 1%
     patch:
       default:
@@ -14,5 +14,9 @@ comment:
   require_changes: false
 
 # main() 只是入口，无业务逻辑，不纳入覆盖率统计
+# voiceentry 的 audio player/source 只是 ffplay/ffmpeg 子进程封装，
+# 单元测试环境没有这些程序
 ignore:
   - "main.go"
+  - "internal/voiceentry/audio/player.go"
+  - "internal/voiceentry/audio/source.go"

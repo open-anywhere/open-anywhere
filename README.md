@@ -35,3 +35,11 @@ go run ./cmd/casting -addr :8080 -interface en0
 ```
 
 接口、目录组织和测试说明见 [Casting 服务](docs/casting.md)。
+
+运行现场语音入口（接入灵矽并提供本地 Web 控制台）：
+
+```sh
+go run ./cmd/voiceentry -serve
+```
+
+然后打开 <http://127.0.0.1:8788/>。设计见 [现场语音入口](docs/voice-entry.md)，使用、接口和目录见 [实现与使用](internal/voiceentry/README.md)。
