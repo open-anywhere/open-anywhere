@@ -191,6 +191,9 @@ func (b *Builder) watch(appID, sessionID string) {
 			case "agent.message":
 				active = true
 				b.recordMessage(appID, event.Text())
+			case "agent.thinking":
+				active = true
+				b.recordThinking(appID, event.Text())
 			case "session.error":
 				b.recordStatus(appID, event.MessageText())
 			case "session.status_idle":
@@ -233,6 +236,24 @@ func (b *Builder) recordMessage(appID, raw string) {
 		entry.Update(func(a *app.App) {
 			if a.State == app.StateBuilding {
 				a.LastAgentMessage = text
+				a.LastProgress = text
+			}
+		})
+	}
+}
+
+// recordThinking keeps get-app-status informative while the agent is working
+// through tool calls without emitting a formal message. Thinking text is
+// best-effort: the provider may send an empty or redacted block.
+func (b *Builder) recordThinking(appID, raw string) {
+	text := progressText(raw)
+	if text == "" {
+		return
+	}
+	if entry, ok := b.registry.Get(appID); ok {
+		entry.Update(func(a *app.App) {
+			if a.State == app.StateBuilding {
+				a.LastProgress = text
 			}
 		})
 	}
@@ -247,6 +268,7 @@ func (b *Builder) recordStatus(appID, message string) {
 		entry.Update(func(a *app.App) {
 			if a.State == app.StateBuilding {
 				a.LastStatusMessage = message
+				a.LastProgress = message
 			}
 		})
 	}
@@ -307,6 +329,7 @@ func (b *Builder) register(entry *app.Record, result artifact.Result, item artif
 		a.Error = nil
 		a.LastAgentMessage = ""
 		a.LastStatusMessage = ""
+		a.LastProgress = ""
 		snapshot = *a
 		return nil
 	})
@@ -508,13 +531,36 @@ func reconnectDelay(attempt int) time.Duration {
 }
 
 func compact(text string) string {
-	fields := strings.Fields(text)
-	value := strings.Join(fields, " ")
-	if utf8.RuneCountInString(value) <= 200 {
+	return truncateRunes(strings.Join(strings.Fields(text), " "), 200)
+}
+
+// progressText condenses agent thinking, which can run to thousands of runes,
+// into a short status line: whitespace is collapsed and a long block is cut at
+// its first sentence when possible.
+func progressText(text string) string {
+	value := strings.Join(strings.Fields(text), " ")
+	if value == "" || utf8.RuneCountInString(value) <= 200 {
 		return value
 	}
-	runes := []rune(value)
-	return string(runes[:200])
+	for _, separator := range []string{"。", "！", "？", ". ", "! ", "? "} {
+		index := strings.Index(value, separator)
+		if index <= 0 {
+			continue
+		}
+		candidate := value[:index+len(separator)]
+		if utf8.RuneCountInString(candidate) >= 8 {
+			value = candidate
+			break
+		}
+	}
+	return truncateRunes(value, 200)
+}
+
+func truncateRunes(value string, limit int) string {
+	if utf8.RuneCountInString(value) <= limit {
+		return value
+	}
+	return string([]rune(value)[:limit])
 }
 
 // BuildPrompt combines the user's request and the initial player names into the

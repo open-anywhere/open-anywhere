@@ -73,6 +73,9 @@ type App struct {
 	State            State
 	Error            *Error
 	LastAgentMessage string
+	// LastProgress is the most recent build progress signal: an agent message,
+	// an agent thinking event, or a session error, whichever arrived last.
+	LastProgress string
 
 	// Build progress, kept for recovery and status queries.
 	SessionID         string
@@ -103,6 +106,9 @@ type App struct {
 
 // BuildingMessage returns the text shown for a building application.
 func (a App) BuildingMessage() string {
+	if a.LastProgress != "" {
+		return a.LastProgress
+	}
 	if a.LastAgentMessage != "" {
 		return a.LastAgentMessage
 	}

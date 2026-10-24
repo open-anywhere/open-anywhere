@@ -50,7 +50,8 @@ type EventError struct {
 	Message string `json:"message"`
 }
 
-// Text returns the concatenated text blocks of an agent.message event.
+// Text returns the concatenated text blocks of an event that carries content,
+// such as agent.message or agent.thinking.
 func (e Event) Text() string {
 	var builder strings.Builder
 	for _, block := range e.Content {

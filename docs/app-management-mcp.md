@@ -189,7 +189,7 @@
 }
 ```
 
-`building` 的 `message` 取 AgentAPI Session Event 中最近一次 agent 消息；`idle` 完成后由控制面发送“APP 创建完成”通知，通知里的 `message` 才是给灵矽播报的文案。`name` 是应用的展示名称，由控制面在注册应用时确定。
+`building` 的 `message` 取 AgentAPI Session Event 中最近的进度事件，按到达顺序取最后一条：`agent.message`、`agent.thinking` 或 `session.error`。agent 长时间调用工具、没有正式消息输出时，thinking 也会更新进度，`message` 因此不会长时间停留在旧文案；thinking 内容不保证存在（可能为空或被脱敏），此时沿用上一条进度。`idle` 完成后由控制面发送“APP 创建完成”通知，通知里的 `message` 才是给灵矽播报的文案。`name` 是应用的展示名称，由控制面在注册应用时确定。
 
 `error.stage` 取 `building`、`starting` 或 `running`；`error.last_agent_message` 保留最近一次 agent 消息。构建失败时进入 `error`，不会进入 `idle`。
 
