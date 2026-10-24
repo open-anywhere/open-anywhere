@@ -196,3 +196,229 @@ DELETE /v1/projection-sessions/{session_id}
 ```
 
 服务端停止目标设备的播放并释放投屏会话；该操作不负责停止 Client 自己的流服务。
+
+## 6. 应用管理 MCP
+
+本章定义灵矽通过控制面管理应用生命周期的四个 MCP Tool。工具名按灵矽侧约定使用 kebab-case；应用运行后的能力调用仍走既有的 OpenAPI / HTTP 契约，不在本章展开。
+
+### 6.1 工具集
+
+| Tool | 作用 | 输入 | 输出 |
+| --- | --- | --- | --- |
+| `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt` | `app_id`, `state: building` |
+| `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见 6.3 |
+| `start-app` | 启动已构建的应用 | `app_id` | `app_id`, `state: running` |
+| `stop-app` | 停止运行中的应用 | `app_id` | `app_id`, `state: idle` |
+
+应用状态有四种：`building`、`idle`、`running`、`error`。`error` 表示构建、启动或运行失败；`error.stage` 区分失败阶段，构建失败不会产生可启动的 `idle` 应用。
+
+`app_id` 在 `create-app` 时分配，后续三个工具都用它定位应用；AgentAPI 的 session id 只在控制面内部使用。`app_id` 必须属于当前 device/session，控制面拒绝跨会话访问。
+
+### 6.2 `create-app`
+
+输入是灵矽整理后的用户诉求，不是原始 ASR 文本：
+
+```json
+{
+  "prompt": "做一个掷骰子游戏，点击按钮掷出两个骰子，显示点数和最近几次结果"
+}
+```
+
+控制面创建 AgentAPI session 后立即返回，不等待构建完成：
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "building"
+}
+```
+
+同一 device/session 已有 `building` 中的应用时，重复 `create-app` 返回现有 `app_id`，不重复创建 session。
+
+### 6.3 `get-app-status`
+
+输入：
+
+```json
+{
+  "app_id": "app_01J..."
+}
+```
+
+不同状态返回不同字段：
+
+| state | 含义 | 字段 |
+| --- | --- | --- |
+| `building` | AgentAPI 正在构建，应用还不可启动 | `app_id`, `state`, `elapsed_seconds`, `message` |
+| `idle` | 构建完成并注册，进程未启动 | `app_id`, `state`, `name`, `build_duration_seconds` |
+| `running` | 进程已启动并通过健康检查 | `app_id`, `state`, `name`, `started_at`, `uptime_seconds` |
+| `error` | 构建、启动或运行失败 | `app_id`, `state`, `error` |
+
+`building`：
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "building",
+  "elapsed_seconds": 42,
+  "message": "正在写页面"
+}
+```
+
+`idle`：
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "idle",
+  "name": "掷骰子游戏",
+  "build_duration_seconds": 95
+}
+```
+
+`running`：
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "running",
+  "name": "掷骰子游戏",
+  "started_at": "2026-10-24T08:30:00Z",
+  "uptime_seconds": 12
+}
+```
+
+`error`：
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "error",
+  "error": {
+    "stage": "building",
+    "code": "BUILD_FAILED",
+    "message": "构建完成，但产物校验失败",
+    "last_agent_message": "代码已经写完，但启动检查报错"
+  }
+}
+```
+
+`building` 的 `message` 取 AgentAPI Session Event 中最近一次 agent 消息；`idle` 完成后由控制面发送“APP 创建完成”通知，通知里的 `message` 才是给灵矽播报的文案。`name` 来自 artifact 的 `launch.json`。
+
+`error.stage` 取 `building`、`starting` 或 `running`；`error.last_agent_message` 保留最近一次 agent 消息。构建失败时进入 `error`，不会进入 `idle`。
+
+### 6.4 `start-app`
+
+输入：
+
+```json
+{
+  "app_id": "app_01J..."
+}
+```
+
+控制面让 Render 按 artifact 中已有的 `launch.json` 启动应用；`launch.json` 协议不变。健康检查通过后返回 `running` 状态：
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "running",
+  "name": "掷骰子游戏",
+  "started_at": "2026-10-24T08:30:00Z",
+  "uptime_seconds": 0
+}
+```
+
+`launch.json` 的 `port` 只在控制面和 Render 内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。
+
+只允许从 `idle` 启动。已经在 `running` 时幂等返回当前状态；`building` 时返回 `APP_BUILDING`；`error` 时返回 `APP_IN_ERROR`；启动失败时应用进入 `error`（`stage=starting`），工具返回 `isError: true`，`error.code=START_FAILED`。
+
+启动成功后，后续应用操作仍通过既有的 OpenAPI / HTTP 契约完成。
+
+### 6.5 `stop-app`
+
+输入：
+
+```json
+{
+  "app_id": "app_01J..."
+}
+```
+
+停止应用进程并回到 `idle`：
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "idle",
+  "stopped_at": "2026-10-24T08:45:00Z"
+}
+```
+
+已经在 `idle` 时幂等返回；`building` 时返回 `APP_BUILDING`；`error` 时幂等返回当前 `error`；停止失败返回 `STOP_FAILED`。用户主动停止后回到 `idle`；应用进程异常退出则进入 `error`（`stage=running`，`code=APP_EXITED`），由后续 `get-app-status` 反映。
+
+### 6.6 创建到启动
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as 用户
+  participant L as 灵矽云
+  participant C as 控制面
+  participant A as AgentAPI
+  participant R as Render
+
+  U->>L: 帮我做一个掷骰子游戏
+  L->>C: create-app(prompt)
+  C->>A: 创建编码 session
+  A-->>C: session_id
+  C-->>L: app_id, state=building
+  L-->>U: TTS：开始制作
+
+  A-->>C: session 结束，artifact 已持久化
+  C->>A: 下载 artifact
+  C->>C: 校验、注册 app
+  C-->>L: notifications/app_status(app_id, state=idle)
+  L-->>U: TTS：APP 创建完成，要开始吗？
+
+  U->>L: 开始吧
+  L->>C: start-app(app_id)
+  C->>R: 按 launch.json 启动
+  R-->>C: health OK
+  C-->>L: state=running
+  L-->>U: TTS：游戏开始了
+```
+
+构建完成后，控制面通过已有的 MCP SSE 连接发送通知：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/app_status",
+  "params": {
+    "app_id": "app_01J...",
+    "state": "idle",
+    "message": "APP 创建完成"
+  }
+}
+```
+
+构建失败时发送同一方法，`state` 为 `error`，`error` 结构与 `get-app-status` 一致。
+
+灵矽收到通知后决定是否播报并等待用户指令；控制面不直接推 TTS。通知是 best-effort，断线或丢失时以 `get-app-status` 为准。
+
+### 6.7 状态转换
+
+```mermaid
+stateDiagram-v2
+  [*] --> building: create-app
+  building --> idle: 构建完成
+  building --> error: 构建失败
+  idle --> running: start-app
+  idle --> error: 启动失败
+  running --> idle: stop-app
+  running --> error: 进程退出
+  error --> [*]
+```
+
+`error` 是终止态；重试需要重新调用 `create-app`，生成新的 `app_id`。
