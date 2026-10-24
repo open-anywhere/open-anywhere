@@ -1,0 +1,75 @@
+name: Render E2E
+on:
+  pull_request:
+    paths:
+      - 'cmd/render/**'
+      - 'internal/render/**'
+      - 'pkg/render/**'
+      - 'e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/render-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/render/**'
+      - 'internal/render/**'
+      - 'pkg/render/**'
+      - 'e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/render-e2e.yml'
+permissions:
+  contents: read
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+        with:
+          install-dependencies: true
+      - name: Install video and font dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg lsof fonts-noto-cjk
+      - name: Allow this Chromium build to create its sandbox
+        env:
+          RENDER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          # Ubuntu AppArmor restricts user namespaces for downloaded browsers.
+          # Grant only this executable the namespace permission; keep Chrome sandboxed.
+          cat > "$RUNNER_TEMP/render-chromium.apparmor" <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile render-e2e-chromium "$RENDER_CHROME" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r "$RUNNER_TEMP/render-chromium.apparmor"
+      - name: Decode live Render output and verify application state
+        env:
+          RENDER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          RENDER_E2E_OUTPUT: ${{ github.workspace }}/e2e/results
+        run: go test -race -tags=e2e -coverpkg=./internal/render/... -covermode=atomic -coverprofile=render-e2e-coverage.out -v ./e2e -count=1 -timeout=180s
+      - name: Upload Render integration coverage
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./render-e2e-coverage.out
+          flags: render-e2e
+          fail_ci_if_error: false
+      - name: Save decoded frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-video-frames
+          path: e2e/results/
+          if-no-files-found: ignore

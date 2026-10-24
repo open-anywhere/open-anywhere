@@ -68,6 +68,19 @@ func serve(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	// Artifact locations follow deployment configuration, including when the
+	// public origin or storage directory changes after a restart.
+	for i := range persisted {
+		value := &persisted[i]
+		if item, ok := artifactStore.Get(value.ID); ok {
+			value.Artifact.Path = item.Path
+			value.Artifact.DownloadURL = item.DownloadURL
+			value.Revision++
+			if err := database.SaveApp(*value); err != nil {
+				return fmt.Errorf("restore app artifact location: %w", err)
+			}
+		}
+	}
 	registry.Load(persisted)
 
 	agentapiClient := agentapi.New(cfg.AgentAPIURL, cfg.AgentAPIKey, cfg.HTTPTimeout)
@@ -90,7 +103,9 @@ func serve(ctx context.Context, cfg config.Config) error {
 		PortMin:           cfg.PortMin,
 		PortMax:           cfg.PortMax,
 	})
-	apps.RecoverRuntime()
+	if err := apps.RecoverRuntime(); err != nil {
+		return err
+	}
 	server.SetTools(apps)
 	server.Compatibility = true
 	server.SpeakerProbe = cfg.SpeakerProbe

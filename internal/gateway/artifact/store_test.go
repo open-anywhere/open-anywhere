@@ -74,6 +74,24 @@ func TestStoreRestoresPersistedArtifacts(t *testing.T) {
 	if got.Token != item.Token || got.DownloadURL != item.DownloadURL || got.Path != item.Path {
 		t.Fatalf("item = %+v, want %+v", got, item)
 	}
+	// A service move must not leave Render downloading from the old origin.
+	relocatedDir := t.TempDir()
+	relocated, err := NewStore(relocatedDir, "https://new-gateway.example", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = relocated.Get("app_1")
+	if got.Token != item.Token || got.DownloadURL != "https://new-gateway.example/artifacts/app_1/artifact.tar.gz?token="+item.Token || got.Path != filepath.Join(relocatedDir, "app_1.tar.gz") {
+		t.Fatalf("relocated item = %+v", got)
+	}
+	rows, _ := repo.ListArtifacts()
+	if rows[0].DownloadURL != got.DownloadURL {
+		t.Fatal("new location was not persisted")
+	}
+	repo.saveErr = errors.New("database unavailable")
+	if _, err := NewStore(dir, "https://third.example", repo); err == nil {
+		t.Fatal("restore must report persistence failure")
+	}
 }
 
 func TestStoreSaveFileRemovesFileWhenPersistFails(t *testing.T) {

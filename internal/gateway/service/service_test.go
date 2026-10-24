@@ -542,7 +542,9 @@ func TestStartAppTargetFailures(t *testing.T) {
 		if snapshot.State != app.StateError || snapshot.Error == nil || snapshot.Error.Stage != app.StageStarting || snapshot.Error.Code != "TARGET_UNREACHABLE" {
 			t.Fatalf("snapshot = %+v", snapshot)
 		}
-		if snapshot.ScreenID != "tv_1" {
+		// No downstream POST occurred; an offline target must not leave a
+		// phantom reservation that reconciliation can never identify.
+		if snapshot.ScreenID != "" || snapshot.PendingRuntime || snapshot.CleanupPending {
 			t.Fatalf("screen = %q", snapshot.ScreenID)
 		}
 	})

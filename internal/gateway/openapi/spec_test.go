@@ -190,7 +190,7 @@ paths:
 		t.Fatalf("path parameter = %+v", operation.Parameters[0])
 	}
 	if operation.Parameters[2].Name != "verbose" || operation.Parameters[2].In != "query" {
-		t.Fatalf("query parameter = %+v", operation.Parameters[1])
+		t.Fatalf("query parameter = %+v", operation.Parameters[2])
 	}
 	if operation.RequestBody == nil || !operation.RequestBody.Required || operation.RequestBody.Description != "新的条目字段" {
 		t.Fatalf("body = %+v", operation.RequestBody)
@@ -208,7 +208,7 @@ paths:
 		t.Fatal(err)
 	}
 	restoredOperation, _ := restored.Lookup("updateItem")
-	if len(restoredOperation.Parameters) != 2 || restoredOperation.RequestBody == nil {
+	if len(restoredOperation.Parameters) != 3 || restoredOperation.RequestBody == nil {
 		t.Fatalf("restored = %+v", restoredOperation)
 	}
 }

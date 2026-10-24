@@ -11,10 +11,18 @@ import (
 	"github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
-func (s *Service) updateRuntime(id string, fn func(*app.App)) {
-	if r, ok := s.apps.Get(id); ok {
-		r.Update(fn)
+func persistRuntime(record *app.Record, fn func(*app.App)) error {
+	if err := record.Do(func(a *app.App) error { fn(a); return nil }); err != nil {
+		return &ToolError{Code: "PERSISTENCE_FAILED", Message: "无法保存运行状态，停止后续操作"}
 	}
+	return nil
+}
+
+func (s *Service) updateRuntime(id string, fn func(*app.App)) error {
+	if r, ok := s.apps.Get(id); ok {
+		return persistRuntime(r, fn)
+	}
+	return &ToolError{Code: "APP_NOT_FOUND", Message: "应用不存在"}
 }
 
 // reconcile identifies unknown outcomes using read-only downstream records before
@@ -47,12 +55,14 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 		if instance.AppID != a.ID {
 			return fmt.Errorf("foreign Render instance")
 		}
-		record.Update(func(v *app.App) {
+		if err := persistRuntime(record, func(v *app.App) {
 			v.InstanceID = found
 			v.PendingRuntime = false
 			v.Source = instance.Source
 			v.AppBaseURL = instance.AppBaseURL
-		})
+		}); err != nil {
+			return err
+		}
 		a = record.Snapshot()
 	}
 	if a.PendingProjection {
@@ -70,7 +80,9 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 		if p.TargetID != a.TargetID || p.EndpointID != a.EndpointID || p.Source.URL != a.Source.URL {
 			return fmt.Errorf("foreign projection session; no cleanup")
 		}
-		record.Update(func(v *app.App) { v.ProjectionSessionID = p.ID; v.PendingProjection = false })
+		if err := persistRuntime(record, func(v *app.App) { v.ProjectionSessionID = p.ID; v.PendingProjection = false }); err != nil {
+			return err
+		}
 		a = record.Snapshot()
 	}
 	if a.ProjectionSessionID != "" {
@@ -81,7 +93,9 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 		if err == nil && p.State != casting.SessionStopped {
 			return fmt.Errorf("projection cleanup not complete")
 		}
-		record.Update(func(v *app.App) { v.ProjectionSessionID = "" })
+		if err := persistRuntime(record, func(v *app.App) { v.ProjectionSessionID = "" }); err != nil {
+			return err
+		}
 		a = record.Snapshot()
 	}
 	if a.InstanceID != "" {
@@ -92,27 +106,31 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 		if err == nil && r.State != render.StateStopped {
 			return fmt.Errorf("runtime cleanup not complete")
 		}
-		record.Update(func(v *app.App) { v.InstanceID = ""; v.Port = 0; v.AppBaseURL = "" })
+		if err := persistRuntime(record, func(v *app.App) { v.InstanceID = ""; v.Port = 0; v.AppBaseURL = "" }); err != nil {
+			return err
+		}
 	}
-	record.Update(func(v *app.App) {
+	return persistRuntime(record, func(v *app.App) {
 		v.CleanupPending = false
 		v.ScreenID = ""
 		v.TargetID = ""
 		v.EndpointID = ""
 		v.Source = casting.StreamSource{}
 	})
-	return nil
 }
 
 // RecoverRuntime marks interrupted starts for read-only reconciliation, never restarting them.
-func (s *Service) RecoverRuntime() {
+func (s *Service) RecoverRuntime() error {
 	for _, a := range s.apps.List() {
-		if a.PendingRuntime || a.PendingProjection || (a.State == app.StateIdle && (a.InstanceID != "" || a.ProjectionSessionID != "")) {
-			s.updateRuntime(a.ID, func(v *app.App) {
+		if a.PendingRuntime || a.PendingProjection || (a.State == app.StateIdle && (a.CleanupPending || a.InstanceID != "" || a.ProjectionSessionID != "")) {
+			if err := s.updateRuntime(a.ID, func(v *app.App) {
 				v.State = app.StateError
 				v.CleanupPending = true
 				v.Error = &app.Error{Stage: app.StageStarting, Code: "RECOVERY_PENDING", Message: "正在核对中断的启动"}
-			})
+			}); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }

@@ -242,6 +242,10 @@ func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt stri
 		State:          app.StateBuilding,
 		BuildStartedAt: s.now(),
 	})
+	if err := persistRuntime(entry, func(*app.App) {}); err != nil {
+		s.apps.Remove(id)
+		return CreateResult{}, err
+	}
 	if err := s.builder.Start(ctx, entry.Snapshot()); err != nil {
 		s.apps.Remove(id)
 		s.logf("create-app %s: %v", id, err)
@@ -353,12 +357,20 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	if other, ok := s.apps.RunningOnScreen(screenID); ok && other.ID != appID {
 		return StatusView{}, &ToolError{Code: "TARGET_BUSY", Message: "目标屏幕已被占用"}
 	}
-	entry.Update(func(a *app.App) { a.ScreenID = screenID; a.TargetID = target.ID; a.PendingRuntime = true })
+	if err := persistRuntime(entry, func(a *app.App) {
+		a.ScreenID = screenID
+		a.TargetID = target.ID
+		a.CleanupPending = true
+	}); err != nil {
+		return StatusView{}, err
+	}
 	value = entry.Snapshot()
 	binding, failure := s.startRuntime(ctx, value, target)
 	if failure != nil {
 		if failure.Code == "APP_ALREADY_RUNNING" {
-			entry.Update(func(a *app.App) { a.PendingRuntime = false; a.ScreenID = ""; a.TargetID = "" })
+			if err := persistRuntime(entry, func(a *app.App) { a.PendingRuntime = false; a.CleanupPending = false; a.ScreenID = ""; a.TargetID = "" }); err != nil {
+				return StatusView{}, err
+			}
 			return StatusView{}, failure.toolError()
 		}
 		entry.Update(func(a *app.App) {
@@ -374,7 +386,7 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 		s.notifyError(entry.Snapshot(), screenID)
 		return StatusView{}, failure.toolError()
 	}
-	entry.Update(func(a *app.App) {
+	if err := persistRuntime(entry, func(a *app.App) {
 		if a.State != app.StateIdle {
 			return
 		}
@@ -393,7 +405,12 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 		a.StartedAt = s.now()
 		a.StoppedAt = time.Time{}
 		a.Error = nil
-	})
+	}); err != nil {
+		// The downstream IDs were durably stored before this final transition.
+		// Retain them and let the monitor retry cleanup after storage recovers.
+		entry.Update(func(a *app.App) { a.State = app.StateError; a.CleanupPending = true })
+		return StatusView{}, err
+	}
 	return s.statusView(entry.Snapshot()), nil
 }
 
@@ -432,7 +449,7 @@ func (s *Service) StopApp(ctx context.Context, owner app.Identity, appID string)
 			return StatusView{}, &ToolError{Code: "STOP_FAILED", Message: "停止应用失败"}
 		}
 	}
-	entry.Update(func(a *app.App) {
+	if err := persistRuntime(entry, func(a *app.App) {
 		if a.State != app.StateRunning {
 			return
 		}
@@ -447,7 +464,9 @@ func (s *Service) StopApp(ctx context.Context, owner app.Identity, appID string)
 		a.EndpointID = ""
 		a.ProjectionSessionID = ""
 		a.Error = nil
-	})
+	}); err != nil {
+		return StatusView{}, err
+	}
 	return s.statusView(entry.Snapshot()), nil
 }
 
@@ -599,6 +618,9 @@ func (f *startFailure) toolError() error {
 }
 
 func (s *Service) startRuntime(ctx context.Context, value app.App, target casting.Target) (startBinding, *startFailure) {
+	persistFailure := func(err error) (startBinding, *startFailure) {
+		return startBinding{}, &startFailure{Code: "PERSISTENCE_FAILED", Message: "无法保存运行状态，停止后续操作", Cause: err}
+	}
 	if target.State != casting.TargetOnline {
 		return startBinding{}, &startFailure{Code: "TARGET_UNREACHABLE", Message: "目标屏幕不可达"}
 	}
@@ -616,7 +638,9 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 		if createErr != nil {
 			break
 		}
-		s.updateRuntime(value.ID, func(a *app.App) { a.Port = port; a.PendingRuntime = true })
+		if err := s.updateRuntime(value.ID, func(a *app.App) { a.Port = port; a.PendingRuntime = true }); err != nil {
+			return persistFailure(err)
+		}
 		instance, createErr = s.render.Create(startCtx, render.CreateRequest{
 			AppID:       value.ID,
 			ArtifactURL: value.Artifact.DownloadURL,
@@ -631,16 +655,20 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 				createErr = errors.New("Render returned no instance_id")
 				break
 			}
-			s.updateRuntime(value.ID, func(a *app.App) {
+			if err := s.updateRuntime(value.ID, func(a *app.App) {
 				a.InstanceID = instance.InstanceID
 				a.PendingRuntime = false
 				a.AppBaseURL = instance.AppBaseURL
 				a.Source = instance.Source
-			})
+			}); err != nil {
+				return persistFailure(err)
+			}
 			break
 		}
 		if render.IsCode(createErr, "PORT_IN_USE") || render.IsCode(createErr, "INVALID_REQUEST") || render.IsCode(createErr, "APP_ALREADY_RUNNING") {
-			s.updateRuntime(value.ID, func(a *app.App) { a.PendingRuntime = false })
+			if err := s.updateRuntime(value.ID, func(a *app.App) { a.PendingRuntime = false }); err != nil {
+				return persistFailure(err)
+			}
 		}
 		if render.IsCode(createErr, "PORT_IN_USE") {
 			excluded[port] = true
@@ -668,7 +696,9 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "TARGET_UNREACHABLE", Message: "屏幕不支持该媒体格式"}
 	}
-	s.updateRuntime(value.ID, func(a *app.App) { a.EndpointID = endpoint.ID; a.Source = source; a.PendingProjection = true })
+	if err := s.updateRuntime(value.ID, func(a *app.App) { a.EndpointID = endpoint.ID; a.Source = source; a.PendingProjection = true }); err != nil {
+		return persistFailure(err)
+	}
 	session, err := s.casting.CreateSession(startCtx, casting.CreateSessionRequest{
 		TargetID:   target.ID,
 		EndpointID: endpoint.ID,
@@ -678,7 +708,12 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "PROJECTION_TIMEOUT", Message: "无法建立投屏", Cause: err}
 	}
-	s.updateRuntime(value.ID, func(a *app.App) { a.ProjectionSessionID = session.ID; a.PendingProjection = false })
+	if session.ID == "" {
+		return startBinding{}, &startFailure{Code: "PROJECTION_TIMEOUT", Message: "投屏结果缺少会话标识"}
+	}
+	if err := s.updateRuntime(value.ID, func(a *app.App) { a.ProjectionSessionID = session.ID; a.PendingProjection = false }); err != nil {
+		return persistFailure(err)
+	}
 	if err := s.waitPlaying(startCtx, session.ID); err != nil {
 		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "PROJECTION_TIMEOUT", Message: "投屏超时", Cause: err}

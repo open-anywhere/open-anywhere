@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -88,6 +90,73 @@ func TestServeSSERequiresStreaming(t *testing.T) {
 	server.ServeSSE(recorder, request)
 	if recorder.header.Get("Content-Type") != "text/plain; charset=utf-8" {
 		t.Fatalf("content type = %q", recorder.header.Get("Content-Type"))
+	}
+}
+
+// endpointProbeWriter captures the SSE stream and runs probe as soon as the
+// endpoint event is flushed, which happens inside server.Connect while
+// ServeSSE is still executing.
+type endpointProbeWriter struct {
+	header http.Header
+	body   bytes.Buffer
+	probe  func(endpoint string)
+	status int
+}
+
+func (w *endpointProbeWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *endpointProbeWriter) Write(data []byte) (int, error) { return w.body.Write(data) }
+func (w *endpointProbeWriter) WriteHeader(int)                {}
+
+func (w *endpointProbeWriter) Flush() {
+	probe := w.probe
+	if probe == nil {
+		return
+	}
+	endpoint := ""
+	for line := range strings.SplitSeq(w.body.String(), "\n") {
+		if value, ok := strings.CutPrefix(line, "data: "); ok {
+			endpoint = strings.TrimSpace(value)
+			break
+		}
+	}
+	if endpoint == "" {
+		return
+	}
+	w.probe = nil
+	probe(endpoint)
+}
+
+// TestServeSSERegistersSessionBeforeEndpoint guards against serving a 404 to a
+// client that POSTs immediately after receiving the endpoint event.
+func TestServeSSERegistersSessionBeforeEndpoint(t *testing.T) {
+	server := New(&fakeApps{}, 0)
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	probe := &endpointProbeWriter{}
+	probe.probe = func(endpoint string) {
+		payload := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(payload))
+		server.ServeMessage(recorder, request)
+		probe.status = recorder.Code
+		cancel()
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/mcp", nil).WithContext(ctx)
+	request.Header.Set("X-Linx-Device-Id", "device")
+	request.Header.Set("X-Linx-Session-Id", "session")
+	server.ServeSSE(probe, request)
+
+	if probe.status != http.StatusAccepted {
+		t.Fatalf("POST sent on endpoint event: status = %d", probe.status)
 	}
 }
 
