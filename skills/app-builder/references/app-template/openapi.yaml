@@ -1,0 +1,209 @@
+openapi: 3.1.0
+info:
+  title: Guess the Movie
+  version: 1.0.0
+  description: 根据线索猜电影名：玩家加入、提交猜测、累计得分，答对后进入下一轮。
+servers:
+  - url: /
+paths:
+  /api/state:
+    get:
+      operationId: getState
+      summary: 获取当前回合和计分板
+      description: 返回当前轮次、电影线索、玩家分数和最近猜测；页面通过轮询本接口刷新。
+      responses:
+        "200":
+          description: 当前游戏状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, round, clues, players, recent]
+                properties:
+                  message:
+                    type: string
+                    description: 面向用户的简短状态说明
+                  round:
+                    type: integer
+                    minimum: 1
+                  clues:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: string
+                  players:
+                    type: array
+                    items:
+                      type: object
+                      required: [user_name, score]
+                      properties:
+                        user_name:
+                          type: string
+                        score:
+                          type: integer
+                          minimum: 0
+                  recent:
+                    type: array
+                    items:
+                      type: object
+                      required: [round, user_name, guess, correct]
+                      properties:
+                        round:
+                          type: integer
+                          minimum: 1
+                        user_name:
+                          type: string
+                        guess:
+                          type: string
+                        correct:
+                          type: boolean
+  /api/join:
+    post:
+      operationId: joinGame
+      summary: 玩家加入游戏
+      description: 用 user_name 加入本局；名字去除首尾空白，空白名字被拒绝，重复加入不会重置分数。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_name]
+              additionalProperties: false
+              properties:
+                user_name:
+                  type: string
+                  description: 玩家身份和展示名称，去除首尾空白后不能为空
+      responses:
+        "200":
+          description: 加入成功或玩家已在名单中
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, round, clues, players, recent]
+                properties:
+                  message:
+                    type: string
+                  round:
+                    type: integer
+                    minimum: 1
+                  clues:
+                    type: array
+                    items:
+                      type: string
+                  players:
+                    type: array
+                    items:
+                      type: object
+                      required: [user_name, score]
+                      properties:
+                        user_name:
+                          type: string
+                        score:
+                          type: integer
+                          minimum: 0
+                  recent:
+                    type: array
+                    items:
+                      type: object
+                      required: [round, user_name, guess, correct]
+                      properties:
+                        round:
+                          type: integer
+                        user_name:
+                          type: string
+                        guess:
+                          type: string
+                        correct:
+                          type: boolean
+        "400":
+          description: 名字为空白或请求格式错误
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+  /api/guess:
+    post:
+      operationId: submitGuess
+      summary: 提交电影名猜测
+      description: 已加入的玩家提交电影名；答对后该玩家加一分并自动进入下一轮，答错则保留当前回合。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_name, guess]
+              additionalProperties: false
+              properties:
+                user_name:
+                  type: string
+                  description: 已加入游戏的玩家名字
+                guess:
+                  type: string
+                  description: 猜测的电影名，比较时忽略首尾空白、空格和常见标点
+      responses:
+        "200":
+          description: 猜测已记录
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, round, clues, players, recent, correct]
+                properties:
+                  message:
+                    type: string
+                  round:
+                    type: integer
+                    minimum: 1
+                    description: 回答后的当前轮次；答对时已进入下一轮
+                  clues:
+                    type: array
+                    items:
+                      type: string
+                  players:
+                    type: array
+                    items:
+                      type: object
+                      required: [user_name, score]
+                      properties:
+                        user_name:
+                          type: string
+                        score:
+                          type: integer
+                          minimum: 0
+                  recent:
+                    type: array
+                    items:
+                      type: object
+                      required: [round, user_name, guess, correct]
+                      properties:
+                        round:
+                          type: integer
+                        user_name:
+                          type: string
+                        guess:
+                          type: string
+                        correct:
+                          type: boolean
+                  correct:
+                    type: boolean
+                    description: 本次猜测是否正确
+                  answer:
+                    type: string
+                    description: 猜对时返回的电影名；答错时不返回
+        "400":
+          description: 玩家不存在、参数为空或请求格式错误
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string

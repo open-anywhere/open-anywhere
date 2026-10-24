@@ -501,9 +501,9 @@ func compact(text string) string {
 	return string(runes[:200])
 }
 
-// BuildPrompt combines the user's request, the initial player names and the
-// fixed artifact contract. The build agent has no skills in this version, so
-// the contract travels in the message itself.
+// BuildPrompt combines the user's request, the initial player names and a short
+// list of hard requirements. The app-builder skill carries the full contract;
+// the message repeats the critical constraints in case the skill is unavailable.
 func BuildPrompt(requirement string, playerNames []string) string {
 	prompt := "需求：" + strings.TrimSpace(requirement) + "\n\n"
 	if len(playerNames) > 0 {
@@ -513,15 +513,12 @@ func BuildPrompt(requirement string, playerNames []string) string {
 	return prompt + buildConstraints
 }
 
-const buildConstraints = `请生成一个可直接运行的独立 Node.js Web 应用，并遵守以下交付契约：
-
-1. 在 outputs/ 中生成 app/、openapi.yaml、launch.json。app/ 包含 app.js、package.json 和 public/index.html；可选 public/styles.css、public/ui.js 和 assets/。前端及依赖须预先构建；运行时不执行 install/build，不访问外部数据库或网络服务。
-2. 仅支持 Node.js。launch.json 的 runtimeExecutable 必须为 node，runtimeArgs 包含包内入口文件路径，例如 ["app/app.js"]，并填写应用 name。所有相对路径以 outputs/ 为工作目录。不要写入 port 字段或固定端口参数。应用必须读取环境变量 PORT；HOST 默认 0.0.0.0。PORT 缺失或非法时退出并说明原因。
-3. 必须实际实现 GET /health。只有页面和业务接口准备好后，才返回 HTTP 200、Content-Type: application/json 和 {"status":"ok"}，不要只在 launch.json 中声明。
-4. GET / 返回可由 Chromium 直接加载的 UI；/api/* 提供业务操作。UI 与 API 使用同一份状态，外部 HTTP 操作后 UI 自动刷新，可用轮询或 SSE。
-5. openapi.yaml 使用 OpenAPI 3.1，只描述 /api/* 业务操作。各操作具有唯一且稳定的 operationId、description、参数和响应 schema。业务成功/错误响应都是 JSON，包含必需的字符串 message。不把 /health 加入业务操作列表。不写死部署地址或端口。
-6. 应用用 user_name 同时表示本局玩家身份和展示名称，不另行生成 user_id。若构建输入提供初始玩家名单，按该顺序建立初始玩家 user_name，玩家查询或状态 API 返回名字；去除首尾空白，禁止空名和重名，按名字精确匹配，本局内名字不变。未登记名字不能直接参与答题或计分。初始玩家未准备好，需通过应用确认操作更新状态。名单为空或省略时不得编造姓名，按需求支持运行时加入。不接入声纹、灵矽或 MCP。应用以前台进程运行，日志写 stdout/stderr，收到 SIGTERM 时退出并清理资源。
-7. 请实际自测：在干净的解压目录中按 launch.json 启动，注入一个测试 PORT；验证 /health、/、一个改变状态的业务请求，以及打开的 UI 随之更新。停止后换一个可用 PORT 再次启动，确认产物未写死端口。校验 OpenAPI 并核对实现。
-8. 最后执行 tar -czf /mnt/session/outputs/artifact.tar.gz -C outputs .，使 launch.json 位于归档根目录。
+const buildConstraints = `请使用 app-builder 技能完成构建。硬性要求：
+- 产物写入 /mnt/session/outputs/artifact.tar.gz，归档根目录直接包含 app/、openapi.yaml、launch.json；不要把 outputs/ 目录或 artifact.tar.gz 自身打进归档。
+- app/ 是自包含的 Node.js 应用，入口 app/app.js，读取 PORT 环境变量，实现 GET /health 和 GET /。
+- /api/* 使用 OpenAPI 3.1 描述，operationId 唯一，业务响应包含字符串 message。
+- 玩家身份使用 user_name；提供了初始名单时按给定顺序建立，不编造、增删或改名。
+- 不依赖外部数据库、外部服务或 CDN；运行时不执行安装或构建。
+- 完成后自测、打包并校验。
 
 不要提问；按合理假设完成。`

@@ -369,6 +369,12 @@ func TestBuildPrompt(t *testing.T) {
 	if !strings.Contains(without, "user_name") || strings.Contains(without, "身份字段使用 user_id") {
 		t.Fatalf("constraints were not updated: %q", without)
 	}
+	if !strings.Contains(without, "app-builder 技能") || !strings.Contains(without, "/mnt/session/outputs/artifact.tar.gz") {
+		t.Fatalf("constraints do not reference the skill or artifact path: %q", without)
+	}
+	if strings.Contains(without, "-C outputs .") {
+		t.Fatalf("constraints still include the outputs directory: %q", without)
+	}
 	with := BuildPrompt("做一个游戏", []string{"韩鲁鹏", "邓军辉"})
 	if !strings.Contains(with, `初始玩家（按加入顺序）：["韩鲁鹏","邓军辉"]`) {
 		t.Fatalf("prompt does not carry player names: %q", with)
