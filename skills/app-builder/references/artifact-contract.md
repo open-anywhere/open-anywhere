@@ -1,6 +1,6 @@
 # 产物契约
 
-控制面只接受一个 `artifact.tar.gz`。归档根目录必须直接包含 `app/`、`openapi.yaml` 和 `launch.json`，解压后立即得到这些文件，不能多一层 `outputs/`。
+交付物只包含一个 `artifact.tar.gz`。归档根目录必须直接包含 `app/`、`openapi.yaml` 和 `launch.json`，解压后立即得到这些文件，不能多一层 `outputs/`。
 
 ## 目录结构
 
@@ -33,13 +33,13 @@ launch.json                 # 必填，启动契约
 
 | 字段 | 必填 | 约束 |
 | --- | --- | --- |
-| `name` | 是 | 非空字符串，用于日志、注册和展示 |
+| `name` | 是 | 非空字符串，用于展示 |
 | `runtimeExecutable` | 是 | 固定为 `node` |
 | `runtimeArgs` | 是 | 字符串数组，必须引用归档内 `app/` 下的入口文件；不能包含 `--port` |
 | `healthPath` | 否 | 一期只能为 `/health`；省略时按 `/health` 处理 |
 | `readyTimeoutMs` | 否 | 正整数，1–600000；默认 10000 |
 
-控制面会拒绝以下情况：
+产物校验会拒绝以下情况：
 
 - `launch.json` 出现未知字段（包括 `port`）。
 - `runtimeExecutable` 不是 `node`。

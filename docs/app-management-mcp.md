@@ -1,8 +1,8 @@
 # 应用管理 MCP
 
 > 状态：Proposal（供 PR 评审）
-> 版本：v0.1
-> 日期：2026-10-24
+> 版本：v0.2
+> 日期：2026-10-25
 
 ## 1. 范围
 
@@ -28,7 +28,7 @@
 
 - 工具名按灵矽侧约定使用 kebab-case。
 - 只暴露稳定、与运行时无关的业务标识（`app_id`、`screen_id`），不暴露端口、运行目录或 Render 标识。
-- `app_id` 必须属于当前 device/session，控制面拒绝跨会话访问。
+- `app_id` 必须属于当前设备和智能体（device + agent）。Linx 会话重连不影响归属，控制面拒绝跨设备或跨智能体访问。
 - 构建是长任务：`create-app` 立即返回，状态通过 `get-app-status` 查询，构建完成通过 MCP 通知告知。
 - 写操作按业务键幂等，不重复创建构建 session、应用进程或投屏会话。
 
@@ -40,9 +40,10 @@
 | --- | --- | --- | --- |
 | `get-screens` | 查询当前可用屏幕及占用情况 | 无 | `screens` 数组，见第 5 章 |
 | `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt`、可选 `player_names` | `app_id`, `state: building` |
+| `list-apps` | 查询当前设备和智能体的历史应用 | 无 | `apps` 数组，见 3.1 |
 | `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见第 4 章 |
 | `get-app-operations` | 查询应用声明的 OpenAPI 业务操作 | `app_id` | `app_id`, `state`, `operations` |
-| `start-app` | 在指定屏幕上启动已构建的应用 | `app_id`, `screen_id` | `app_id`, `screen_id`, `state: running` |
+| `start-app` | 在指定屏幕上启动已构建的应用 | `app_id`, `screen_id`, 可选 `force` | `app_id`, `screen_id`, `state: running`, 可选 `replaced_app_id` |
 | `stop-app` | 停止运行中的应用 | `app_id` | `app_id`, `state: idle` |
 | `send-request` | 调用应用的业务操作 | `app_id`, `operation_id`, `parameters`, `body` | `status`, `body` |
 
@@ -57,7 +58,7 @@
 | `running` | 应用健康检查通过，指定屏幕的投屏会话处于播放状态 |
 | `error` | 构建、启动或运行失败，包含投屏失败 |
 
-`error.stage` 区分失败阶段，取 `building`、`starting` 或 `running`；构建失败不会产生可启动的 `idle` 应用。错误结构与错误码见第 9 章。
+`error.stage` 区分失败阶段，取 `building`、`starting` 或 `running`；构建失败不会产生可启动的 `idle` 应用。构建成功但启动失败的应用仍处于 `error`，保留失败原因；再次 `start-app` 或 `stop-app` 会先清理上次启动遗留的资源，成功后回到 `idle`，因此可以重试。清理尚未完成时工具返回 `CLEANUP_PENDING`。错误结构与错误码见第 9 章。
 
 ## 3. `create-app`
 
@@ -118,7 +119,35 @@
 }
 ```
 
-同一 device/session 已有 `building` 中的应用时，重复 `create-app` 返回现有 `app_id`，不重复创建 session，也不覆盖原构建的 `prompt` 或 `player_names`。调用方不能把该返回解释为新名单已生效。
+同一设备和智能体已有 `building` 中的应用时，重复 `create-app` 返回现有 `app_id`，不重复创建 session，也不覆盖原构建的 `prompt` 或 `player_names`。调用方不能把该返回解释为新名单已生效。
+
+### 3.1 `list-apps`
+
+输入为空对象。返回当前设备和智能体构建过的应用，最新的在前，不受 Linx 会话重连影响。历史是全局上限：所有设备和智能体共享最近 10 个应用；超出时淘汰最旧且不在 `building` / `running`、也不持有下游资源的应用及其产物。`list-apps` 只返回当前设备和智能体的应用。
+
+```json
+{
+  "apps": [
+    {
+      "app_id": "app_01J...",
+      "name": "掷骰子游戏",
+      "title": "掷骰子",
+      "summary": "做一个掷骰子游戏…",
+      "state": "idle",
+      "startable": true,
+      "built_at": "2026-10-24T08:20:00Z",
+      "build_duration_seconds": 95,
+      "operation_count": 1,
+      "operations": ["rollDice"],
+      "screen_id": ""
+    }
+  ]
+}
+```
+
+- `startable` 表示现在能否直接 `start-app`；false 时 `not_startable_reason` 说明原因（构建中、运行中、构建失败、产物丢失，或上次启动还在核对/清理）。
+- 用户说“玩上次那个/之前那个”时，先 `list-apps` 让用户确认，再用 `start-app` 启动；不要重新 `create-app`。
+- `list-apps` 是历史快照，启动时仍以 `get-app-status` / `start-app` 的结果为准。
 
 ## 4. `get-app-status`
 
@@ -201,7 +230,7 @@
 {}
 ```
 
-控制面返回当前 device/session 可访问的物理屏幕。`screen_id` 是灵矽侧使用的物理屏幕标识，而非 Endpoint 或 Render 标识。控制面将 `screen_id` 映射到投屏服务的 `target_id`，再选择该目标支持的 Endpoint；灵矽通过 `screen_id` 指定启动屏幕，`get-app-status(app_id)` 在结果中返回该标识。控制面负责将投屏服务的发现结果、Render 可达性和当前应用占用情况汇总为屏幕列表。
+控制面返回当前部署可访问的物理屏幕。屏幕不按设备或会话过滤；`screen_id` 是灵矽侧使用的物理屏幕标识，而非 Endpoint 或 Render 标识。控制面将 `screen_id` 映射到投屏服务的 `target_id`，再选择该目标支持的 Endpoint；灵矽通过 `screen_id` 指定启动屏幕，`get-app-status(app_id)` 在结果中返回该标识。控制面负责将投屏服务的发现结果、Render 可达性和当前应用占用情况汇总为屏幕列表。
 
 ```json
 {
@@ -209,26 +238,43 @@
     {
       "screen_id": "tv-living-room",
       "name": "客厅电视",
-      "available": true,
+      "status": "free",
       "current_app": null
     },
     {
       "screen_id": "tv-study",
       "name": "书房电视",
-      "available": true,
+      "status": "showing_app",
       "current_app": {
         "app_id": "app-dice",
         "name": "掷骰子"
       }
+    },
+    {
+      "screen_id": "tv-bedroom",
+      "name": "卧室电视",
+      "status": "external",
+      "current_app": null
+    },
+    {
+      "screen_id": "tv-kitchen",
+      "name": "厨房电视",
+      "status": "unavailable",
+      "current_app": null
     }
   ]
 }
 ```
 
-- `available` 表示当前有 Render 可通过支持的协议向该屏幕投送画面，不等于空闲；`current_app` 为 `null` 才表示未被应用占用。
-- 没有发现可用目标时允许返回空数组；已知但离线或不可达的目标可以返回 `available: false`。
+- `status` 是这块屏幕现在能做什么，取值：
+  - `free`：可以直接 `start-app`。
+  - `showing_app`：本控制面的应用正在展示，`current_app` 给出是哪一个；换应用要先征得用户同意，再用 `force=true` 替换。
+  - `external`：屏幕被无法归属的投屏会话占用；不要选择，`force=true` 也不能接管。Casting 只知道自己管理的会话，电视被其他来源直接投屏时可能无法检测。
+  - `unavailable`：当前不能接收画面（离线、不可达或没有支持的协议）；不要选择。
+- `current_app` 只在 `showing_app` 时非 `null`，表示占用这块屏幕的本控制面应用。
+- 没有发现任何可用目标时允许返回空数组。
 - 返回结构化字段，不生成描述屏幕列表的顶层 `message`；由灵矽组织话术。`start-app` 的成功响应也不额外生成顶层 `message`，既有构建进度、通知和错误的消息字段保留原约定。
-- 用户明确指定屏幕时，灵矽匹配其 `screen_id`；未指定时可沿用当前会话的选择，或在只有一个可用且空闲的屏幕时直接选择；无法唯一确定时询问用户。调用 `start-app` 时始终传入明确的 `screen_id`。
+- 用户明确指定屏幕时，灵矽匹配其 `screen_id`；未指定时可沿用当前会话的选择，或在只有一块 `free` 屏幕时直接选择；无法唯一确定时询问用户。调用 `start-app` 时始终传入明确的 `screen_id`。
 - MVP 中一个应用同时绑定一个屏幕，一个屏幕同时展示一个应用。列表是查询时快照，启动时控制面仍需重新校验可达性与占用，避免并发冲突。
 
 ## 6. `start-app`
@@ -238,7 +284,8 @@
 ```json
 {
   "app_id": "app_01J...",
-  "screen_id": "tv-living-room"
+  "screen_id": "tv-living-room",
+  "force": false
 }
 ```
 
@@ -255,13 +302,17 @@
 }
 ```
 
+`force=true` 且替换了屏幕上的应用时，响应额外带 `replaced_app_id`，表示被停止的应用。这个字段只在内部使用，不需要对用户念出。
+
 应用端口、Render 的 `instance_id`、Casting 的 `endpoint_id` 和投屏会话 id 只在控制面内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。
 
-只允许从 `idle` 启动。已经在同一屏幕上 `running` 时幂等返回当前状态；若指定不同屏幕，返回 `APP_ALREADY_RUNNING`，由调用方先停止再启动。`building` 时返回 `APP_BUILDING`；`error` 时返回 `APP_IN_ERROR`。目标屏幕被其他应用占用时返回 `TARGET_BUSY`，不自动替换已有应用。
+可以从 `idle` 启动，也可以从“构建成功但启动失败”的 `error` 重试；`start-app` 会先清理上次失败遗留的资源，成功后回到 `running`。已经在同一屏幕上 `running` 时幂等返回当前状态；若指定不同屏幕，返回 `APP_ALREADY_RUNNING`，由调用方先停止再启动。`building` 时返回 `APP_BUILDING`；构建失败、没有可启动产物的 `error` 返回 `APP_IN_ERROR`。目标屏幕被其他应用占用时返回 `TARGET_BUSY`，不自动替换；只有用户明确要求替换时才传 `force=true`，控制面先停止该屏幕上自己知道的应用并返回 `replaced_app_id`。若屏幕为 `external`（被无法归属的投屏会话占用），`force` 也不能接管，返回 `TARGET_BUSY`。
 
 启动流程有时限，由控制面配置超时。连接过程中请求等待最终结果，不返回 `running + connecting`；超时或失败时进入 `error`，工具返回 `isError: true`。同一应用的并发启动请求不得重复创建进程或投屏会话。输入或占用校验不通过时拒绝操作，不改变已有应用状态。
 
 失败时进入 `error`，`error.stage` 不新增 `projection` 阶段；具体错误码见第 9 章。控制面内部维护应用进程和投屏会话的对应关系，跟踪投屏状态；运行中一旦确认投屏断开，整体状态进入 `error`，即使应用进程仍在运行。`screen_id` 保留用于定位失败目标。失败后的资源清理由控制面负责；只有确认进程和投屏资源已释放后才能释放屏幕占用。
+
+启动请求超时或响应丢失时，结果未知。控制面会在本次工具调用内连续核对最多三次：查到本应用资源就清理，确认没有资源就释放屏幕；三次都无法完成核对时返回 `CLEANUP_PENDING`，稍后重试即可，不要重新 `create-app`。控制面仍会在后台继续核对，恢复可达且确认没有资源后立即释放，不再按固定时间等待；应用保持在可重试的 `error`。如果电视上存在无法证明归属的投屏会话，控制面不会停止它，只放弃本应用的占用；这时屏幕在 `get-screens` 中显示为 `external`。Render/Casting 不可达时保留占用，直到能完成核对。
 
 启动成功后，后续应用操作仍通过既有的 OpenAPI / HTTP 契约完成。
 
@@ -312,7 +363,7 @@
 }
 ```
 
-已经在 `idle` 时幂等返回；`building` 时返回 `APP_BUILDING`；`error` 时幂等返回当前 `error`；停止失败返回 `STOP_FAILED`。用户主动停止后回到 `idle`；应用进程异常退出则进入 `error`（`stage=running`，`code=APP_EXITED`），由后续 `get-app-status` 反映。
+已经在 `idle` 时幂等返回；`building` 时返回 `APP_BUILDING`；应用处于构建成功但启动失败的 `error` 时，会先清理上次启动遗留的资源并回到 `idle`；其他 `error` 幂等返回当前错误。清理未完成返回 `CLEANUP_PENDING`。停止失败返回 `STOP_FAILED`。用户主动停止后回到 `idle`；应用进程异常退出则进入 `error`（`stage=running`，`code=APP_EXITED`），由后续 `get-app-status` 反映。
 
 ## 8. 创建到启动
 
@@ -341,7 +392,7 @@ sequenceDiagram
 
   U->>L: 在客厅电视上开始吧
   L->>C: get-screens()
-  C-->>L: screens（screen_id / name / available / current_app）
+  C-->>L: screens（screen_id / name / status / current_app）
   L->>C: start-app(app_id, screen_id)
   C->>R: 启动应用、准备页面和媒体流
   R-->>C: health OK / 流地址
@@ -403,11 +454,24 @@ sequenceDiagram
 | `code` | 工具 | 场景 |
 | --- | --- | --- |
 | `INVALID_PLAYER_NAMES` | `create-app` | 名称为空白、类型错误或去除首尾空白后重名 |
+| `BUILD_START_FAILED` | `create-app` | 无法启动 AgentAPI 构建 |
+| `MISSING_CONTEXT` | `list-apps` 等 | 缺少设备标识 |
 | `APP_BUILDING` | `start-app`, `stop-app`, `get-app-operations` | 应用仍在构建 |
-| `APP_IN_ERROR` | `start-app`, `get-app-operations` | 应用处于 `error` |
+| `APP_IN_ERROR` | `start-app`, `get-app-operations` | 应用处于不可启动的 `error` |
 | `APP_ALREADY_RUNNING` | `start-app` | 应用已在其他屏幕运行 |
-| `TARGET_BUSY` | `start-app` | 目标屏幕被其他应用占用 |
+| `TARGET_BUSY` | `start-app` | 目标屏幕被其他应用或无法归属的投屏会话占用 |
+| `TARGET_UNREACHABLE` | `start-app` | 屏幕不存在、离线或无法访问 |
+| `ARTIFACT_MISSING` | `start-app` | 应用包已丢失，需要重新创建 |
+| `START_FAILED` | `start-app` | 应用进程启动失败 |
+| `STREAM_START_FAILED` | `start-app` | 应用媒体流未就绪 |
+| `CLEANUP_PENDING` | `start-app`, `stop-app` | 上次启动结果还在核对或资源正在清理，稍后重试 |
 | `STOP_FAILED` | `stop-app` | 停止进程或释放屏幕占用失败 |
 | `APP_NOT_RUNNING` | `send-request` | 应用未在运行 |
+| `RUNTIME_UNAVAILABLE` | `start-app`, `send-request` | 无法确认应用进程状态 |
+| `PROJECTION_UNAVAILABLE` | `start-app`, `send-request` | 无法确认投屏状态 |
 | `OPERATION_NOT_FOUND` | `send-request` | 应用 OpenAPI 中没有该 operationId |
+| `APP_NOT_FOUND` | 所有接收 `app_id` 的工具 | 应用不存在，或不属于当前设备和智能体 |
+| `PERSISTENCE_FAILED` | 写操作 | 无法保存控制面状态，后续操作已停止 |
 | `INVALID_ARGUMENT` | 所有工具 | 参数为空、类型错误或无法序列化 |
+
+`CLEANUP_PENDING` 是临时状态：屏幕和资源还在核对或清理，稍后用同一 `app_id` 重试即可，不要重新 `create-app`。`APP_NOT_FOUND` 同时覆盖“不存在”和“不属于当前设备和智能体”，控制面不区分两者，避免泄露其他设备的应用是否存在。

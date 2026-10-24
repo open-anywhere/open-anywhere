@@ -1,13 +1,11 @@
 ---
 name: app-builder
-description: 把用户需求构建为 Open Anywhere 应用包：自包含 Node.js Web 应用、OpenAPI 3.1 业务契约和 launch.json，最终产出 /mnt/session/outputs/artifact.tar.gz。用于 create-app 的云端构建任务，包含猜电影示例模板、契约、模板复制脚本和自测脚本。
+description: 把用户需求构建为应用包：自包含 Node.js Web 应用、OpenAPI 3.1 业务契约和 launch.json，最终产出 /mnt/session/outputs/artifact.tar.gz。包含示例模板、契约、模板复制脚本和自测脚本。
 ---
 
-# Open Anywhere 应用构建
+# 应用构建
 
-本技能把一条中文应用需求变成可被控制面验收、被 Render 启动、被 Chromium 投屏的独立 Web 应用。完整契约见 `references/artifact-contract.md` 和 `references/api-contract.md`；先用脚本复制模板，再按需求修改，不要从零搭建。
-
-技能目录（下文记作 `<skill-dir>`）一般在 `~/.claude/skills/app-builder`；找不到时用 `find / -maxdepth 6 -type d -name app-builder 2>/dev/null | head -1` 定位一次。
+本技能把一条中文应用需求变成一个自包含、可直接运行的独立 Web 应用。完整契约见 `references/artifact-contract.md` 和 `references/api-contract.md`；先用脚本复制模板，再按需求修改，不要从零搭建。
 
 ## 交付物
 
@@ -24,7 +22,7 @@ launch.json
 artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 ```
 
-`artifact.tar.gz` 的根目录必须直接包含 `app/`、`openapi.yaml`、`launch.json`，不能多一层 `outputs/`。
+`artifact.tar.gz` 的根目录必须直接包含 `app/`、`openapi.yaml`、`launch.json`。
 
 模板实现了一个「猜电影」示例：玩家通过 `user_name` 加入，根据线索提交电影名，答对得分并进入下一轮。它只用于展示目录结构、页面轮询和状态接口的写法；实际构建时按需求替换电影玩法、页面和接口，但保留 `/health`、`/api/*`、`message` 响应和玩家身份约定。
 
@@ -35,9 +33,9 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
    ```bash
    bash <skill-dir>/scripts/init-template.sh /mnt/session/outputs
    ```
-   一条命令完成复制。不要用 Read/Write 工具逐个搬运模板文件；`package.json`、`launch.json` 不需要读，保持原样。
+   一条命令完成复制。不要用 Read/Write 工具逐个搬运模板文件；。
 3. **实现后端**：修改 `app/app.js`。只使用 Node.js 内置模块，或在构建期把依赖打包进 `app/`；运行时不执行 `npm install` 或构建命令。
-4. **实现页面**：修改 `app/public/index.html`。页面通过 `fetch` 调用 `/api/*`，并轮询或使用 SSE 自动刷新；不要引用外部 CDN、字体或在线脚本。
+4. **实现页面**：修改 `app/public/index.html`。页面通过 `fetch` 调用 `/api/*`，并轮询或使用 SSE 自动刷新。
 5. **更新契约**：修改 `openapi.yaml`，让它与实际 `/api/*` 操作一一对应；业务成功和错误响应都必须包含字符串 `message`。
 6. **自测与打包**：运行
    ```bash
@@ -60,7 +58,7 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 
 ## 玩家与身份
 
-- 一期用 `user_name` 同时表示玩家身份和展示名称，不生成 `user_id`，也不维护名字到 ID 的映射。
+- 用 `user_name` 同时表示玩家身份和展示名称，不生成 `user_id`，也不维护名字到 ID 的映射。
 - 构建消息包含初始玩家名单时，按原顺序写入应用（模板中的 `INITIAL_PLAYERS`），每个名字作为 `user_name`；不要增删、改名或编造。
 - 名单为空或未提供时，提供运行时加入能力，不要编造参与者。
 - 所有加入和业务请求都去除名字首尾空白；空白名字、重复名字要拒绝。按名字精确匹配；本局内不改名。
@@ -78,9 +76,9 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 
 - 内存态即可，不依赖外部数据库、外部网络服务或 CDN；不读取构建沙箱中的文件。
 - 不生成 watch/HMR、交互式命令或启动时安装/构建步骤。
-- 应用只提供页面和业务 API；Chromium、音视频和投屏由包外设施负责。
+- 应用只提供页面和业务 API；运行环境和展示由外部负责。
 - 日志写 stdout/stderr；不要自行后台化。
-- 产物压缩包不超过 100 MiB，单文件不超过 64 MiB；优先使用内置模块，避免无谓依赖。
+- 优先使用内置模块，避免无谓依赖。
 
 ## 最小验证
 
@@ -91,7 +89,7 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 ## 参考文件
 
 - `references/artifact-contract.md`：目录结构、launch.json、进程与运行约定。
-- `references/api-contract.md`：OpenAPI 3.1、业务响应、参数和控制面调用方式。
+- `references/api-contract.md`：OpenAPI 3.1、业务响应、参数和调用方式。
 - `references/self-test.md`：init-template.sh 与 self-test.sh 的用法说明。
 - `references/app-template/`：最小可运行模板，由 init-template.sh 复制。
 - `scripts/init-template.sh`：一条命令复制模板到产物目录。
