@@ -167,6 +167,7 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		Instructions: serverInstructions,
 		Capabilities: &sdk.ServerCapabilities{Tools: &sdk.ToolCapabilities{ListChanged: false}},
 	})
+	server.AddReceivingMiddleware(withCallLog(s.logf, identity))
 	addTools(server, tools, identity, s.callTimeout)
 	if s.Compatibility {
 		addCompatibility(server, tools, identity, s.SpeakerProbe, s.AllowClaim)

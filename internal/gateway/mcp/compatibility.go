@@ -112,6 +112,7 @@ func (s *Server) StreamableHTTP(publicHost string, probe, claim bool) http.Handl
 			return nil
 		}
 		server := sdk.NewServer(&sdk.Implementation{Name: serverName, Version: "0.2.0"}, nil)
+		server.AddReceivingMiddleware(withCallLog(s.logf, identity))
 		addTools(server, tools, identity, s.callTimeout)
 		addCompatibility(server, tools, identity, probe, claim)
 		return server
