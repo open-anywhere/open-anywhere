@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -230,5 +231,17 @@ func TestAPIToTelevisionIntegration(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 || !strings.Contains(string(data), `"state":"stopped"`) {
 		t.Fatalf("%d %s", resp.StatusCode, data)
+	}
+}
+
+func TestTransportRejectsTruncatedResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1024")
+		fmt.Fprint(w, "<incomplete")
+	}))
+	defer server.Close()
+	err := (&Transport{Client: server.Client()}).Stop(context.Background(), core.Device{ControlURL: server.URL})
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("want body read error, got %v", err)
 	}
 }

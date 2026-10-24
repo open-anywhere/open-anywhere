@@ -24,6 +24,16 @@ type Discoverer struct {
 	Destination string
 	Window      time.Duration
 	Client      *http.Client
+	listenUDP   func(string, *net.UDPAddr) (discoverySocket, error)
+}
+
+// discoverySocket is the network boundary for SSDP. Tests can reproduce socket
+// failures without depending on interface state or sending LAN multicast.
+type discoverySocket interface {
+	SetDeadline(time.Time) error
+	WriteToUDP([]byte, *net.UDPAddr) (int, error)
+	ReadFromUDP([]byte) (int, *net.UDPAddr, error)
+	Close() error
 }
 
 type advertisement struct {
@@ -74,7 +84,13 @@ func (d *Discoverer) Scan(ctx context.Context) ([]core.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: d.LocalIP})
+	listen := d.listenUDP
+	if listen == nil {
+		listen = func(network string, addr *net.UDPAddr) (discoverySocket, error) {
+			return net.ListenUDP(network, addr)
+		}
+	}
+	conn, err := listen("udp4", &net.UDPAddr{IP: d.LocalIP})
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +101,9 @@ func (d *Discoverer) Scan(ctx context.Context) ([]core.Device, error) {
 	if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
 		deadline = end
 	}
-	_ = conn.SetDeadline(deadline)
+	if err := conn.SetDeadline(deadline); err != nil {
+		return nil, err
+	}
 	query := "M-SEARCH * HTTP/1.1\r\nHOST:239.255.255.250:1900\r\nMAN:\"ssdp:discover\"\r\nMX:1\r\nST:urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
 	if _, err := conn.WriteToUDP([]byte(query), remote); err != nil {
 		return nil, err

@@ -1,6 +1,7 @@
 package casting
 
 import (
+	"cmp"
 	"slices"
 	"sync"
 	"time"
@@ -59,14 +60,6 @@ func (r *Registry) List() []api.Target {
 		}
 		out = append(out, clone(d).Target)
 	}
-	slices.SortFunc(out, func(a, b api.Target) int {
-		if a.ID < b.ID {
-			return -1
-		}
-		if a.ID > b.ID {
-			return 1
-		}
-		return 0
-	})
+	slices.SortFunc(out, func(a, b api.Target) int { return cmp.Compare(a.ID, b.ID) })
 	return out
 }
