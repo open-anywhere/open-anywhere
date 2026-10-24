@@ -82,3 +82,117 @@ flowchart LR
 | AgentAPI | 运行编码 Agent、在沙箱中写代码和自测、持久化 artifact | 承载应用运行时、直接面对灵矽 |
 | Render | 解压 artifact、按 `launch.json` 启动、健康检查、进程保活、接收控制面 HTTP 转发、Stage 与 AirPlay | 理解应用业务、决定应用能力 |
 | 应用 | 提供 UI 和 `/api/*` HTTP 接口、维护自己的状态 | 感知 MCP、直接面对灵矽 |
+
+## 5. 投屏服务开放 API
+
+投屏服务是一个独立的局域网投屏端，对外开放 HTTP API。Client 可以使用它把自己的实时媒体流投放到局域网中的电视或其他显示设备。
+
+投屏服务负责探测局域网设备、维护可用的投屏目标，并通过目标支持的协议建立和停止投屏会话。Client 负责准备实时媒体流，并提供目标设备可以访问的流地址。
+
+### 5.1 Client 调用流程
+
+```text
+Client → 查询投屏服务有哪些 Target
+Client → 选择 Target 上的 Endpoint
+Client → 创建投屏 Session，并提供自己的实时流 URL
+投屏服务 → 调用 DLNA / AirPlay 等协议开始播放
+Client → 查询 Session 状态
+Client → 停止 Session
+```
+
+第一版只支持 Client 提供实时 MPEG-TS 流。投屏服务不负责生成 Client 的媒体内容，只负责协议控制和会话生命周期。
+
+### 5.2 Target 和 Endpoint
+
+`Target` 表示一个物理投屏设备；`Endpoint` 表示该设备上的一种投屏入口。同一台电视可以同时拥有 DLNA 和 AirPlay 两个 Endpoint。
+
+```json
+{
+  "id": "tv-9c1221d09d00",
+  "name": "客厅电视",
+  "state": "online",
+  "endpoints": [
+    {
+      "id": "dlna-renderer",
+      "protocol": "dlna",
+      "capabilities": {
+        "formats": ["mpegts"],
+        "video_codecs": ["h264"],
+        "audio_codecs": ["aac"],
+        "streaming": true
+      }
+    },
+    {
+      "id": "airplay-mirror",
+      "protocol": "airplay",
+      "capabilities": {
+        "formats": ["airplay-mirror"],
+        "video_codecs": ["h264"],
+        "audio_codecs": ["aac"],
+        "streaming": true
+      }
+    }
+  ]
+}
+```
+
+Client 根据 Endpoint 的 `capabilities` 选择协议、封装格式和编码方式。
+
+### 5.3 开放 API
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/v1/targets` | 获取已发现的投屏目标 |
+| `GET` | `/v1/targets/{target_id}` | 获取目标详情和能力 |
+| `POST` | `/v1/projection-sessions` | 创建并开始投屏 |
+| `GET` | `/v1/projection-sessions/{session_id}` | 查询投屏状态 |
+| `DELETE` | `/v1/projection-sessions/{session_id}` | 停止投屏 |
+| `GET` | `/healthz` | 服务健康检查 |
+
+创建投屏会话：
+
+```http
+POST /v1/projection-sessions
+Content-Type: application/json
+```
+
+```json
+{
+  "target_id": "tv-9c1221d09d00",
+  "endpoint_id": "dlna-renderer",
+  "source": {
+    "type": "stream",
+    "url": "http://192.168.31.203:8765/live.ts",
+    "format": "mpegts",
+    "video_codec": "h264",
+    "audio_codec": "aac"
+  }
+}
+```
+
+服务端校验目标能力后，使用 DLNA 的 `SetAVTransportURI` 和 `Play` 操作，让电视开始拉取 `source.url`。返回投屏会话：
+
+```json
+{
+  "session_id": "projection-session-001",
+  "state": "playing",
+  "target_id": "tv-9c1221d09d00",
+  "endpoint_id": "dlna-renderer"
+}
+```
+
+`source.url` 必须是目标设备可以访问的地址。Client 负责启动流服务并持续输出符合声明的 MPEG-TS、H.264 和 AAC 数据。
+
+查询会话：
+
+```http
+GET /v1/projection-sessions/{session_id}
+```
+
+停止会话：
+
+```http
+DELETE /v1/projection-sessions/{session_id}
+```
+
+服务端停止目标设备的播放并释放投屏会话；该操作不负责停止 Client 自己的流服务。
