@@ -8,7 +8,7 @@
 
 Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成一个可运行的 Web 应用，并在身边的屏幕上通过 AirPlay 呈现和控制。
 
-系统由四个组件构成：
+系统由四个组件和一个现场语音入口构成：
 
 | 组件 | 角色 |
 | --- | --- |
@@ -16,11 +16,14 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | 控制面（Control Plane） | MCP Server、任务编排、应用注册表、OpenAPI 到 HTTP 的适配 |
 | AgentAPI | 异步应用工厂：编码 Agent + 沙箱，产出应用 artifact |
 | Render | 应用运行时与舞台：启动应用、转发 HTTP、AirPlay 投屏 |
+| 现场语音入口 | 用户面前的语音设备。真实形态是灵矽硬件，目前由本地程序模拟；以设备身份接入灵矽云，收发语音、回应设备端 MCP（详见 [现场语音入口](voice-entry.md)） |
 
 系统只有两条契约：
 
 1. **MCP**：灵矽云与控制面之间。灵矽只看见 MCP Tool，不直接接触 AgentAPI 或 Render。
 2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。产物结构、启动约定和构建提示见[应用包设计](app-artifact.md)。
+
+现场语音入口与灵矽云之间使用灵矽自己的设备协议（WebSocket），不是 Open Anywhere 定义的契约，见 [现场语音入口](voice-entry.md)。
 
 核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容。**
 
@@ -56,6 +59,11 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | App | AgentAPI 产出的、已经在 Render 上运行的应用 |
 | Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档和 `launch.json` |
 | Stage | Render 上常驻的展示页面；AirPlay 镜像的就是它 |
+| 现场语音入口 | 用户面前、接入灵矽云的语音设备的统称。真实形态是灵矽硬件，目前用本地程序模拟 |
+| 灵矽硬件 | 真实的语音设备，由固件通过 OTA 和 WebSocket 接入灵矽云 |
+| 模拟硬件 | 本地程序，按同一套设备协议扮演灵矽硬件，并用 Web 控制台代替麦克风、扬声器和控制入口 |
+| 设备身份 | 设备在灵矽平台上的标识，由 MAC、Client-Id 和 token 组成；真实硬件由固件持有，模拟硬件由程序生成 |
+| 激活码 | 设备在 OTA 上报后获得的 6 位码，用来把设备绑定到智能体 |
 | OpenAPI | 应用能力的 HTTP 契约，控制面据此校验和转发请求 |
 | launch.json | 应用启动契约，描述可执行文件和参数；端口由部署环境通过 `PORT` 注入 |
 
@@ -63,7 +71,8 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 
 ```mermaid
 flowchart LR
-  U["用户"] -->|语音| L["灵矽云<br/>ASR / TTS / 意图"]
+  U["用户"] -->|语音| V["现场语音入口<br/>灵矽硬件（当前为本地模拟）"]
+  V <-->|灵矽设备协议| L["灵矽云<br/>ASR / TTS / 意图"]
   L -->|MCP Tool| C["控制面<br/>MCP Server / 编排 / 注册表"]
   C -->|创建 / 查询 session| A["AgentAPI<br/>编码 Agent + 沙箱"]
   A -->|artifact| C
@@ -77,6 +86,7 @@ flowchart LR
 
 | 组件 | 负责 | 不负责 |
 | --- | --- | --- |
+| 现场语音入口 | 保持与灵矽云的设备会话、收发语音与文字、回应设备端 MCP、设备注册与重连；真实形态是灵矽硬件，当前由模拟硬件代替（另提供本地 Web 控制台） | 声纹、ASR、TTS，构建与运行应用，投屏 |
 | 灵矽云 | ASR、TTS、意图识别、选择并调用 MCP Tool | 构建应用、运行应用、投屏 |
 | 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验 | 写代码、运行应用、理解应用的业务语义 |
 | AgentAPI | 运行编码 Agent、在沙箱中写代码和自测、持久化 artifact | 承载应用运行时、直接面对灵矽 |
