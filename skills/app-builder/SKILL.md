@@ -28,12 +28,12 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 
 ## 工作流程
 
-1. **理解需求**：确定业务状态、页面交互和 `/api/*` 操作；为每个操作起稳定、语义化的 `operationId`。需要多人游戏时，先处理构建消息中的初始玩家名单。
+1. **理解需求与契约**：先读 `references/artifact-contract.md` 和 `references/api-contract.md`，再确定业务状态、页面交互和 `/api/*` 操作；为每个操作起稳定、语义化的 `operationId`。需要多人游戏时，先处理构建消息中的初始玩家名单。
 2. **复制模板**：运行
    ```bash
    bash <skill-dir>/scripts/init-template.sh /mnt/session/outputs
    ```
-   一条命令完成复制。不要用 Read/Write 工具逐个搬运模板文件；。
+   一条命令完成复制。不要用 Read/Write 工具逐个搬运模板文件。
 3. **实现后端**：修改 `app/app.js`。只使用 Node.js 内置模块，或在构建期把依赖打包进 `app/`；运行时不执行 `npm install` 或构建命令。
 4. **实现页面**：修改 `app/public/index.html`。页面通过 `fetch` 调用 `/api/*`，并轮询或使用 SSE 自动刷新。
 5. **更新契约**：修改 `openapi.yaml`，让它与实际 `/api/*` 操作一一对应；业务成功和错误响应都必须包含字符串 `message`。
@@ -46,7 +46,7 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
    ```
    脚本一次完成静态检查、测试端口启动、`/health`、`/`、业务操作、错误分支抽查、打包和归档校验。`--op-*` 必须调用本次构建的一个能改变状态的业务操作（路径以 `/api/` 开头）；`--bad-op-*` 抽查一个错误场景（4xx/5xx 是预期），两者响应都必须是 JSON 且包含字符串 `message`。失败时按输出修复并重跑，直到看到 `self-test passed`。不要做浏览器截图、UI 自动化或穷举错误分支。
 
-不要向用户提问或等待确认；缺少细节时按合理假设完成，并在最终说明中列出关键假设。
+缺少细节时按合理假设完成，并在最终说明中列出关键假设。
 
 ## 启动契约
 

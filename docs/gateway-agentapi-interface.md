@@ -216,7 +216,7 @@ Content-Type: application/json
 
 不配置 MCP 是刻意的边界：构建只需要沙箱内的文件、命令和模型能力；接入 MCP 会增加凭证、网络和工具确认流程，而控制面没有对应的审批逻辑。
 
-`system` 必须使用 `docs/agent-system-prompts/open-anywhere-app-builder.txt` 的全文，而不是一句话摘要。系统提示词承载完整构建契约、产物结构、启动与 HTTP 约束、玩家身份规则、最小验证范围和最终输出要求；技能提供模板和参考文件。两者分工明确后，灵犀侧的用户消息只需要传需求和初始玩家名单。
+`system` 必须使用 `docs/agent-system-prompts/open-anywhere-app-builder.txt` 的全文。系统提示词只定义角色、输入约定、强制使用技能和最终输出格式；完整构建契约、产物结构、启动与 HTTP 约束、玩家身份规则和最小验证范围都在 `app-builder` 技能中，避免两处维护。灵犀侧的用户消息只需要传需求和初始玩家名单。
 
 ### 2.5 版本与发布
 
@@ -251,7 +251,7 @@ Content-Type: application/json
 2. 调用 `POST /v1/sessions`，按配置固定智能体版本（未配置时取创建时的最新版本）和环境，写入 `app_id` 元数据。
 3. 保存 `session_id`；同一 `app_id` 只创建一个构建会话。
 4. 注册该会话的事件流消费者。消费者可以在连接建立前注册，AgentAPI 会回放历史事件。
-5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，只把用户需求和初始玩家名单交给智能体；完整构建契约由系统提示词和技能承载。
+5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，只把用户需求和初始玩家名单交给智能体；完整构建契约由 `app-builder` 技能承载，系统提示词只负责角色、输入约定、强制使用技能和最终输出。
 6. 立即向灵矽返回 `app_id` 和 `state=building`；构建在后台继续。
 7. 消费事件流，更新 `building.message`；会话进入 `idle` 后按停止原因处理。
 8. 成功时收集并校验 `/mnt/session/outputs/artifact.tar.gz`，注册应用并进入 `idle`；失败时进入 `error(stage=building)`。
