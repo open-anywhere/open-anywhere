@@ -1,0 +1,13 @@
+{
+  "mode": "managed",
+  "state_file": "../.runtime/apps.json",
+  "artifact_dir": "../.runtime/artifacts",
+  "public_url": "http://127.0.0.1:8787",
+  "render_url": "",
+  "casting_url": "",
+  "port_min": 39100,
+  "port_max": 39199,
+  "screens": [],
+  "build_timeout_seconds": 3600,
+  "operation_timeout_seconds": 120
+}

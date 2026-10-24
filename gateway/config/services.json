@@ -1,0 +1,8 @@
+{
+  "services": [{
+    "service_id": "quiz-app",
+    "openapi_url": "http://127.0.0.1:38120/openapi.yaml",
+    "base_url": "http://127.0.0.1:38120",
+    "timeout_ms": 10000
+  }]
+}

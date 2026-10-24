@@ -212,3 +212,9 @@ DELETE /v1/projection-sessions/{session_id}
 ## 6. 应用管理 MCP
 
 灵矽通过控制面发现屏幕，并创建、查询、启动和停止应用（`get-screens`、`create-app`、`get-app-status`、`start-app`、`stop-app`）。工具集、状态模型、通知和错误约定见[应用管理 MCP](app-management-mcp.md)。
+
+## 7. Gateway MCP 服务
+
+Gateway 是单进程 Go 控制层服务，MCP 是协议入口，应用管理、持久注册表、OpenAPI 执行和下游客户端按模块隔离。它实现第 6 章引用的应用管理工具，并通过 `get_openapi(app_id)`、`send_request(app_id, operationId, parameters, requestBody)` 控制应用。
+
+应用规范来自构建产物注册记录，运行地址来自 Render。`services.json` 只作为独立静态联调模式保留。构建、Render 与 Casting 的 HTTP 链路已用测试替身验证；真实下游部署与主动通知的完成情况见 [Gateway 服务](gateway.md)。
