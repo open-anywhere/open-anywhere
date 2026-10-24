@@ -1,0 +1,54 @@
+name: Render E2E
+on:
+  pull_request:
+    paths:
+      - 'cmd/render/**'
+      - 'internal/render/**'
+      - 'pkg/render/**'
+      - 'e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/render-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/render/**'
+      - 'internal/render/**'
+      - 'pkg/render/**'
+      - 'e2e/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/render-e2e.yml'
+permissions:
+  contents: read
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+        with:
+          install-dependencies: true
+      - name: Install video and font dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg lsof fonts-noto-cjk
+      - name: Decode live Render output and verify application state
+        env:
+          RENDER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          RENDER_E2E_OUTPUT: ${{ github.workspace }}/e2e/results
+        run: go test -race -tags=e2e -v ./e2e -count=1 -timeout=180s
+      - name: Save decoded frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-video-frames
+          path: e2e/results/
+          if-no-files-found: ignore

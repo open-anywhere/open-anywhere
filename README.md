@@ -35,3 +35,11 @@ go run ./cmd/casting -addr :8080 -interface en0
 ```
 
 接口、目录组织和测试说明见 [Casting 服务](docs/casting.md)。
+
+运行 Render（需 Node.js、Chromium、FFmpeg 和 lsof）：
+
+```sh
+go run ./cmd/render -addr :8090 -public-url http://192.168.1.20:8090
+```
+
+替换为本机可达地址。应用包、媒体流和真实视频 E2E 的用法见 [Render 运行说明](docs/render-runtime.md)。

@@ -1,0 +1,99 @@
+openapi: 3.1.0
+info:
+  title: 双队计分板
+  version: 1.0.0
+servers:
+  - url: /
+paths:
+  /api/state:
+    get:
+      operationId: getScoreboardState
+      description: 查询红蓝两队的分数、当前回合和最近得分队伍。
+      responses:
+        '200':
+          description: 当前比分
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/State'
+  /api/score:
+    post:
+      operationId: addTeamScore
+      description: 给红队或蓝队增加指定分数，页面自动同步更新。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [team_id, points]
+              properties:
+                team_id:
+                  type: string
+                  enum: [red, blue]
+                points:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+            example: {team_id: red, points: 1}
+      responses:
+        '200':
+          description: 更新后的比分
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/State'
+        '400':
+          $ref: '#/components/responses/Invalid'
+        '413':
+          $ref: '#/components/responses/Invalid'
+        '415':
+          $ref: '#/components/responses/Invalid'
+  /api/reset:
+    post:
+      operationId: resetScoreboard
+      description: 将分数归零、回合恢复为 1、最近得分队伍清空，页面自动同步更新。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+            example: {}
+      responses:
+        '200':
+          description: 重置后的比分
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/State'
+        '400':
+          $ref: '#/components/responses/Invalid'
+        '413':
+          $ref: '#/components/responses/Invalid'
+        '415':
+          $ref: '#/components/responses/Invalid'
+components:
+  schemas:
+    State:
+      type: object
+      required: [message, red, blue, round, last_team]
+      properties:
+        message: {type: string}
+        red: {type: integer, minimum: 0}
+        blue: {type: integer, minimum: 0}
+        round: {type: integer, minimum: 1}
+        last_team:
+          type: [string, 'null']
+          enum: [red, blue, null]
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message: {type: string}
+  responses:
+    Invalid:
+      description: 请求无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

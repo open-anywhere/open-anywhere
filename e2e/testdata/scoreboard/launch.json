@@ -1,0 +1,7 @@
+{
+  "name": "双队计分板",
+  "runtimeExecutable": "node",
+  "runtimeArgs": ["app/app.js"],
+  "healthPath": "/health",
+  "readyTimeoutMs": 5000
+}
