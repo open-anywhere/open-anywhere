@@ -303,7 +303,7 @@ DELETE /v1/projection-sessions/{session_id}
 }
 ```
 
-`building` 的 `message` 取 AgentAPI Session Event 中最近一次 agent 消息；`idle` 完成后由控制面发送“APP 创建完成”通知，通知里的 `message` 才是给灵矽播报的文案。`name` 来自 artifact 的 `launch.json`。
+`building` 的 `message` 取 AgentAPI Session Event 中最近一次 agent 消息；`idle` 完成后由控制面发送“APP 创建完成”通知，通知里的 `message` 才是给灵矽播报的文案。`name` 是应用的展示名称，由控制面在注册应用时确定。
 
 `error.stage` 取 `building`、`starting` 或 `running`；`error.last_agent_message` 保留最近一次 agent 消息。构建失败时进入 `error`，不会进入 `idle`。
 
@@ -317,7 +317,7 @@ DELETE /v1/projection-sessions/{session_id}
 }
 ```
 
-控制面让 Render 按 artifact 中已有的 `launch.json` 启动应用；`launch.json` 协议不变。健康检查通过后返回 `running` 状态：
+控制面让 Render 启动已注册的应用。健康检查通过后返回 `running` 状态：
 
 ```json
 {
@@ -329,7 +329,7 @@ DELETE /v1/projection-sessions/{session_id}
 }
 ```
 
-`launch.json` 的 `port` 只在控制面和 Render 内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。
+应用端口只在控制面和 Render 内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。
 
 只允许从 `idle` 启动。已经在 `running` 时幂等返回当前状态；`building` 时返回 `APP_BUILDING`；`error` 时返回 `APP_IN_ERROR`；启动失败时应用进入 `error`（`stage=starting`），工具返回 `isError: true`，`error.code=START_FAILED`。
 
@@ -383,7 +383,7 @@ sequenceDiagram
 
   U->>L: 开始吧
   L->>C: start-app(app_id)
-  C->>R: 按 launch.json 启动
+  C->>R: 启动应用
   R-->>C: health OK
   C-->>L: state=running
   L-->>U: TTS：游戏开始了
@@ -406,19 +406,3 @@ sequenceDiagram
 构建失败时发送同一方法，`state` 为 `error`，`error` 结构与 `get-app-status` 一致。
 
 灵矽收到通知后决定是否播报并等待用户指令；控制面不直接推 TTS。通知是 best-effort，断线或丢失时以 `get-app-status` 为准。
-
-### 6.7 状态转换
-
-```mermaid
-stateDiagram-v2
-  [*] --> building: create-app
-  building --> idle: 构建完成
-  building --> error: 构建失败
-  idle --> running: start-app
-  idle --> error: 启动失败
-  running --> idle: stop-app
-  running --> error: 进程退出
-  error --> [*]
-```
-
-`error` 是终止态；重试需要重新调用 `create-app`，生成新的 `app_id`。
