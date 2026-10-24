@@ -8,7 +8,7 @@
 
 本文定义控制面（gateway）与 Render 之间的 HTTP 契约：
 
-- 控制面把 artifact tar 交给 Render；
+- 控制面把 artifact tar.gz 交给 Render；
 - Render 解包 artifact、按 `launch.json` 启动应用、完成健康检查并返回媒体流地址；
 - 控制面查询、停止 run，转发应用 HTTP 请求，拉取媒体流。
 
@@ -23,7 +23,7 @@
 
 ### 1.2 契约原则
 
-- 内部接口使用 HTTP + JSON；artifact 用 tar 传输。
+- 内部接口使用 HTTP + JSON；artifact 用 tar.gz 传输。
 - `app_id` 是控制面分配的业务标识，Render 以它为 run 的主键。
 - `render_id`、应用端口和运行目录只在 Render 内部使用，不通过 MCP 返回。
 - 写接口按业务键幂等：控制面可能因超时重发，Render 不得重复创建进程或媒体流。
@@ -32,26 +32,28 @@
 
 ### 2.1 目录结构
 
-控制面在构建完成后得到如下 artifact 目录，并打包为 tar 交给 Render（结构不变）：
+控制面在构建完成后得到 `outputs/` 产物目录，归档其内容为 `artifact.tar.gz` 交给 Render。归档根目录如下，不再嵌套 `outputs/`：
 
 ```text
-outputs/
-├── app/
-│   ├── package.json
-│   ├── server.js
-│   └── public/
-│       └── index.html
-├── openapi.yaml
-└── launch.json
+app/
+├── app.js
+├── package.json        # 应用元信息；依赖须预打包
+├── public/
+│   ├── index.html
+│   ├── styles.css      # 可选
+│   └── ui.js           # 可选
+└── assets/             # 可选
+openapi.yaml
+launch.json
 ```
 
 | 路径 | 作用 | 使用方 |
 | --- | --- | --- |
-| `app/` | 应用代码与静态资源，进程工作目录 | Render |
+| `app/` | 应用代码与静态资源 | Render |
 | `launch.json` | 启动契约 | Render |
 | `openapi.yaml` | 应用 HTTP 能力契约 | 控制面 |
 
-Render 只依赖 `app/` 和 `launch.json`，忽略 `openapi.yaml`。
+Render 只依赖 `app/` 和 `launch.json`，忽略 `openapi.yaml`。`openapi.yaml` 和 `launch.json` 必填，`app/` 必须自包含；Render 不执行 install 或 build，也不依赖构建环境中的全局依赖，并提供约定版本的 Node.js。应用的 `GET /`、`GET /health` 和 `/api/*` 约定见 [app-artifact.md](app-artifact.md)。
 
 ### 2.2 launch.json
 
@@ -59,32 +61,34 @@ Render 只依赖 `app/` 和 `launch.json`，忽略 `openapi.yaml`。
 {
   "name": "掷骰子游戏",
   "runtimeExecutable": "node",
-  "runtimeArgs": ["server.js", "--port", "3000"],
-  "port": 3000
+  "runtimeArgs": ["app/app.js"],
+  "healthPath": "/health",
+  "readyTimeoutMs": 10000
 }
 ```
 
-| 字段 | 约束 |
-| --- | --- |
-| `name` | 非空，应用展示名称 |
-| `runtimeExecutable` | Render 支持的运行时；MVP 为 `node` |
-| `runtimeArgs` | 直接传给进程的参数，不经过 shell |
-| `port` | 应用监听端口，1–65535，必须与 `runtimeArgs` 中的端口一致 |
+| 字段 | 必填 | 约束 |
+| --- | --- | --- |
+| `name` | 是 | 非空，应用展示名称 |
+| `runtimeExecutable` | 是 | 一期固定为 `node`，其他值拒绝 |
+| `runtimeArgs` | 是 | 入口文件路径等启动参数，例如 `["app/app.js"]`；不含端口，不经过 shell |
+| `healthPath` | 否 | 默认 `/health`；MVP 若声明必须为 `/health` |
+| `readyTimeoutMs` | 否 | 就绪超时，单位毫秒，默认 `10000`，须为正整数；Render 可设置上限 |
 
-`launch.json` 协议不变。Render 直接执行 `runtimeExecutable`，不拼接 shell 命令，也不对 `runtimeArgs` 做变量展开。
+`launch.json` 没有 `port` 字段，也不在参数中固定 `--port`。Render 注入 `PORT` 和 `HOST=0.0.0.0`，应用必须据此监听；所有相对路径以归档根目录为基准，进程工作目录也是该目录。Render 直接执行 `runtimeExecutable`，不拼接 shell 命令，也不对 `runtimeArgs` 做变量展开。
 
-### 2.3 tar 包
+### 2.3 归档包
 
-控制面把 `outputs/` 打成 tar：
+控制面把 `outputs/` 的内容打成 `tar.gz`：
 
 ```bash
-tar -C "$ARTIFACT_PARENT" -cf artifact.tar outputs
+tar -czf artifact.tar.gz -C outputs .
 ```
 
-- tar 顶层有且只有一个 `outputs/` 目录，条目形如 `outputs/app/server.js`。
+- 归档根目录直接是 `app/`、`openapi.yaml`、`launch.json`，不再嵌套 `outputs/`。
 - 包内不允许符号链接、硬链接、绝对路径和 `..`；Render 遇到任一情况直接拒绝。
-- 包大小上限 100 MiB。
-- 控制面计算 `sha256(artifact.tar)`，作为 `artifact_sha256` 传给 Render；Render 校验后才能解包。
+- 压缩包大小上限 100 MiB。
+- 控制面计算 `sha256(artifact.tar.gz)`，作为 `artifact_sha256` 传给 Render；Render 校验后才能解包。
 
 ## 3. 控制面 ↔ Render
 
@@ -111,7 +115,7 @@ Content-Type: multipart/form-data
 | part | 类型 | 内容 |
 | --- | --- | --- |
 | `metadata` | `application/json` | 启动参数 |
-| `artifact` | `application/x-tar` | `artifact.tar` |
+| `artifact` | `application/gzip` | `artifact.tar.gz` |
 
 `metadata`：
 
@@ -165,14 +169,14 @@ Content-Type: multipart/form-data
 
 ### 3.3 Render 的处理顺序
 
-1. 校验 metadata 和 tar 大小，计算并比对 `artifact_sha256`。
-2. 解包到新的运行目录；拒绝链接、绝对路径和 `..`，要求顶层只有 `outputs/`。
-3. 确认 `screen_id` 非空，把 run 绑定到该屏幕对应的 Stage；读取 `outputs/launch.json` 并校验字段。
-4. 以 `outputs/app/` 为工作目录，直接执行 `runtimeExecutable` 和 `runtimeArgs`，不经过 shell。
-5. 在超时内连接 `port`，并请求 `GET /`；有 HTTP 响应即视为健康。
-6. 启动 Stage 和媒体流，流就绪后返回 `running` 与 `stream_url`。
+1. 校验 metadata 和归档包大小，计算并比对 `artifact_sha256`。
+2. 解包到新的运行目录；拒绝链接、绝对路径和 `..`，要求根目录包含 `app/` 和 `launch.json`，且没有 `outputs/` 这一层。
+3. 确认 `screen_id` 非空，把 run 绑定到该屏幕对应的 Stage；读取根目录的 `launch.json` 并校验字段，`runtimeExecutable` 必须为 `node`。
+4. 以归档根目录为工作目录，直接执行 `node` 和 `runtimeArgs`，不经过 shell；不执行 install 或 build。
+5. 分配空闲端口，注入 `PORT` 和 `HOST=0.0.0.0`；在 `readyTimeoutMs` 内请求 `GET /health`，要求 HTTP `200` 且响应 `{"status":"ok"}`。
+6. 启动 Stage（Chromium 打开 `http://127.0.0.1:{port}/`）和媒体流，流就绪后返回 `running` 与 `stream_url`。
 
-启动超时建议 30 秒。超时或任一步失败时，Render 负责终止进程、删除运行目录并释放端口。
+就绪超时取 `readyTimeoutMs`（默认 10 秒），Render 可设置上限。超时或任一步失败时，Render 负责终止进程、删除运行目录并释放端口。
 
 ### 3.4 幂等与并发
 
@@ -193,7 +197,7 @@ DELETE /v1/runs/{app_id}
 
 `GET` 返回 run 状态；`app_id` 不存在时返回 `404 RUN_NOT_FOUND`。
 
-`DELETE` 停止进程和媒体流并删除运行目录，成功或目标已不存在都返回 `204`。run 进入 `failed` 时带 `error.code`：
+`DELETE` 先向进程发送 `SIGTERM`，等待应用退出；超时后强制终止，再删除运行目录。成功或目标已不存在都返回 `204`。run 进入 `failed` 时带 `error.code`：
 
 | code | 场景 |
 | --- | --- |
@@ -226,7 +230,7 @@ GET /v1/runs/{app_id}/stream.ts
 {
   "error": {
     "code": "INVALID_ARTIFACT",
-    "message": "launch.json not found at outputs/launch.json"
+    "message": "launch.json not found at archive root"
   }
 }
 ```
@@ -237,9 +241,8 @@ GET /v1/runs/{app_id}/stream.ts
 | 409 | `APP_ALREADY_RUNNING` | 同一 `app_id` 已有不同 artifact 的 run |
 | 413 | `ARTIFACT_TOO_LARGE` | tar 超过 100 MiB |
 | 422 | `ARTIFACT_MISMATCH` | digest 与 tar 内容不一致 |
-| 422 | `INVALID_ARTIFACT` | tar 结构或 `launch.json` 非法 |
-| 422 | `UNSUPPORTED_RUNTIME` | `runtimeExecutable` 不受支持 |
-| 409 | `PORT_IN_USE` | `launch.json` 端口被占用 |
+| 422 | `INVALID_ARTIFACT` | 归档结构或 `launch.json` 非法 |
+| 422 | `UNSUPPORTED_RUNTIME` | `runtimeExecutable` 不是 `node` |
 | 504 | `START_TIMEOUT` | 健康检查或媒体流准备超时 |
 | 500 | `START_FAILED` | 其他启动失败 |
 
@@ -253,8 +256,8 @@ sequenceDiagram
   participant C as 控制面
   participant R as Render
 
-  Note over C: artifact.tar 已就绪
-  C->>R: POST /v1/runs（metadata + artifact.tar）
+  Note over C: artifact.tar.gz 已就绪
+  C->>R: POST /v1/runs（metadata + artifact.tar.gz）
   R->>R: 解包、启动、健康检查、准备媒体流
   R-->>C: 201 Run{stream_url}
   Note over C: 控制面随后按 screen_id 建立投屏会话
@@ -265,7 +268,7 @@ Render 错误到 MCP 错误的映射：
 | Render 结果 | MCP 错误 |
 | --- | --- |
 | `INVALID_ARTIFACT` / `ARTIFACT_MISMATCH` / `ARTIFACT_TOO_LARGE` | `stage=starting`, `START_FAILED` |
-| `UNSUPPORTED_RUNTIME` / `PORT_IN_USE` | `stage=starting`, `START_FAILED` |
+| `UNSUPPORTED_RUNTIME` | `stage=starting`, `START_FAILED` |
 | `START_TIMEOUT` / `START_FAILED` | `stage=starting`, `START_FAILED` |
 | 运行中 `APP_EXITED` | `stage=running`, `APP_EXITED` |
 | 运行中 `STREAM_STOPPED` | `stage=running`, `PROJECTION_DISCONNECTED` |
@@ -274,7 +277,7 @@ Render 错误到 MCP 错误的映射：
 
 | 操作 | 超时 | 重试策略 |
 | --- | --- | --- |
-| `POST /v1/runs` | 30 秒 | 同一 digest 可重试，Render 幂等 |
+| `POST /v1/runs` | 默认 10 秒就绪超时（`readyTimeoutMs`），整体 30 秒 | 同一 digest 可重试，Render 幂等 |
 | `GET /v1/runs/{app_id}` | 5 秒间隔轮询 | 持续轮询，直到 run 停止 |
 | `DELETE /v1/runs/{app_id}` | 10 秒 | 幂等，可重试 |
 | 媒体流拉取 | 长连接 | 断开后由投屏侧重连，不重启 run |
