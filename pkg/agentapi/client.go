@@ -113,7 +113,9 @@ func (c *Client) options() []option.RequestOption {
 	return []option.RequestOption{option.WithRequestTimeout(c.timeout)}
 }
 
-// CreateSession creates an idle build session pinned to the agent version.
+// CreateSession creates an idle build session. The session is pinned to the
+// resolved agent version: the one given by agentVersion, or the agent's
+// latest version when agentVersion is 0.
 func (c *Client) CreateSession(ctx context.Context, agentID string, agentVersion int, environmentID, title string, metadata map[string]string) (Session, error) {
 	agent := &anthropic.BetaManagedAgentsAgentParams{
 		ID:   agentID,

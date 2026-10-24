@@ -24,7 +24,7 @@ import (
 // Config is the deployment configuration for builds.
 type Config struct {
 	AgentID        string
-	AgentVersion   int
+	AgentVersion   int // 0 means "use the agent's latest version"
 	EnvironmentID  string
 	BuildTimeout   time.Duration
 	InterruptGrace time.Duration

@@ -8,7 +8,8 @@ agentapi:
   base_url: "https://agent.qiniuapi.com"
   api_key: "replace-with-agentapi-key"
   agent_id: "agent_replace_me"
-  agent_version: 1
+  # 可选：固定智能体版本。省略或设为 0 时，新建会话使用智能体的最新版本。
+  # agent_version: 1
   environment_id: "env_replace_me"
 
 render:

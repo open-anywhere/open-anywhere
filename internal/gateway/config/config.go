@@ -28,7 +28,7 @@ type Config struct {
 	AgentAPIURL   string
 	AgentAPIKey   string
 	AgentID       string
-	AgentVersion  int
+	AgentVersion  int // 0 means "use the agent's latest version"
 	EnvironmentID string
 
 	RenderURL  string
@@ -106,7 +106,6 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	}
 	base := Config{
 		Addr:              ":8090",
-		AgentVersion:      1,
 		ArtifactsDir:      "artifacts",
 		DBPath:            "open-anywhere.gateway.db",
 		PortMin:           39000,
@@ -136,7 +135,7 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&cfg.AgentAPIURL, "agentapi-url", env(getenv, "AGENTAPI_BASE_URL", base.AgentAPIURL), "AgentAPI base URL")
 	flags.StringVar(&cfg.AgentAPIKey, "agentapi-key", env(getenv, "AGENTAPI_API_KEY", base.AgentAPIKey), "AgentAPI API key")
 	flags.StringVar(&cfg.AgentID, "agent-id", env(getenv, "AGENTAPI_AGENT_ID", base.AgentID), "build agent ID")
-	flags.IntVar(&cfg.AgentVersion, "agent-version", envInt(getenv, "AGENTAPI_AGENT_VERSION", base.AgentVersion), "build agent version")
+	flags.IntVar(&cfg.AgentVersion, "agent-version", envInt(getenv, "AGENTAPI_AGENT_VERSION", base.AgentVersion), "build agent version (0 = latest)")
 	flags.StringVar(&cfg.EnvironmentID, "environment-id", env(getenv, "AGENTAPI_ENVIRONMENT_ID", base.EnvironmentID), "build environment ID")
 	flags.StringVar(&cfg.RenderURL, "render-url", env(getenv, "RENDER_BASE_URL", base.RenderURL), "Render base URL")
 	flags.StringVar(&cfg.CastingURL, "casting-url", env(getenv, "CASTING_BASE_URL", base.CastingURL), "casting service base URL")
@@ -182,8 +181,8 @@ func (c Config) Validate() error {
 			return fmt.Errorf("gateway: -%s is required", item.name)
 		}
 	}
-	if c.AgentVersion <= 0 {
-		return fmt.Errorf("gateway: -agent-version must be positive")
+	if c.AgentVersion < 0 {
+		return fmt.Errorf("gateway: -agent-version must not be negative")
 	}
 	if c.PortMin <= 0 || c.PortMax < c.PortMin || c.PortMax > 65535 {
 		return fmt.Errorf("gateway: invalid port range %d-%d", c.PortMin, c.PortMax)
