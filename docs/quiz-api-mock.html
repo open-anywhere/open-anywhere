@@ -209,10 +209,10 @@
 
     const endpoints = [
       { group: 'State', id: 'state', method: 'GET', path: '/sessions/quiz-session-001/state', label: 'getGameState', desc: '获取当前玩家、阶段、比分和下一步动作。', body: '{}', hint: '只读接口。Body 已准备为 {}，直接发送即可。' },
-      { group: 'Players', id: 'players', method: 'POST', path: '/sessions/quiz-session-001/players', label: 'registerPlayer', desc: '添加玩家并绑定灵矽返回的匿名声纹标识。', body: '{\n  "user_id": "",\n  "display_name": "",\n  "voiceprint_id": ""\n}', hint: '把三个空字符串填入即可；MVP 中三位玩家已预置，也可以再添加一位。' },
+      { group: 'Players', id: 'players', method: 'POST', path: '/sessions/quiz-session-001/players', label: 'registerPlayer', desc: '添加玩家，使用调用方提供的通用 user_id。', body: '{\n  "user_id": "",\n  "display_name": ""\n}', hint: '这里只需要填 user_id 和 display_name；身份如何被识别由调用方决定。' },
       { group: 'Players', id: 'ready', method: 'POST', path: '/sessions/quiz-session-001/players/p1/ready', label: 'playerReady', desc: '将一个玩家标记为已就位，并返回剩余未就位玩家。', body: '{}', hint: 'Body 已准备为 {}；把 path 里的 p1 改成 p2 或 p3，逐个发送。' },
       { group: 'Game', id: 'start', method: 'POST', path: '/sessions/quiz-session-001/start', label: 'startGame', desc: '所有必要玩家就位后开始第一题。', body: '{}', hint: 'Body 已准备为 {}；开始后会返回题目、朗读提示和 agent-only judge_context。' },
-      { group: 'Answer', id: 'answers', method: 'POST', path: '/sessions/quiz-session-001/answers', label: 'submitAnswer', desc: '题目朗读完成后，提交声纹匹配的玩家和语音转写文本。', body: '{\n  "user_id": "",\n  "transcript": "",\n  "voice_confidence": 0\n}', hint: '填入声纹匹配后的 user_id、语音转写文本和置信度即可。' },
+      { group: 'Answer', id: 'answers', method: 'POST', path: '/sessions/quiz-session-001/answers', label: 'submitAnswer', desc: '题目朗读完成后，提交回答人的 user_id 和语音转写文本。', body: '{\n  "user_id": "",\n  "transcript": ""\n}', hint: '调用方先完成身份识别，再只传通用 user_id；应用不关心声纹、账号或其他识别方式。' },
       { group: 'Answer', id: 'evaluate', method: 'POST', path: '/sessions/quiz-session-001/answers/answer-001/evaluate', label: 'evaluateAnswer', desc: '提交灵矽对玩家答案的判断结果，应用据此更新比分。', body: '{\n  "answer_right": false,\n  "reason": ""\n}', hint: '把 answer_right 改为 true/false，reason 填写给用户播报的简短解释。' },
       { group: 'Game', id: 'pause', method: 'POST', path: '/sessions/quiz-session-001/pause', label: 'pauseGame', desc: '暂停游戏，不推进题目和计分。', body: '{}', hint: 'Body 已准备为 {}；暂停后可以用 resume 继续。' },
       { group: 'Game', id: 'resume', method: 'POST', path: '/sessions/quiz-session-001/resume', label: 'resumeGame', desc: '继续当前游戏。', body: '{}', hint: 'Body 已准备为 {}；继续后恢复到暂停前的阶段。' },
@@ -222,9 +222,9 @@
     const initialState = () => ({
       session_id: 'quiz-session-001', title: '今晚的知识竞赛', phase: 'preparing', current_question_number: 0, total_questions: QUESTIONS.length,
       players: [
-        { player_id: 'p1', user_id: 'u1', display_name: '张之阳', voiceprint_id: 'vp_zhiyang', registered: true, ready: false, score: 0 },
-        { player_id: 'p2', user_id: 'u2', display_name: '韩鲁鹏', voiceprint_id: 'vp_lupeng', registered: true, ready: false, score: 0 },
-        { player_id: 'p3', user_id: 'u3', display_name: '邓军辉', voiceprint_id: 'vp_junhui', registered: true, ready: false, score: 0 }
+        { player_id: 'p1', user_id: 'u1', display_name: '张之阳', registered: true, ready: false, score: 0 },
+        { player_id: 'p2', user_id: 'u2', display_name: '韩鲁鹏', registered: true, ready: false, score: 0 },
+        { player_id: 'p3', user_id: 'u3', display_name: '邓军辉', registered: true, ready: false, score: 0 }
       ], current_question: null, pending_answer: null, last_result: null
     });
     let state = initialState();
@@ -273,8 +273,8 @@
       if (method === 'GET' && path.endsWith('/state')) return response(appResponse('已读取当前游戏状态。', '当前游戏状态已更新。'));
       if (method === 'POST' && path.endsWith('/players')) {
         const bodyPlayer = body || {}; if (!bodyPlayer.user_id || !bodyPlayer.display_name) return response({ ok: false, message: '缺少 user_id 或 display_name。' }, 400);
-        const existing = state.players.find(p => p.user_id === bodyPlayer.user_id); if (!existing) state.players.push({ player_id: `p${state.players.length + 1}`, user_id: bodyPlayer.user_id, display_name: bodyPlayer.display_name, voiceprint_id: bodyPlayer.voiceprint_id || 'vp_unknown', registered: true, ready: false, score: 0 });
-        logEvent('PLAYER', `${bodyPlayer.display_name} 已登记声纹身份`); renderTV(); return response(appResponse(`${bodyPlayer.display_name} 已加入玩家列表。`, `${bodyPlayer.display_name} 已加入。`, { type: 'speak', text: `${bodyPlayer.display_name} 已加入。` }));
+        const existing = state.players.find(p => p.user_id === bodyPlayer.user_id); if (!existing) state.players.push({ player_id: `p${state.players.length + 1}`, user_id: bodyPlayer.user_id, display_name: bodyPlayer.display_name, registered: true, ready: false, score: 0 });
+        logEvent('PLAYER', `${bodyPlayer.display_name} 已登记 user_id`); renderTV(); return response(appResponse(`${bodyPlayer.display_name} 已加入玩家列表。`, `${bodyPlayer.display_name} 已加入。`, { type: 'speak', text: `${bodyPlayer.display_name} 已加入。` }));
       }
       const readyMatch = path.match(/\/players\/([^/]+)\/ready$/);
       if (method === 'POST' && readyMatch) {
@@ -290,7 +290,7 @@
       }
       if (method === 'POST' && path.endsWith('/answers')) {
         if (state.phase !== 'waiting_answer' || !state.current_question) return response({ ok: false, message: '当前不在等待回答阶段。', state: snapshot() }, 409);
-        const player = state.players.find(p => p.user_id === body.user_id); if (!player) return response({ ok: false, message: '声纹对应的玩家不存在。' }, 404);
+        const player = state.players.find(p => p.user_id === body.user_id); if (!player) return response({ ok: false, message: 'user_id 对应的玩家不存在。' }, 404);
         const answerId = `answer-${String(++answerCounter).padStart(3, '0')}`; state.pending_answer = { answer_id: answerId, user_id: player.user_id, display_name: player.display_name, transcript: body.transcript || '' }; state.phase = 'evaluating'; lastAnswerId = answerId;
         logEvent('ANSWER', `${player.display_name} 说：“${body.transcript || ''}” · 等待灵矽判断`); renderTV(); return response(appResponse(`已收到${player.display_name}的回答，等待判断。`, `已收到${player.display_name}的回答。`, { type: 'none' }, { answer_id: answerId, judge_context: { expected_answer: state.current_question.answer, accepted_answers: state.current_question.accepted, player: player.display_name, transcript: body.transcript || '', instruction: '只用于判断，不要在玩家回答前朗读标准答案。' } }));
       }
