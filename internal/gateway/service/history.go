@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -163,4 +164,39 @@ func removable(a app.App) bool {
 		return false
 	}
 	return !a.CleanupPending && !a.PendingRuntime && !a.PendingProjection && a.InstanceID == "" && a.ProjectionSessionID == ""
+}
+
+// releaseFailedStart frees what a failed start left behind and returns the
+// application to idle so it can be started again.
+//
+// A projection request that timed out has an unknown outcome, which reconcile
+// keeps as an occupation. When Casting reports no active session on the target
+// there is nothing to stop and nothing that is not ours to touch, so the
+// unknown outcome is dropped; a session that does exist is left to reconcile,
+// which only ever stops one it can prove is ours.
+func (s *Service) releaseFailedStart(ctx context.Context, entry *app.Record) error {
+	value := entry.Snapshot()
+	if value.PendingProjection && value.TargetID != "" {
+		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
+		target, err := s.casting.GetTarget(probe, value.TargetID)
+		cancel()
+		if err == nil && target.ActiveSessionID == "" {
+			if err := persistRuntime(entry, func(a *app.App) { a.PendingProjection = false }); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.reconcile(ctx, entry); err != nil {
+		var toolErr *ToolError
+		if errors.As(err, &toolErr) {
+			return err
+		}
+		return &ToolError{Code: "CLEANUP_PENDING", Message: "上次启动遗留的资源还没清理干净，请稍后再试"}
+	}
+	return persistRuntime(entry, func(a *app.App) {
+		if a.State == app.StateError {
+			a.State = app.StateIdle
+			a.Error = nil
+		}
+	})
 }

@@ -304,3 +304,69 @@ func TestCreateAppPrunesTheOldestBeyondTen(t *testing.T) {
 		t.Fatalf("removed packages=%v", got)
 	}
 }
+
+// failedStart is an application that built fine and whose start timed out
+// while projecting: the projection outcome is unknown and a Render instance is
+// left behind.
+func failedStart(t *testing.T) app.App {
+	t.Helper()
+	a := builtApp(t, "app_1", 0, app.StateError)
+	a.Error = &app.Error{Stage: app.StageStarting, Code: "PROJECTION_TIMEOUT", Message: "无法建立投屏"}
+	a.InstanceID, a.Port, a.ScreenID, a.TargetID = "inst_stale", 39000, "tv_1", "tv_1"
+	a.PendingProjection, a.CleanupPending = true, true
+	return a
+}
+
+func TestStartRetriesAfterAProjectionTimeoutWhenTheScreenIsFree(t *testing.T) {
+	env := newTestEnv(t, nil)
+	env.svc.SetArtifactStore(&fakeArtifacts{})
+	env.registry.Add(failedStart(t))
+
+	view, err := env.svc.StartApp(context.Background(), ownerFresh, "app_1", "tv_1", false)
+	if err != nil || view.State != app.StateRunning {
+		t.Fatalf("view=%+v err=%v", view, err)
+	}
+	if got := env.render.deletedIDs(); len(got) != 1 || got[0] != "inst_stale" {
+		t.Fatalf("deleted=%v", got)
+	}
+}
+
+func TestStopAppReleasesAFailedStartAndMakesTheAppStartableAgain(t *testing.T) {
+	env := newTestEnv(t, nil)
+	env.svc.SetArtifactStore(&fakeArtifacts{})
+	entry := env.registry.Add(failedStart(t))
+
+	view, err := env.svc.StopApp(context.Background(), ownerFresh, "app_1")
+	if err != nil || view.State != app.StateIdle || view.Error != nil {
+		t.Fatalf("view=%+v err=%v", view, err)
+	}
+	snapshot := entry.Snapshot()
+	if snapshot.InstanceID != "" || snapshot.CleanupPending || snapshot.PendingProjection || snapshot.ScreenID != "" || snapshot.Error != nil {
+		t.Fatalf("leftovers: %+v", snapshot)
+	}
+	if got := env.render.deletedIDs(); len(got) != 1 || got[0] != "inst_stale" {
+		t.Fatalf("deleted=%v", got)
+	}
+	list, _ := env.svc.ListApps(context.Background(), ownerFresh)
+	if len(list) != 1 || !list[0].Startable {
+		t.Fatalf("list=%+v", list)
+	}
+}
+
+func TestAFailedStartIsKeptWhileAnotherSessionHoldsTheScreen(t *testing.T) {
+	env := newTestEnv(t, nil)
+	env.svc.SetArtifactStore(&fakeArtifacts{})
+	entry := env.registry.Add(failedStart(t))
+	env.casting.target.ActiveSessionID = "someone-elses-session"
+
+	if _, err := env.svc.StartApp(context.Background(), ownerFresh, "app_1", "tv_1", false); toolCode(t, err) != "CLEANUP_PENDING" {
+		t.Fatalf("err=%v", err)
+	}
+	snapshot := entry.Snapshot()
+	if snapshot.State != app.StateError || !snapshot.PendingProjection || snapshot.InstanceID != "inst_stale" {
+		t.Fatalf("the unknown outcome was dropped although a session exists: %+v", snapshot)
+	}
+	if len(env.render.deletedIDs()) != 0 || len(env.casting.stoppedIDs()) != 0 {
+		t.Fatal("something was stopped without proof that it is ours")
+	}
+}

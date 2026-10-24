@@ -358,19 +358,7 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 		}
 		// Built fine, failed later: release whatever the failed start left behind
 		// and start again from idle.
-		if err := s.reconcile(ctx, entry); err != nil {
-			var toolErr *ToolError
-			if errors.As(err, &toolErr) {
-				return StatusView{}, err
-			}
-			return StatusView{}, &ToolError{Code: "CLEANUP_PENDING", Message: "上次启动遗留的资源还没清理干净，请稍后再试"}
-		}
-		if err := persistRuntime(entry, func(a *app.App) {
-			if a.State == app.StateError {
-				a.State = app.StateIdle
-				a.Error = nil
-			}
-		}); err != nil {
+		if err := s.releaseFailedStart(ctx, entry); err != nil {
 			return StatusView{}, err
 		}
 		value = entry.Snapshot()
@@ -487,6 +475,14 @@ func (s *Service) StopApp(ctx context.Context, owner app.Identity, appID string)
 	case app.StateIdle:
 		return s.statusView(value), nil
 	case app.StateError:
+		if retryable(value) {
+			// Built fine, failed later: release what the failure left behind and
+			// make the application startable again.
+			if err := s.releaseFailedStart(ctx, entry); err != nil {
+				return StatusView{}, err
+			}
+			return s.statusView(entry.Snapshot()), nil
+		}
 		if err := s.reconcile(ctx, entry); err != nil {
 			return StatusView{}, err
 		}
