@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/open-anywhere-logo-dark.svg">
-    <img src="assets/logo/open-anywhere-logo.svg" alt="open anywhere" width="440">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/open-anywhere/.github/main/assets/logo/open-anywhere-logo-dark.svg">
+    <img src="https://raw.githubusercontent.com/open-anywhere/.github/main/assets/logo/open-anywhere-logo.svg" alt="open anywhere" width="440">
   </picture>
 </p>
 
