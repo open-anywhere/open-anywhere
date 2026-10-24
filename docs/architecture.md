@@ -508,7 +508,7 @@ sequenceDiagram
 | 设备端 MCP | 固件注册设备工具 | 程序上报两个仅作用于网页播放器的音量工具，用于验证链路 |
 | 本地控制 | 由硬件自身决定 | Web 控制台和 HTTP / SSE / WebSocket 接口 |
 
-7.3 到 7.5、7.7 描述的是设备协议层，对两种形态都成立，切换到真实硬件时设计目标是行为不变，具体以灵矽的设备协议文档为准。7.6 的本地控制接口和 Web 控制台只属于模拟硬件。
+7.3 到 7.6 描述的是设备协议层，对两种形态都成立，切换到真实硬件时设计目标是行为不变，具体以灵矽的设备协议文档为准。模拟硬件自带的 Web 控制台及其 HTTP / SSE 接口只用于调试和演示，不是系统之间的契约，也不属于真实硬件，接口说明由实现的使用文档维护，不写在本文。
 
 ### 7.2 定位与边界
 
@@ -517,7 +517,7 @@ sequenceDiagram
 | 以虚拟设备身份建立并保持与灵矽云的 WebSocket 会话 | 构建、运行应用，理解应用业务 |
 | 收发文字、主动播报和 Opus 音频，转发灵矽的识别与播报事件 | 声纹识别、ASR、TTS（都在灵矽云） |
 | 回应灵矽对设备端 MCP 的 `initialize`、`tools/list`、`tools/call` | 第 6 章的应用管理 MCP（由控制面提供） |
-| 模拟硬件另外提供本地 Web 控制台和 HTTP / SSE / WebSocket 控制接口 | 公网访问；控制接口只应监听回环地址 |
+| 模拟硬件另外提供本地 Web 控制台，供调试和演示 | 公网访问 |
 | 设备注册、断开与重连 | 投屏、Stage、AirPlay |
 
 第 6 章的 MCP 是控制面提供给灵矽云的云端工具；本章的设备端 MCP 由现场语音入口提供，两者互不替代。
@@ -526,7 +526,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-  participant B as 浏览器控制台
+  participant B as 浏览器控制台（模拟硬件）
   participant K as 现场语音入口
   participant O as 灵矽 OTA
   participant L as 灵矽云
@@ -544,18 +544,12 @@ sequenceDiagram
   K-->>B: SSE 事件、下行 Opus
 ```
 
-| 方向 | 消息 | 作用 |
-| --- | --- | --- |
-| 现场语音入口 → 灵矽 | `listen` `start` / `stop`，`mode` 默认 `realtime`（`auto`、`manual` 已定义，未在真实平台验证） | 开始或停止监听 |
-| 现场语音入口 → 灵矽 | `listen` `detect` + `text` | 用文字代替语音发一句话 |
-| 现场语音入口 → 灵矽 | `listen` `detect` + `text_response` | 让灵矽主动播报；平台会回显一条 `stt` |
-| 现场语音入口 → 灵矽 | `abort` | 打断当前回复 |
-| 现场语音入口 → 灵矽 | 二进制 Opus | 上行语音，约 60 ms 一包 |
-| 灵矽 → 现场语音入口 | `stt` | 灵矽听到的用户话 |
-| 灵矽 → 现场语音入口 | `tts`：`start`、`sentence_start`（带文本）、`stop`（带 `is_aborted`） | 回复，按句分段 |
-| 灵矽 → 现场语音入口 | `llm`：`emotion`、`action` | 表情与动作，可驱动形象 |
-| 灵矽 → 现场语音入口 | `mcp` | 对设备端 MCP 的调用 |
-| 灵矽 → 现场语音入口 | 二进制 Opus | 下行语音 |
+上下行的消息类型和字段以灵矽的设备协议文档为准，这里只记录对我们有影响的几点：
+
+- 设备可以发送：监听开关（`listen start` / `stop`）、文字（`listen detect` + `text`）、主动播报（`listen detect` + `text_response`）、打断（`abort`）和 Opus 音频。
+- 灵矽返回：`stt`、按句分段的 `tts`（`start`、`sentence_start`、`stop`，`stop` 带 `is_aborted`）、携带表情与动作的 `llm`、`mcp` 调用，以及 Opus 音频。
+- 主动播报会被平台回显成一条 `stt`，设备要忽略它，否则会被当成用户又说了一遍。
+- 监听模式默认 `realtime`；`auto` 和 `manual` 还没有在真实平台验证。
 
 模拟硬件由浏览器负责 Opus 编解码（WebCodecs），程序只转发 Opus 包，因此不依赖 cgo、libopus 和 ffmpeg；真实硬件由板载音频链路完成。
 
@@ -588,19 +582,7 @@ sequenceDiagram
 
 同一次注册内，身份与激活码保持不变，可以重复点击检查。
 
-### 7.6 本地控制接口（模拟硬件）
-
-| 接口 | 说明 |
-| --- | --- |
-| `GET /status` | `state`、`mode`、`session_id`、`mac`、`connected`、`volume`、`registered`、`activation_code` |
-| `GET /events` | SSE：`hello`、`stt`、`tts`、`llm`、`mcp`、`audio`、`volume`；事件可带灵矽原始消息（`token` 字段已遮蔽） |
-| `POST /say`、`POST /announce` | `{"text":"…"}`，以用户身份发话 / 让灵矽主动播报 |
-| `POST /pause`、`/resume`、`/abort` | 暂停、继续监听，打断回复 |
-| `POST /device/register` | `{"agent_id","api_key"}` 可为空；返回 `pending` + 激活码或 `registered`；要求 `Content-Type: application/json` |
-| `POST /disconnect`、`/reconnect` | 手动断开；断开后重连（已连接时换新会话，失败返回 502） |
-| `WS /audio?codec=opus`、`WS /playback` | 浏览器上行 / 下行 Opus 包 |
-
-### 7.7 状态、断开与重连
+### 7.6 状态、断开与重连
 
 状态：`connecting`、`listening`、`thinking`、`speaking`、`idle`（用户暂停）、`reconnecting`、`disconnected`（用户手动断开）。
 
@@ -609,13 +591,12 @@ sequenceDiagram
 - 手动断开：不自动重连，丢弃排队的播报，需要点“重新连接”。
 - 按平台文档，智能体配置 `goodbye.idle_timeout_seconds`（60–3600 秒）后，空闲会话会被服务端断开，此时走意外断线路径。该路径还没有在真实空闲超时下观察过。
 
-### 7.8 安全
+### 7.7 安全
 
-- 模拟硬件的控制接口没有鉴权，只应监听 `127.0.0.1`，不要暴露到公网或不可信网络。
-- `/device/register` 要求 JSON 内容类型，避免其他网页直接向本地端口发起简单请求。
-- 原始消息展示前会遮蔽所有 `token` 字段；凭证和 API Key 不写入日志。
+- 模拟硬件的控制接口没有鉴权，只应监听回环地址，不要暴露到公网或不可信网络。
+- 设备凭证和 API Key 不进入日志和页面；展示灵矽原始消息时会遮蔽其中的 `token`（`initialize` 里带有平台下发的视觉服务 token）。
 
-### 7.9 验证状态
+### 7.8 验证状态
 
 已在真实灵矽云验证：文字对话、主动播报、事件流、下行语音转发、手动断开与一键重连、设备端 `tools/list` 与 `tools/call`（音量工具）。
 
