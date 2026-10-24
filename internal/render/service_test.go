@@ -262,3 +262,32 @@ func TestConfigurationAndClosedService(t *testing.T) {
 		t.Fatalf("closed service accepted start: %v", err)
 	}
 }
+
+func TestCreateRejectsInvalidRequestsAndGetMissing(t *testing.T) {
+	s := testService(t)
+	for _, req := range []api.CreateRequest{
+		{},
+		{AppID: "", ArtifactURL: "http://example.com/a.tar.gz", Port: 40000},
+		{AppID: "bad\napp", ArtifactURL: "http://example.com/a.tar.gz", Port: 40000},
+		{AppID: "app", ArtifactURL: "ftp://example.com/a.tar.gz", Port: 40000},
+		{AppID: "app", ArtifactURL: "http://user@example.com/a.tar.gz", Port: 40000},
+		{AppID: "app", ArtifactURL: "http://example.com/a.tar.gz", Port: 0},
+		{AppID: "app", ArtifactURL: "http://example.com/a.tar.gz", Port: 65536},
+	} {
+		if _, err := s.Create(context.Background(), req); err == nil || err.Detail.Code != "INVALID_REQUEST" {
+			t.Fatalf("request %+v: expected INVALID_REQUEST, got %v", req, err)
+		}
+	}
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("unknown instance was found")
+	}
+}
+
+func TestCheckPageRejectsMalformedAndUnreachableURLs(t *testing.T) {
+	if err := checkPage(context.Background(), "http://[bad"); err == nil {
+		t.Fatal("malformed page URL accepted")
+	}
+	if err := checkPage(context.Background(), "http://127.0.0.1:1"); err == nil {
+		t.Fatal("unreachable page accepted")
+	}
+}

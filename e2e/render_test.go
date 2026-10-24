@@ -30,6 +30,18 @@ import (
 )
 
 func archive(t *testing.T, missingHealth bool) []byte {
+	return archiveVariant(t, func(rel string, data []byte) []byte {
+		if missingHealth && rel == "app/app.js" {
+			data = bytes.ReplaceAll(data, []byte("url.pathname === '/health'"), []byte("url.pathname === '/missing-health'"))
+		}
+		if missingHealth && rel == "launch.json" {
+			data = bytes.ReplaceAll(data, []byte("5000"), []byte("700"))
+		}
+		return data
+	})
+}
+
+func archiveVariant(t *testing.T, transform func(string, []byte) []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -46,12 +58,7 @@ func archive(t *testing.T, missingHealth bool) []byte {
 		if err != nil {
 			return err
 		}
-		if missingHealth && rel == "app/app.js" {
-			data = bytes.ReplaceAll(data, []byte("url.pathname === '/health'"), []byte("url.pathname === '/missing-health'"))
-		}
-		if missingHealth && rel == "launch.json" {
-			data = bytes.ReplaceAll(data, []byte("5000"), []byte("700"))
-		}
+		data = transform(rel, data)
 		if err = tw.WriteHeader(&tar.Header{Name: filepath.ToSlash(rel), Mode: 0600, Size: int64(len(data))}); err != nil {
 			return err
 		}
@@ -395,5 +402,65 @@ func TestRenderScoreboard(t *testing.T) {
 	p = decode[api.Port](t, request(t, "GET", base+"/v1/ports/"+strconv.Itoa(badReq.Port), nil, 200))
 	if p.Occupied {
 		t.Fatal("failed startup leaked port")
+	}
+}
+
+func TestRenderStartupFailureStages(t *testing.T) {
+	for _, bin := range []string{"node", "ffmpeg", "lsof"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Fatalf("E2E prerequisite %s: %v", bin, err)
+		}
+	}
+	good := archive(t, false)
+	badPage := archiveVariant(t, func(rel string, data []byte) []byte {
+		if rel == "app/app.js" {
+			data = bytes.ReplaceAll(data, []byte("['/', ['index.html', 'text/html; charset=utf-8']]"), []byte("['/', ['index.html', 'application/json']]"))
+		}
+		return data
+	})
+	artifacts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		if r.URL.Path == "/bad-page.tar.gz" {
+			_, _ = w.Write(badPage)
+			return
+		}
+		_, _ = w.Write(good)
+	}))
+	defer artifacts.Close()
+
+	newService := func(t *testing.T, ffmpeg string) (*core.Service, *httptest.Server) {
+		t.Helper()
+		server := httptest.NewUnstartedServer(nil)
+		base := "http://" + server.Listener.Addr().String()
+		cfg := core.Config{WorkDir: t.TempDir(), PublicURL: base, Chrome: os.Getenv("RENDER_CHROME"), FFmpeg: ffmpeg, Logger: log.New(io.Discard, "", 0)}
+		s, err := core.New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server.Config.Handler = core.NewHandler(s)
+		server.Start()
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			if err := s.Close(ctx); err != nil {
+				t.Error(err)
+			}
+			server.Close()
+		})
+		return s, server
+	}
+
+	_, pageServer := newService(t, "ffmpeg")
+	badPageReq := api.CreateRequest{AppID: "bad-page", ArtifactURL: artifacts.URL + "/bad-page.tar.gz", Port: freePort(t)}
+	pageBody := request(t, "POST", pageServer.URL+"/v1/apps", badPageReq, 502)
+	if !bytes.Contains(pageBody, []byte("PAGE_LOAD_FAILED")) {
+		t.Fatalf("unexpected page failure: %s", pageBody)
+	}
+
+	_, encoderServer := newService(t, "/no-such-ffmpeg")
+	encoderReq := api.CreateRequest{AppID: "bad-encoder", ArtifactURL: artifacts.URL + "/good.tar.gz", Port: freePort(t)}
+	encoderBody := request(t, "POST", encoderServer.URL+"/v1/apps", encoderReq, 502)
+	if !bytes.Contains(encoderBody, []byte("STREAM_START_FAILED")) {
+		t.Fatalf("unexpected encoder failure: %s", encoderBody)
 	}
 }

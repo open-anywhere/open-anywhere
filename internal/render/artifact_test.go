@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -163,5 +166,130 @@ func TestRejectMalformedLaunchAndMetadata(t *testing.T) {
 	}
 	if _, err := validateArtifact(dir); err == nil {
 		t.Fatal("null package metadata accepted")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type countedReader struct{ remaining int64 }
+
+func (r *countedReader) Read(p []byte) (int, error) {
+	if r.remaining == 0 {
+		return 0, io.EOF
+	}
+	n := int64(len(p))
+	if n > r.remaining {
+		n = r.remaining
+	}
+	for i := int64(0); i < n; i++ {
+		p[i] = 'x'
+	}
+	r.remaining -= n
+	return int(n), nil
+}
+
+func TestDownloadBoundaries(t *testing.T) {
+	if err := download(context.Background(), &http.Client{}, "http://[bad", t.TempDir()); err == nil {
+		t.Fatal("malformed URL accepted")
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(&countedReader{remaining: maxArtifactBytes + 1})}, nil
+	})}
+	if err := download(context.Background(), client, "http://example/artifact", t.TempDir()); err == nil {
+		t.Fatal("oversized compressed artifact accepted")
+	}
+	client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("transport failed")
+	})
+	if err := download(context.Background(), client, "http://example/artifact", t.TempDir()); err == nil {
+		t.Fatal("transport failure lost")
+	}
+}
+
+func TestUnpackMissingAndTrailingData(t *testing.T) {
+	if err := unpack(context.Background(), filepath.Join(t.TempDir(), "missing.tar.gz"), t.TempDir()); err == nil {
+		t.Fatal("missing archive accepted")
+	}
+	archive := testTar(t, []*tar.Header{{Name: "file", Typeflag: tar.TypeReg, Size: 1}}, [][]byte{{'x'}})
+	data, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, []byte("trailing bytes")...)
+	archive = filepath.Join(t.TempDir(), "trailing.tar.gz")
+	if err := os.WriteFile(archive, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unpack(context.Background(), archive, t.TempDir()); err == nil {
+		t.Fatal("trailing archive data accepted")
+	}
+}
+
+func TestValidateArtifactContractBoundaries(t *testing.T) {
+	for _, name := range []string{"launch.json", "openapi.yaml", "app/app.js", "app/package.json", "app/public/index.html"} {
+		t.Run("missing-"+name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := unpack(context.Background(), fixtureTar(t), dir); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := validateArtifact(dir); err == nil {
+				t.Fatalf("missing %s accepted", name)
+			}
+		})
+	}
+
+	for _, body := range []string{
+		`{"name":"","runtimeExecutable":"node","runtimeArgs":["app/app.js"]}`,
+		`{"name":"test","runtimeExecutable":"node","runtimeArgs":["app/app.js"],"readyTimeoutMs":60001}`,
+		`{"name":"test","runtimeExecutable":"node","runtimeArgs":["app/app.js"],"unknown":true}`,
+	} {
+		dir := t.TempDir()
+		if err := unpack(context.Background(), fixtureTar(t), dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "launch.json"), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := validateArtifact(dir); err == nil {
+			t.Fatalf("invalid launch accepted: %s", body)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := unpack(context.Background(), fixtureTar(t), dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "app/package.json"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateArtifact(dir); err == nil {
+		t.Fatal("malformed package metadata accepted")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "openapi.yaml"), []byte("openapi: ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateArtifact(dir); err == nil {
+		t.Fatal("malformed OpenAPI accepted")
+	}
+}
+
+func TestValidateOpenAPIBoundaries(t *testing.T) {
+	for _, spec := range []string{
+		"openapi: 3.0.3\ninfo: {title: test, version: '1'}\npaths:\n  /api/x: {}",
+		"openapi: 3.1.0\ninfo: {title: '', version: '1'}\npaths:\n  /api/x: {}",
+		"openapi: 3.1.0\ninfo: {title: test, version: ''}\npaths:\n  /api/x: {}",
+		"openapi: 3.1.0\ninfo: {title: test, version: '1'}\npaths:\n  /health:\n    get: {operationId: health, description: health, responses: {'200': {description: ok}}}",
+		"openapi: 3.1.0\ninfo: {title: test, version: '1'}\npaths:\n  /api/x:\n    get: {operationId: '', description: x, responses: {'200': {description: ok}}}",
+		"openapi: 3.1.0\ninfo: {title: test, version: '1'}\npaths:\n  /api/x:\n    get: {operationId: x, description: '', responses: {'200': {description: ok}}}",
+		"openapi: 3.1.0\ninfo: {title: test, version: '1'}\npaths:\n  /api/x:\n    get: {operationId: x, description: x, responses: {}}",
+	} {
+		if err := validateOpenAPI([]byte(spec)); err == nil {
+			t.Fatalf("invalid OpenAPI accepted: %s", spec)
+		}
 	}
 }
