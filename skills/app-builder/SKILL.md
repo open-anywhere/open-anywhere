@@ -1,11 +1,13 @@
 ---
 name: app-builder
-description: 把用户需求构建为 Open Anywhere 应用包：自包含 Node.js Web 应用、OpenAPI 3.1 业务契约和 launch.json，最终产出 /mnt/session/outputs/artifact.tar.gz。用于 create-app 的云端构建任务，包含猜电影示例模板、契约、最小验证步骤和静态校验脚本。
+description: 把用户需求构建为 Open Anywhere 应用包：自包含 Node.js Web 应用、OpenAPI 3.1 业务契约和 launch.json，最终产出 /mnt/session/outputs/artifact.tar.gz。用于 create-app 的云端构建任务，包含猜电影示例模板、契约、模板复制脚本和自测脚本。
 ---
 
 # Open Anywhere 应用构建
 
-本技能把一条中文应用需求变成可被控制面验收、被 Render 启动、被 Chromium 投屏的独立 Web 应用。完整契约见 `references/artifact-contract.md` 和 `references/api-contract.md`；先复制模板，再按需求修改，不要从零搭建。
+本技能把一条中文应用需求变成可被控制面验收、被 Render 启动、被 Chromium 投屏的独立 Web 应用。完整契约见 `references/artifact-contract.md` 和 `references/api-contract.md`；先用脚本复制模板，再按需求修改，不要从零搭建。
+
+技能目录（下文记作 `<skill-dir>`）一般在 `~/.claude/skills/app-builder`；找不到时用 `find / -maxdepth 6 -type d -name app-builder 2>/dev/null | head -1` 定位一次。
 
 ## 交付物
 
@@ -29,18 +31,22 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 ## 工作流程
 
 1. **理解需求**：确定业务状态、页面交互和 `/api/*` 操作；为每个操作起稳定、语义化的 `operationId`。需要多人游戏时，先处理构建消息中的初始玩家名单。
-2. **复制模板**：把 `references/app-template/` 下的内容复制到 `/mnt/session/outputs/`，保留目录结构。
+2. **复制模板**：运行
+   ```bash
+   bash <skill-dir>/scripts/init-template.sh /mnt/session/outputs
+   ```
+   一条命令完成复制。不要用 Read/Write 工具逐个搬运模板文件；`package.json`、`launch.json` 不需要读，保持原样。
 3. **实现后端**：修改 `app/app.js`。只使用 Node.js 内置模块，或在构建期把依赖打包进 `app/`；运行时不执行 `npm install` 或构建命令。
 4. **实现页面**：修改 `app/public/index.html`。页面通过 `fetch` 调用 `/api/*`，并轮询或使用 SSE 自动刷新；不要引用外部 CDN、字体或在线脚本。
 5. **更新契约**：修改 `openapi.yaml`，让它与实际 `/api/*` 操作一一对应；业务成功和错误响应都必须包含字符串 `message`。
-6. **最小验证**：按 `references/self-test.md` 做一次静态检查、一次启动、`/health`、`/` 和一个业务操作。不要做浏览器截图、UI 自动化或穷举错误分支。
-7. **打包**：
+6. **自测与打包**：运行
    ```bash
-   cd /mnt/session/outputs
-   rm -f artifact.tar.gz
-   tar -czf artifact.tar.gz app openapi.yaml launch.json
+   bash <skill-dir>/scripts/self-test.sh /mnt/session/outputs \
+     --op-method POST --op-path /api/join --op-body '{"user_name":"验证玩家"}' \
+     --bad-op-method POST --bad-op-path /api/join --bad-op-body '{"user_name":"  "}' \
+     --package
    ```
-8. **静态校验**：运行本技能目录下的 `scripts/validate-artifact.sh /mnt/session/outputs /mnt/session/outputs/artifact.tar.gz`，修复所有失败项后再结束。
+   脚本一次完成静态检查、测试端口启动、`/health`、`/`、业务操作、错误分支抽查、打包和归档校验。`--op-*` 必须调用本次构建的一个能改变状态的业务操作（路径以 `/api/` 开头）；`--bad-op-*` 抽查一个错误场景（4xx/5xx 是预期），两者响应都必须是 JSON 且包含字符串 `message`。失败时按输出修复并重跑，直到看到 `self-test passed`。不要做浏览器截图、UI 自动化或穷举错误分支。
 
 不要向用户提问或等待确认；缺少细节时按合理假设完成，并在最终说明中列出关键假设。
 
@@ -78,11 +84,7 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 
 ## 最小验证
 
-没有实际运行的检查不得声称通过，但也只做必要检查：
-
-1. 运行 `scripts/validate-artifact.sh .` 确认静态检查通过。
-2. 用测试 `PORT` 启动一次，确认 `/health`、`/` 和一个业务操作可用。
-3. 直接打包（不要测试 SIGTERM 或结束进程），打包后再运行一次 `validate-artifact.sh` 检查归档。
+没有实际运行的检查不得声称通过，但也只做必要检查：自测只跑一次 `scripts/self-test.sh`，它已覆盖静态检查（`validate-artifact.sh`）、一次启动、`/health`、`/`、一个改变状态的业务操作、一个错误分支抽查，以及 `--package` 时的打包和归档校验。
 
 不要截图、跑浏览器或 UI 自动化，不要逐项测试所有错误分支，也不要反复换端口重启。细节见 `references/self-test.md`。
 
@@ -90,6 +92,8 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 
 - `references/artifact-contract.md`：目录结构、launch.json、进程与运行约定。
 - `references/api-contract.md`：OpenAPI 3.1、业务响应、参数和控制面调用方式。
-- `references/self-test.md`：最小验证清单，只做必要检查。
-- `references/app-template/`：最小可运行模板，必须先复制再修改。
-- `scripts/validate-artifact.sh`：归档结构和启动契约的静态检查。
+- `references/self-test.md`：init-template.sh 与 self-test.sh 的用法说明。
+- `references/app-template/`：最小可运行模板，由 init-template.sh 复制。
+- `scripts/init-template.sh`：一条命令复制模板到产物目录。
+- `scripts/self-test.sh`：静态检查、启动验证、业务操作抽查、打包与归档校验。
+- `scripts/validate-artifact.sh`：归档结构和启动契约的静态检查（self-test 内部调用）。

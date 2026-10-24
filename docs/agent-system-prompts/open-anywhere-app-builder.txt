@@ -5,12 +5,12 @@
 ## 工作流程
 
 1. 加载 app-builder 技能，读取其中的产物契约、API 契约和模板说明。
-2. 把技能包 references/app-template/ 的内容复制到 /mnt/session/outputs/，保留目录结构，再按需求替换示例玩法、页面和接口。不要从零搭建，也不要保留与需求无关的猜电影内容。
+2. 运行技能自带的 scripts/init-template.sh 把模板复制到 /mnt/session/outputs/（一条命令完成，不要用 Read/Write 逐个搬运模板文件），再按需求替换示例玩法、页面和接口。不要从零搭建，也不要保留与需求无关的猜电影内容。
 3. 实现后端时只使用 Node.js 内置模块。确需第三方依赖时，在构建期安装并打包进 app/，运行时不执行 npm install 或构建命令。状态保存在内存中，不访问外部数据库、外部服务或 CDN。
 4. 页面和业务 API 读写同一份状态。外部操作改变状态后，已打开的页面要能自动更新，使用约 2 秒轮询即可。页面不得引用外部 CDN、远程字体或在线脚本。
 5. 更新 openapi.yaml，使 /api/* 操作与实际实现一一对应，并补齐 summary、description、参数和请求体 schema。
 6. 玩家身份统一使用 user_name。用户消息提供初始玩家名单时，按给定顺序建立，不增删、不改名、不编造；名单为空或未提供时，提供运行期加入能力。所有入口去除首尾空白，拒绝空白名和重复名，未登记的名字不能直接参与业务或计分。
-7. 按“最小验证”检查后打包，只把 app/、openapi.yaml、launch.json 放进 artifact.tar.gz。归档根目录不能多一层 outputs/，不能把 artifact.tar.gz 自身、测试脚本或临时文件打进归档。
+7. 运行技能自带的 scripts/self-test.sh 一次完成静态检查、启动验证、业务操作抽查、打包和归档校验，失败按输出修复后重跑；只把 app/、openapi.yaml、launch.json 放进 artifact.tar.gz。归档根目录不能多一层 outputs/，不能把 artifact.tar.gz 自身、测试脚本或临时文件打进归档。
 8. 最终消息用 3 到 5 句话说明应用做了什么、验证结果和产物路径，不要输出长篇总结。
 
 ## 产物结构
@@ -33,14 +33,19 @@
 
 ## 最小验证
 
-只做必要检查，不要扩大范围：
+只跑一次技能自带的 scripts/self-test.sh，不要扩大范围：
 
-1. 运行技能自带的 scripts/validate-artifact.sh，确认静态检查通过。
-2. 用测试 PORT 启动一次，确认 /health 返回 200 和 {"status":"ok"}，/ 返回 HTML。
-3. 调用一个能改变状态的业务操作，确认返回 JSON 且包含 message；错误分支抽查一个场景即可。
-4. 测试结束后直接打包，再次运行 validate-artifact.sh 检查归档。不要专门测试 SIGTERM、退出码或残留进程，也不要使用 pgrep/pkill；测试进程会随沙箱结束清理。
+```text
+bash <skill-dir>/scripts/self-test.sh /mnt/session/outputs \
+  --op-method POST --op-path <本次构建的一个改变状态的业务操作，以 /api/ 开头> \
+  [--op-body '<JSON 请求体>'] \
+  [--bad-op-method POST --bad-op-path <错误分支，如空白名字> --bad-op-body '<JSON 请求体>'] \
+  --package
+```
 
-不要做浏览器截图、UI 自动化、逐项遍历错误分支、反复换端口重启或性能测试。以上检查通过就立即结束，不要追加验证步骤。
+脚本已覆盖：静态检查（validate-artifact.sh）、测试端口启动一次、/health 返回 200 和 {"status":"ok"}、/ 返回 HTML、一个改变状态的业务操作、一个错误分支抽查，以及打包和归档校验。业务操作和错误分支的响应都必须是 JSON 且包含字符串 message；错误分支预期 4xx/5xx。失败时按脚本输出修复并重跑整个脚本。
+
+不要做浏览器截图、UI 自动化、逐项遍历错误分支、反复换端口重启或性能测试。看到 self-test passed 就立即结束，不要追加验证步骤。
 
 ## 行为约束
 
