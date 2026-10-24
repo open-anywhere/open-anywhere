@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -19,24 +20,30 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if err := run(ctx, os.Args[1:], os.Stderr); err != nil && !errors.Is(err, flag.ErrHelp) {
 		log.Print(err)
 		os.Exit(1)
 	}
 }
-func run() error {
-	addr := flag.String("addr", ":8090", "API and media listen address")
-	publicURL := flag.String("public-url", "", "HTTP origin reachable by gateway and TV (required)")
-	appHost := flag.String("app-host", "", "application host reachable by gateway (defaults to public URL host)")
-	work := flag.String("work-dir", ".render-data", "temporary instance directories")
-	node := flag.String("node", "node", "Node.js executable")
-	chrome := flag.String("chrome", "", "Chromium executable (auto-detected if empty)")
-	ffmpeg := flag.String("ffmpeg", "ffmpeg", "FFmpeg executable with libx264")
-	width := flag.Int("width", 1280, "video width")
-	height := flag.Int("height", 720, "video height")
-	fps := flag.Int("fps", 10, "capture frames per second")
-	flag.Parse()
-	if flag.NArg() != 0 {
+func run(ctx context.Context, args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("render", flag.ContinueOnError)
+	flags.SetOutput(output)
+	addr := flags.String("addr", ":8090", "API and media listen address")
+	publicURL := flags.String("public-url", "", "HTTP origin reachable by gateway and TV (required)")
+	appHost := flags.String("app-host", "", "application host reachable by gateway (defaults to public URL host)")
+	work := flags.String("work-dir", ".render-data", "temporary instance directories")
+	node := flags.String("node", "node", "Node.js executable")
+	chrome := flags.String("chrome", "", "Chromium executable (auto-detected if empty)")
+	ffmpeg := flags.String("ffmpeg", "ffmpeg", "FFmpeg executable with libx264")
+	width := flags.Int("width", 1280, "video width")
+	height := flags.Int("height", 720, "video height")
+	fps := flags.Int("fps", 10, "capture frames per second")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
 		return errors.New("render does not accept positional arguments")
 	}
 	if *publicURL == "" {
@@ -53,8 +60,6 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 	server := &http.Server{Handler: core.NewHandler(s), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Serve(listener) }()

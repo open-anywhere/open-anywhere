@@ -58,7 +58,14 @@ jobs:
         env:
           RENDER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
           RENDER_E2E_OUTPUT: ${{ github.workspace }}/e2e/results
-        run: go test -race -tags=e2e -v ./e2e -count=1 -timeout=180s
+        run: go test -race -tags=e2e -coverpkg=./internal/render/... -covermode=atomic -coverprofile=render-e2e-coverage.out -v ./e2e -count=1 -timeout=180s
+      - name: Upload Render integration coverage
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./render-e2e-coverage.out
+          flags: render-e2e
+          fail_ci_if_error: false
       - name: Save decoded frames
         if: always()
         uses: actions/upload-artifact@v4

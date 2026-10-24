@@ -205,3 +205,60 @@ func TestPageReadinessRejectsErrorAndNonHTML(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadErrorsDoNotLeaveReservations(t *testing.T) {
+	s := testService(t)
+	for _, status := range []int{404, 500} {
+		files := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
+		req := api.CreateRequest{AppID: "download-fails", ArtifactURL: files.URL, Port: availableTestPort(t)}
+		_, err := s.Create(context.Background(), req)
+		files.Close()
+		if err == nil || err.Detail.Code != "ARTIFACT_DOWNLOAD_FAILED" {
+			t.Fatalf("unexpected download failure: %v", err)
+		}
+		p, e := s.Port(req.Port)
+		if e != nil || p.Occupied {
+			t.Fatalf("failed download retained port: %+v %v", p, e)
+		}
+	}
+	files := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("not a gzip archive")) }))
+	defer files.Close()
+	_, err := s.Create(context.Background(), api.CreateRequest{AppID: "bad-gzip", ArtifactURL: files.URL, Port: availableTestPort(t)})
+	if err == nil || err.Detail.Code != "INVALID_ARTIFACT" {
+		t.Fatalf("invalid archive: %v", err)
+	}
+}
+
+func TestPortInspectionFailureIsNotReportedAsFree(t *testing.T) {
+	s := testService(t)
+	t.Setenv("PATH", t.TempDir())
+	h := NewHandler(s)
+	for _, path := range []string{"/v1/ports", "/v1/ports/39999"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 503 || !bytes.Contains(w.Body.Bytes(), []byte("PORT_INSPECTION_FAILED")) {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestConfigurationAndClosedService(t *testing.T) {
+	for _, cfg := range []Config{
+		{Width: 321}, {FPS: 31}, {StartupTimeout: time.Millisecond}, {PublicURL: "ftp://example.com"},
+		{PublicURL: "http://localhost:8090", AppHost: "bad/host"},
+		{PublicURL: "http://localhost:8090"},
+	} {
+		if s, err := New(cfg); err == nil {
+			s.cancel()
+			t.Fatalf("invalid config accepted: %+v", cfg)
+		}
+	}
+	s := testService(t)
+	if err := s.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Create(context.Background(), api.CreateRequest{AppID: "after-close", ArtifactURL: "http://localhost/test", Port: 39998})
+	if err == nil || err.Detail.Code != "RENDER_STOPPING" {
+		t.Fatalf("closed service accepted start: %v", err)
+	}
+}

@@ -133,3 +133,35 @@ func TestArtifactCancel(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestRejectMalformedLaunchAndMetadata(t *testing.T) {
+	for _, body := range []string{
+		`{"name":"test","runtimeExecutable":"python","runtimeArgs":["app/app.js"]}`,
+		`{"name":"test","runtimeExecutable":"node","runtimeArgs":["--eval","process.exit()"]}`,
+		`{"name":"test","runtimeExecutable":"node","runtimeArgs":["app/app.js","--port=3000"]}`,
+		`{"name":"test","runtimeExecutable":"node","runtimeArgs":["app/app.js"],"healthPath":"/other"}`,
+		`{"name":"test","runtimeExecutable":"node","runtimeArgs":["app/app.js"],"readyTimeoutMs":-1}`,
+		`{"name":"test","runtimeExecutable":"node","runtimeArgs":["app/app.js"]} {}`,
+	} {
+		dir := t.TempDir()
+		if err := unpack(context.Background(), fixtureTar(t), dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "launch.json"), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := validateArtifact(dir); err == nil {
+			t.Fatalf("bad launch accepted: %s", body)
+		}
+	}
+	dir := t.TempDir()
+	if err := unpack(context.Background(), fixtureTar(t), dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "app/package.json"), []byte(`null`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateArtifact(dir); err == nil {
+		t.Fatal("null package metadata accepted")
+	}
+}
