@@ -41,6 +41,17 @@ type Config struct {
 	browser browserHooks
 	// stopGroup optionally overrides process-group shutdown in tests.
 	stopGroup func(*exec.Cmd, <-chan struct{}) error
+	// afterDownload optionally runs in tests once the artifact has been
+	// downloaded into dir and before the app directory is created.
+	afterDownload func(dir string)
+	// afterUnpack optionally runs in tests once the artifact has been
+	// unpacked into appDir and before it is validated.
+	afterUnpack func(dir, appDir string)
+	// afterMedia optionally runs in tests once media startup has succeeded.
+	afterMedia func(*Service, *run)
+	// beforeReady optionally runs in tests after the startup media select and
+	// before the ready state is published.
+	beforeReady func(*Service, *run)
 }
 
 type run struct {
@@ -312,6 +323,9 @@ func (s *Service) execute(r *run) {
 		fail(502, "ARTIFACT_DOWNLOAD_FAILED", err)
 		return
 	}
+	if s.cfg.afterDownload != nil {
+		s.cfg.afterDownload(dir)
+	}
 	appDir := filepath.Join(dir, "artifact")
 	if err = os.Mkdir(appDir, 0700); err != nil {
 		fail(500, "APP_START_FAILED", err)
@@ -320,6 +334,9 @@ func (s *Service) execute(r *run) {
 	if err = unpack(startup, filepath.Join(dir, "artifact.tar.gz"), appDir); err != nil {
 		fail(422, "INVALID_ARTIFACT", err)
 		return
+	}
+	if s.cfg.afterUnpack != nil {
+		s.cfg.afterUnpack(dir, appDir)
 	}
 	l, err := validateArtifact(appDir)
 	if err != nil {
@@ -370,6 +387,9 @@ func (s *Service) execute(r *run) {
 		fail(502, "STREAM_START_FAILED", err)
 		return
 	}
+	if s.cfg.afterMedia != nil {
+		s.cfg.afterMedia(s, r)
+	}
 	select {
 	case <-r.ctx.Done():
 		return
@@ -377,6 +397,9 @@ func (s *Service) execute(r *run) {
 		fail(502, "APP_EXITED", errors.New("application exited during startup"))
 		return
 	default:
+	}
+	if s.cfg.beforeReady != nil {
+		s.cfg.beforeReady(s, r)
 	}
 	s.mu.Lock()
 	if r.stopRequested {

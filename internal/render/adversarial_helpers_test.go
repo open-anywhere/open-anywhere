@@ -242,14 +242,18 @@ func artifactServer(t *testing.T, payloads map[string][]byte) *httptest.Server {
 }
 
 type fakeServiceOptions struct {
-	nodeMode   string
-	ffmpegMode string
-	ffmpegPath string
-	startup    time.Duration
-	workDir    string
-	ports      []int
-	browser    browserHooks
-	stopGroup  func(*exec.Cmd, <-chan struct{}) error
+	nodeMode      string
+	ffmpegMode    string
+	ffmpegPath    string
+	startup       time.Duration
+	workDir       string
+	ports         []int
+	browser       browserHooks
+	stopGroup     func(*exec.Cmd, <-chan struct{}) error
+	afterDownload func(dir string)
+	afterUnpack   func(dir, appDir string)
+	afterMedia    func(*Service, *run)
+	beforeReady   func(*Service, *run)
 }
 
 func newFakeService(t *testing.T, opts fakeServiceOptions) *Service {
@@ -282,6 +286,10 @@ func newFakeService(t *testing.T, opts fakeServiceOptions) *Service {
 		Logger:         log.New(io.Discard, "", 0),
 		browser:        opts.browser,
 		stopGroup:      opts.stopGroup,
+		afterDownload:  opts.afterDownload,
+		afterUnpack:    opts.afterUnpack,
+		afterMedia:     opts.afterMedia,
+		beforeReady:    opts.beforeReady,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -320,6 +328,22 @@ func waitInstanceState(t *testing.T, s *Service, id, state string, timeout time.
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// waitStopRequested polls until Stop has flipped the run's stop flag (and
+// therefore canceled its context), or the deadline expires.
+func waitStopRequested(s *Service, r *run, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		requested := r.stopRequested
+		s.mu.Unlock()
+		if requested {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return false
 }
 
 type createResult struct {

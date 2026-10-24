@@ -138,20 +138,7 @@ func (b *Builder) watch(appID, sessionID string) {
 			b.timeout(appID, sessionID)
 			return
 		}
-		stream, err := b.client.OpenEventStream(ctx, sessionID)
-		if err != nil {
-			if ctx.Err() != nil {
-				b.timeout(appID, sessionID)
-				return
-			}
-			b.logf("build %s: event stream: %v", appID, err)
-			if !b.sleep(ctx, reconnectDelay(reconnects)) {
-				b.timeout(appID, sessionID)
-				return
-			}
-			reconnects++
-			continue
-		}
+		stream := b.client.OpenEventStream(ctx, sessionID)
 		reconnects = 0
 		for {
 			event, err := stream.Next()

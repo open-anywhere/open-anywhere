@@ -387,3 +387,155 @@ func TestAdversarialFailureErrorAndSnapshot(t *testing.T) {
 		t.Fatal("snapshot mutated the run")
 	}
 }
+
+func TestAdversarialAfterDownloadAppDirConflict(t *testing.T) {
+	payload := standardArtifact(t, validLaunch(5000))
+	files := artifactServer(t, map[string][]byte{"/artifact.tar.gz": payload})
+	var ran atomic.Bool
+	s := newFakeService(t, fakeServiceOptions{
+		afterDownload: func(dir string) {
+			ran.Store(true)
+			// A regular file where the unpacked app directory belongs makes
+			// the following Mkdir fail with EEXIST.
+			if err := os.WriteFile(filepath.Join(dir, "artifact"), []byte("occupied"), 0600); err != nil {
+				t.Errorf("seed artifact file: %v", err)
+			}
+		},
+	})
+	_, ferr := s.Create(context.Background(), api.CreateRequest{
+		AppID:       "adv-download-conflict",
+		ArtifactURL: files.URL + "/artifact.tar.gz",
+		Port:        availableTestPort(t),
+	})
+	if !ran.Load() {
+		t.Fatal("afterDownload hook did not run")
+	}
+	if ferr == nil || ferr.HTTP != 500 || ferr.Detail.Code != "APP_START_FAILED" {
+		t.Fatalf("expected app dir creation failure, got %+v", ferr)
+	}
+	if !strings.Contains(ferr.Detail.Message, "artifact") {
+		t.Fatalf("unexpected failure message: %s", ferr.Detail.Message)
+	}
+}
+
+func TestAdversarialAfterUnpackLogPathConflict(t *testing.T) {
+	payload := standardArtifact(t, validLaunch(5000))
+	files := artifactServer(t, map[string][]byte{"/artifact.tar.gz": payload})
+	var ran atomic.Bool
+	s := newFakeService(t, fakeServiceOptions{
+		afterUnpack: func(dir, appDir string) {
+			ran.Store(true)
+			// A directory where app.log belongs makes os.Create fail with EISDIR.
+			if err := os.Mkdir(filepath.Join(dir, "app.log"), 0700); err != nil {
+				t.Errorf("seed app.log directory: %v", err)
+			}
+		},
+	})
+	_, ferr := s.Create(context.Background(), api.CreateRequest{
+		AppID:       "adv-log-conflict",
+		ArtifactURL: files.URL + "/artifact.tar.gz",
+		Port:        availableTestPort(t),
+	})
+	if !ran.Load() {
+		t.Fatal("afterUnpack hook did not run")
+	}
+	if ferr == nil || ferr.HTTP != 500 || ferr.Detail.Code != "APP_START_FAILED" {
+		t.Fatalf("expected log creation failure, got %+v", ferr)
+	}
+	if !strings.Contains(ferr.Detail.Message, "app.log") {
+		t.Fatalf("unexpected failure message: %s", ferr.Detail.Message)
+	}
+}
+
+func TestAdversarialAfterMediaStopReturnsDuringStartup(t *testing.T) {
+	payload := standardArtifact(t, validLaunch(5000))
+	files := artifactServer(t, map[string][]byte{"/artifact.tar.gz": payload})
+	var ran atomic.Bool
+	stopDone := make(chan struct{})
+	s := newFakeService(t, fakeServiceOptions{
+		afterMedia: func(svc *Service, r *run) {
+			ran.Store(true)
+			go func() {
+				defer close(stopDone)
+				_, _ = svc.Stop(context.Background(), r.info.InstanceID)
+			}()
+			if !waitStopRequested(svc, r, 10*time.Second) {
+				t.Errorf("Stop never recorded a stop request")
+			}
+		},
+	})
+	res := waitCreate(t, createAsync(s, api.CreateRequest{
+		AppID:       "adv-stop-after-media",
+		ArtifactURL: files.URL + "/artifact.tar.gz",
+		Port:        availableTestPort(t),
+	}), 20*time.Second)
+	if !ran.Load() {
+		t.Fatal("afterMedia hook did not run")
+	}
+	if res.failure == nil || res.failure.Detail.Code != "APP_START_FAILED" || res.failure.Detail.Message != "instance stopped during startup" {
+		t.Fatalf("expected stopped-during-startup failure, got %+v", res.failure)
+	}
+	if res.instance.State != "stopped" || res.instance.Error != nil {
+		t.Fatalf("unexpected instance snapshot: %+v", res.instance)
+	}
+	select {
+	case <-stopDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return")
+	}
+}
+
+func TestAdversarialBeforeReadyStopReturnsDuringStartup(t *testing.T) {
+	payload := standardArtifact(t, validLaunch(5000))
+	files := artifactServer(t, map[string][]byte{"/artifact.tar.gz": payload})
+	var ran atomic.Bool
+	stopDone := make(chan struct{})
+	s := newFakeService(t, fakeServiceOptions{
+		beforeReady: func(svc *Service, r *run) {
+			ran.Store(true)
+			go func() {
+				defer close(stopDone)
+				_, _ = svc.Stop(context.Background(), r.info.InstanceID)
+			}()
+			if !waitStopRequested(svc, r, 10*time.Second) {
+				t.Errorf("Stop never recorded a stop request")
+			}
+		},
+	})
+	res := waitCreate(t, createAsync(s, api.CreateRequest{
+		AppID:       "adv-stop-before-ready",
+		ArtifactURL: files.URL + "/artifact.tar.gz",
+		Port:        availableTestPort(t),
+	}), 20*time.Second)
+	if !ran.Load() {
+		t.Fatal("beforeReady hook did not run")
+	}
+	if res.failure == nil || res.failure.Detail.Code != "APP_START_FAILED" || res.failure.Detail.Message != "instance stopped during startup" {
+		t.Fatalf("expected stopped-during-startup failure, got %+v", res.failure)
+	}
+	if res.instance.State != "stopped" || res.instance.Error != nil {
+		t.Fatalf("unexpected instance snapshot: %+v", res.instance)
+	}
+	select {
+	case <-stopDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return")
+	}
+}
+
+func TestAdversarialWaitHealthContextEndsBetweenProbes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := waitHealth(ctx, srv.URL, 4242, 1234, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 40*time.Millisecond {
+		t.Fatalf("health probe returned before the context deadline: %v", elapsed)
+	}
+}

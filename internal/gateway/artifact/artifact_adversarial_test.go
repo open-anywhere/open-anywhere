@@ -4,9 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -302,5 +304,37 @@ func TestValidateRejectsAnArchiveThatExpandsBeyondTheLimit(t *testing.T) {
 	_, err = Validate(writeBytes(t, buffer.Bytes()))
 	if err == nil || !strings.Contains(err.Error(), "expanded archive too large") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSaveFileReportsAnUnreadableTempCopy(t *testing.T) {
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("file permission semantics differ for root and on Windows")
+	}
+	dir := t.TempDir()
+	store, err := NewStore(dir, "http://gateway", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := writeBytes(t, []byte("package"))
+	temp := filepath.Join(dir, "app_1.tar.gz.tmp")
+	// copyFile only opens the temp copy for writing, so a pre-existing
+	// write-only file is copied successfully but cannot be read back for the
+	// digest check.
+	if err := os.WriteFile(temp, []byte("stale"), 0o200); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Open(temp); err == nil {
+		t.Skip("this user can read write-only files")
+	}
+	_, err = store.SaveFile("app_1", source, int64(len("package")), "digest")
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(temp); !os.IsNotExist(err) {
+		t.Fatalf("temp copy left behind: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "app_1.tar.gz")); !os.IsNotExist(err) {
+		t.Fatalf("incomplete artifact was published: %v", err)
 	}
 }

@@ -112,16 +112,8 @@ func (c Config) browserHooks() browserHooks {
 			browser, browserCancel := chromedp.NewContext(alloc)
 			return browser, browserCancel, allocCancel
 		},
-		run: chromedp.Run,
-		capture: func(ctx context.Context) ([]byte, error) {
-			var frame []byte
-			err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
-				var e error
-				frame, e = page.CaptureScreenshot().WithFormat(page.CaptureScreenshotFormatJpeg).WithQuality(85).Do(c)
-				return e
-			}))
-			return frame, err
-		},
+		run:     chromedp.Run,
+		capture: captureFrame,
 	}
 	if c.browser.start != nil {
 		h.start = c.browser.start
@@ -133,6 +125,23 @@ func (c Config) browserHooks() browserHooks {
 		h.capture = c.browser.capture
 	}
 	return h
+}
+
+// captureFrame grabs one JPEG screenshot from the page attached to ctx.
+func captureFrame(ctx context.Context) ([]byte, error) {
+	var frame []byte
+	err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+		return captureScreenshot(c, &frame)
+	}))
+	return frame, err
+}
+
+// captureScreenshot performs the DevTools Page.captureScreenshot call used by
+// captureFrame.
+func captureScreenshot(ctx context.Context, frame *[]byte) error {
+	var err error
+	*frame, err = page.CaptureScreenshot().WithFormat(page.CaptureScreenshotFormatJpeg).WithQuality(85).Do(ctx)
+	return err
 }
 
 func startMedia(life, startup context.Context, cfg Config, url, logPath string, h *hub) (*media, error) {
