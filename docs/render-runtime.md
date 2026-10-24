@@ -15,6 +15,8 @@ go run ./cmd/render \
 
 将 `192.168.1.20` 换成控制面和电视可达的主机地址。应用地址默认使用同一主机名；控制面通过不同地址访问应用时，可配置 `-app-host`。`-chrome`、`-node`、`-ffmpeg` 可以指定可执行文件路径。
 
+Linux 上 Chromium 需要可用的浏览器沙箱。Ubuntu 23.10+ 的 AppArmor 可能限制自行下载的浏览器创建 user namespace；E2E CI 为测试用 Chromium 的确切路径加载专用 AppArmor 配置，保留浏览器沙箱。
+
 API 和媒体流共用 `-addr`，应用按请求中的 `port` 监听。默认视频为 1280×720、10 fps，可用 `-width`、`-height`、`-fps` 配置。服务拒绝非法尺寸、帧率或缺少公开地址的配置。
 
 ## 可下载的计分板应用包

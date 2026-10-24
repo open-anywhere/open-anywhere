@@ -40,6 +40,20 @@ jobs:
           install-dependencies: true
       - name: Install video and font dependencies
         run: sudo apt-get update && sudo apt-get install -y ffmpeg lsof fonts-noto-cjk
+      - name: Allow this Chromium build to create its sandbox
+        env:
+          RENDER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          # Ubuntu AppArmor restricts user namespaces for downloaded browsers.
+          # Grant only this executable the namespace permission; keep Chrome sandboxed.
+          cat > "$RUNNER_TEMP/render-chromium.apparmor" <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile render-e2e-chromium "$RENDER_CHROME" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r "$RUNNER_TEMP/render-chromium.apparmor"
       - name: Decode live Render output and verify application state
         env:
           RENDER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
