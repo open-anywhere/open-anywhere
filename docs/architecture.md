@@ -8,7 +8,7 @@
 
 Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成一个可运行的 Web 应用，并在身边的屏幕上通过 AirPlay 呈现和控制。
 
-系统由四个组件构成：
+系统由四个组件和一个现场语音入口构成：
 
 | 组件 | 角色 |
 | --- | --- |
@@ -16,6 +16,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | 控制面（Control Plane） | MCP Server、任务编排、应用注册表、OpenAPI 到 HTTP 的适配 |
 | AgentAPI | 异步应用工厂：编码 Agent + 沙箱，产出应用 artifact |
 | Render | 应用运行时与舞台：启动应用、转发 HTTP、AirPlay 投屏 |
+| 现场语音入口 | 以虚拟设备身份接入灵矽云，收发语音与文字、回应设备端 MCP，提供本地 Web 控制台 |
 
 系统只有两条契约：
 
@@ -56,6 +57,9 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | App | AgentAPI 产出的、已经在 Render 上运行的应用 |
 | Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档、`launch.json` 和自检报告 |
 | Stage | Render 上常驻的展示页面；AirPlay 镜像的就是它 |
+| 现场语音入口 | 本地程序，模拟灵矽硬件；与灵矽云自身的语音能力、第 5 章投屏服务的调用方 “Client” 都不是一回事 |
+| 虚拟设备 | 现场语音入口在灵矽平台上注册的设备身份，由 MAC、Client-Id 和 token 标识 |
+| 激活码 | 设备在 OTA 上报后获得的 6 位码，用来把设备绑定到智能体 |
 | OpenAPI | 应用能力的 HTTP 契约，控制面据此校验和转发请求 |
 | launch.json | 应用启动契约，描述可执行文件、参数和端口 |
 
@@ -63,7 +67,8 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 
 ```mermaid
 flowchart LR
-  U["用户"] -->|语音| L["灵矽云<br/>ASR / TTS / 意图"]
+  U["用户"] -->|语音| V["现场语音入口<br/>虚拟设备 / Web 控制台"]
+  V <-->|灵矽设备协议| L["灵矽云<br/>ASR / TTS / 意图"]
   L -->|MCP Tool| C["控制面<br/>MCP Server / 编排 / 注册表"]
   C -->|创建 / 查询 session| A["AgentAPI<br/>编码 Agent + 沙箱"]
   A -->|artifact| C
@@ -77,6 +82,7 @@ flowchart LR
 
 | 组件 | 负责 | 不负责 |
 | --- | --- | --- |
+| 现场语音入口 | 保持与灵矽云的设备会话、收发语音与文字、回应设备端 MCP、本地 Web 控制台、设备注册与重连 | 声纹、ASR、TTS，构建与运行应用，投屏 |
 | 灵矽云 | ASR、TTS、意图识别、选择并调用 MCP Tool | 构建应用、运行应用、投屏 |
 | 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验 | 写代码、运行应用、理解应用的业务语义 |
 | AgentAPI | 运行编码 Agent、在沙箱中写代码和自测、持久化 artifact | 承载应用运行时、直接面对灵矽 |
@@ -484,3 +490,116 @@ sequenceDiagram
 - 返回结构化字段，不生成描述屏幕列表的顶层 `message`；由灵矽组织话术。`start-app` 的成功响应也不额外生成顶层 `message`，既有构建进度、通知和错误的消息字段保留原约定。
 - 用户明确指定屏幕时，灵矽匹配其 `screen_id`；未指定时可沿用当前会话的选择，或在只有一个可用且空闲的屏幕时直接选择；无法唯一确定时询问用户。调用 `start-app` 时始终传入明确的 `screen_id`。
 - MVP 中一个应用同时绑定一个屏幕，一个屏幕同时展示一个应用。列表是查询时快照，启动时控制面仍需重新校验可达性与占用，避免并发冲突。
+
+## 7. 现场语音入口
+
+本章描述现场语音入口。它以一台虚拟设备的身份接入灵矽云，目前用来模拟灵矽硬件（见 issue #20）。第 5 章里的 “语音入口” 指投屏服务的调用方，与本章无关。
+
+### 7.1 定位与边界
+
+| 负责 | 不负责 |
+| --- | --- |
+| 以虚拟设备身份建立并保持与灵矽云的 WebSocket 会话 | 构建、运行应用，理解应用业务 |
+| 收发文字、主动播报和 Opus 音频，转发灵矽的识别与播报事件 | 声纹识别、ASR、TTS（都在灵矽云） |
+| 回应灵矽对设备端 MCP 的 `initialize`、`tools/list`、`tools/call` | 第 6 章的应用管理 MCP（由控制面提供） |
+| 提供本地 Web 控制台和 HTTP / SSE / WebSocket 控制接口 | 公网访问；控制接口只应监听回环地址 |
+| 设备注册、断开与重连 | 投屏、Stage、AirPlay |
+
+第 6 章的 MCP 是控制面提供给灵矽云的云端工具；本章的设备端 MCP 由语音入口提供，两者互不替代。
+
+### 7.2 与灵矽的连接
+
+```mermaid
+sequenceDiagram
+  participant B as 浏览器控制台
+  participant K as 语音入口
+  participant O as 灵矽 OTA
+  participant L as 灵矽云
+
+  K->>O: OTA 上报（MAC、Client-Id）
+  O-->>K: websocket.url + token（已绑定）或 activation.code（未绑定）
+  K->>L: WebSocket 握手（Bearer token、Device-Id、Client-Id）
+  K->>L: hello（Opus、16 kHz、单声道、60 ms，features.mcp）
+  L-->>K: hello（session_id、音频参数）
+  L->>K: mcp initialize、tools/list
+  K-->>L: 设备端工具列表
+  B->>K: 文字、麦克风 Opus 包
+  K->>L: listen detect、二进制 Opus
+  L-->>K: stt、tts、llm、二进制 Opus
+  K-->>B: SSE 事件、下行 Opus
+```
+
+| 方向 | 消息 | 作用 |
+| --- | --- | --- |
+| 语音入口 → 灵矽 | `listen` `start` / `stop`，`mode` 默认 `realtime`（`auto`、`manual` 已定义，未在真实平台验证） | 开始或停止监听 |
+| 语音入口 → 灵矽 | `listen` `detect` + `text` | 用文字代替语音发一句话 |
+| 语音入口 → 灵矽 | `listen` `detect` + `text_response` | 让灵矽主动播报；平台会回显一条 `stt` |
+| 语音入口 → 灵矽 | `abort` | 打断当前回复 |
+| 语音入口 → 灵矽 | 二进制 Opus | 上行语音，约 60 ms 一包 |
+| 灵矽 → 语音入口 | `stt` | 灵矽听到的用户话 |
+| 灵矽 → 语音入口 | `tts`：`start`、`sentence_start`（带文本）、`stop`（带 `is_aborted`） | 回复，按句分段 |
+| 灵矽 → 语音入口 | `llm`：`emotion`、`action` | 表情与动作，可驱动形象 |
+| 灵矽 → 语音入口 | `mcp` | 对设备端 MCP 的调用 |
+| 灵矽 → 语音入口 | 二进制 Opus | 下行语音 |
+
+浏览器负责 Opus 编解码（WebCodecs），语音入口只转发 Opus 包，因此不依赖 cgo、libopus 和 ffmpeg。
+
+### 7.3 设备端 MCP
+
+灵矽把设备当作 MCP Server：会话建立后先发 `initialize`，再发 `tools/list`，之后按需发 `tools/call`。`initialize` 的 `capabilities.vision` 里带有平台下发的视觉服务地址和 token，语音入口不会把 token 展示出来。
+
+当前上报两个仅作用于网页播放器的工具，用来验证 `tools/list` 与 `tools/call` 整条链路：
+
+| 工具 | 参数 | 说明 |
+| --- | --- | --- |
+| `self.audio_speaker.set_volume` | `volume`：0–100 整数，必填 | 设置网页播放器音量；越界或非整数返回 `isError` |
+| `self.audio_speaker.get_volume` | 无 | 返回当前音量 |
+
+约束：
+
+- 不为应用注册业务工具。灵矽侧的动态工具列表目前不能热更新，应用能力走第 6 章的稳定工具加 OpenAPI。
+- 调用未知工具时返回标准 JSON-RPC 错误（`-32601`）。
+- 云端自己完成的工具调用（例如查天气）不经过设备，语音入口只能看到最终的 `stt`、`tts`、`llm`，看不到调用过程。
+
+### 7.4 设备注册
+
+凭证保存在 `.device.json`（`mac`、`clientId`、`token`、`wsUrl`），文件权限 0600，已在 `.gitignore`。没有这个文件时，常驻模式仍能启动，在 Web 控制台注册：
+
+1. 生成虚拟设备身份（本地管理的单播 MAC 和 UUID v4），向 OTA 上报，得到激活码。
+2. 把激活码绑定到智能体：在灵矽控制台手动绑定；或在页面填 Agent ID 和 API Key，由语音入口调用绑定接口。API Key 只用于这一次请求，不保存，错误信息里也不会带出。
+3. 绑定后再次上报，平台返回 `websocket.token`，语音入口写入凭证文件并自动连接。
+
+同一次注册内，身份与激活码保持不变，可以重复点击检查。
+
+### 7.5 本地控制接口
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /status` | `state`、`mode`、`session_id`、`mac`、`connected`、`volume`、`registered`、`activation_code` |
+| `GET /events` | SSE：`hello`、`stt`、`tts`、`llm`、`mcp`、`audio`、`volume`；事件可带灵矽原始消息（`token` 字段已遮蔽） |
+| `POST /say`、`POST /announce` | `{"text":"…"}`，以用户身份发话 / 让灵矽主动播报 |
+| `POST /pause`、`/resume`、`/abort` | 暂停、继续监听，打断回复 |
+| `POST /device/register` | `{"agent_id","api_key"}` 可为空；返回 `pending` + 激活码或 `registered`；要求 `Content-Type: application/json` |
+| `POST /disconnect`、`/reconnect` | 手动断开；断开后重连（已连接时换新会话，失败返回 502） |
+| `WS /audio?codec=opus`、`WS /playback` | 浏览器上行 / 下行 Opus 包 |
+
+### 7.6 状态、断开与重连
+
+状态：`connecting`、`listening`、`thinking`、`speaking`、`idle`（用户暂停）、`reconnecting`、`disconnected`（用户手动断开）。
+
+- 主动播报在灵矽讲话期间排队，`tts stop` 后发送下一条；被打断时清空队列；平台回显的 `stt` 被忽略。
+- 意外断线：按 1、2、4、8、15 秒退避自动重连，成功后恢复监听；用户暂停过的，重连后保持暂停。
+- 手动断开：不自动重连，丢弃排队的播报，需要点“重新连接”。
+- 按平台文档，智能体配置 `goodbye.idle_timeout_seconds`（60–3600 秒）后，空闲会话会被服务端断开，此时走意外断线路径。该路径还没有在真实空闲超时下观察过。
+
+### 7.7 安全
+
+- 控制接口没有鉴权，只应监听 `127.0.0.1`，不要暴露到公网或不可信网络。
+- `/device/register` 要求 JSON 内容类型，避免其他网页直接向本地端口发起简单请求。
+- 原始消息展示前会遮蔽所有 `token` 字段；凭证和 API Key 不写入日志。
+
+### 7.8 验证状态
+
+已在真实灵矽云验证：文字对话、主动播报、事件流、下行语音转发、手动断开与一键重连、设备端 `tools/list` 与 `tools/call`（音量工具）。
+
+尚未验证：网页麦克风上行、声纹、真实扬声器出声、服务端空闲超时后的重连、绑定接口和“绑定后取得凭证”在真实平台上的行为（只用模拟服务测过）、EasyTier 地址绑定。
