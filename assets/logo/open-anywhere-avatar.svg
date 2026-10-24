@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="ow-title">
+  <title id="ow-title">open anywhere</title>
+  <rect width="512" height="512" fill="#0E1116"/>
+  <g transform="translate(256 256) scale(1.9) translate(-128 -128)">
+    <path d="M126 79H84a31 31 0 0 0-31 31v62a31 31 0 0 0 31 31h62a31 31 0 0 0 31-31v-42" fill="none" stroke="#F5F3EE" stroke-width="26" stroke-linecap="round"/>
+    <rect x="184" y="40" width="32" height="32" rx="8" fill="#00C2A8"/>
+  </g>
+</svg>
