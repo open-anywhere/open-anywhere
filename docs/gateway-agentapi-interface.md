@@ -89,7 +89,7 @@ skills/app-builder/
     └── validate-artifact.sh     # 归档结构和启动契约的静态检查
 ```
 
-`references/app-template/` 是可直接复制的最小 Node.js 应用，`SKILL.md` 要求先复制模板再按需求修改，避免智能体从零搭建。模板放在 `references/` 而不是 `assets/`：`assets/` 容易被当作仅供展示的素材，智能体不保证读取和使用。模板内容跟随 [app-artifact.md](app-artifact.md) 更新。
+`references/app-template/` 是可直接复制的最小 Node.js 应用，当前实现了一个猜电影示例：玩家加入、根据线索提交电影名、答对得分并进入下一轮。`SKILL.md` 要求先复制模板再按需求修改，避免智能体从零搭建；实际业务替换模板中的电影玩法和接口，但保留产物与身份约定。模板放在 `references/` 而不是 `assets/`：`assets/` 容易被当作仅供展示的素材，智能体不保证读取和使用。模板内容跟随 [app-artifact.md](app-artifact.md) 更新。
 
 上传技能：
 

@@ -1,0 +1,7 @@
+{
+  "name": "guess-the-movie",
+  "runtimeExecutable": "node",
+  "runtimeArgs": ["app/app.js"],
+  "healthPath": "/health",
+  "readyTimeoutMs": 10000
+}
