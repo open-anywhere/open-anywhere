@@ -57,6 +57,7 @@ Content-Type: application/json
 
 ### 2.1 端口与实例
 
+- 控制面可以先用 `GET /v1/ports` 查看已占用端口，再用 `GET /v1/ports/{port}` 检查候选端口，最后把选定的端口传入启动请求，详见 2.4。
 - Render 为每次接受的启动请求分配 `instance_id`，用于查询和停止；控制面维护 `app_id → Render / instance_id` 的映射。
 - Render 校验并预留自己管理的端口，防止并发启动重复使用。已有活动实例占用该端口时返回 `409 PORT_IN_USE`。
 - 控制面之前观察到端口空闲，不代表进程启动时仍然空闲。最终以应用绑定端口是否成功为准；绑定失败不得把该端口上其他服务的健康响应当作本次启动成功。
@@ -101,12 +102,84 @@ Content-Type: application/json
 - `source` 可直接作为 Casting 创建投屏会话的 `source`。示例为纯视频，`audio_codec` 为空字符串；仅在实际包含 AAC 音轨时声明 `aac`。
 - Render 的 `ready` 表示应用、页面和媒体输出已就绪，不表示电视已播放。控制面仍须等 Casting 确认 `playing`，才能对灵矽返回整体应用 `running`。
 
+### 2.4 端口查询
+
+两个接口查询的是 Render 所在主机上的 **TCP 端口**，以应用绑定 `0.0.0.0:<port>` 时是否冲突为判断范围，不是查询 HTTP 路由是否存在。需要同时考虑 Render 的实例预留记录和操作系统中的端口占用；不能只检查应用注册表。
+
+**检查指定端口：**
+
+```http
+GET /v1/ports/39101
+```
+
+端口空闲时返回 `200`：
+
+```json
+{
+  "port": 39101,
+  "occupied": false,
+  "owner": null
+}
+```
+
+已被 Render 管理的应用预留或使用时，同样返回 `200`：
+
+```json
+{
+  "port": 39101,
+  "occupied": true,
+  "owner": "app",
+  "instance_id": "instance-quiz-001"
+}
+```
+
+`owner` 取值为 `app`（Render 管理的应用实例）、`render`（Render 自身的 API 或媒体服务）、`external`（其他程序）或空闲时的 `null`。只有 `app` 返回 `instance_id`；不暴露其他程序的进程详情。
+
+**列出当前占用端口：**
+
+```http
+GET /v1/ports
+```
+
+返回 `200`，列表按端口升序排列，仅包含已占用项：
+
+```json
+{
+  "ports": [
+    {
+      "port": 8765,
+      "occupied": true,
+      "owner": "render"
+    },
+    {
+      "port": 39101,
+      "occupied": true,
+      "owner": "app",
+      "instance_id": "instance-quiz-001"
+    },
+    {
+      "port": 39102,
+      "occupied": true,
+      "owner": "external"
+    }
+  ]
+}
+```
+
+列表合并 Render 的预留记录和系统中可检测到的 TCP 占用，按端口去重。应用尚在启动、正在停止或清理失败但资源未释放时，预留端口也属于 `occupied: true`。不能因为尚未监听或进程刚退出就提前将它标为空闲。
+
+操作系统占用枚举需要适配部署平台；若检查失败或权限不足，返回 `503 PORT_INSPECTION_FAILED`，不能用空列表或 `occupied: false` 代替未知结果。系统枚举仍可能存在时差或漏掉尚未监听的绑定，因此列表用于筛选，指定端口查询还须结合实际绑定探测；探测失败且无法确认为占用时也返回检查错误。
+
+查询不预留端口，也不保证随后启动成功。控制面选好端口后仍通过 `POST /v1/apps` 提交；Render 在启动时处理并发预留及实际绑定，冲突返回 `409 PORT_IN_USE`。控制面不应终止其他程序以抢占端口。
+
 ## 3. 状态查询与停止
 
-除启动接口外，提供实例查询与停止，以便控制面持续管理资源：
+服务接口汇总：
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
+| `GET` | `/v1/ports` | 列出当前已占用的 TCP 端口，包括预留端口和其他程序占用 |
+| `GET` | `/v1/ports/{port}` | 检查指定 TCP 端口是否被占用及占用来源 |
 | `POST` | `/v1/apps` | 下载应用包并启动应用、页面和媒体输出 |
 | `GET` | `/v1/apps/{instance_id}` | 查询实例当前状态 |
 | `DELETE` | `/v1/apps/{instance_id}` | 停止实例并清理资源 |
@@ -159,11 +232,14 @@ Render 停止不会自动调用 Casting。控制面正常停止应用时应先�
 
 错误响应统一包含 `error.stage`、`error.code` 和 `error.message`；已分配实例时附带顶层 `instance_id`，便于查询和清理。阶段沿用 `starting`、`running`，不增加 `projection` 阶段。
 
+端口查询尚未进入应用生命周期，其错误仅包含 `error.code` 和 `error.message`，不附带 `stage`。端口参数必须为 1–65535 的整数；非法参数返回 `400 INVALID_REQUEST`。
+
 | 场景 | HTTP 状态 | code 示例 |
 | --- | --- | --- |
 | URL、端口或 JSON 输入非法 | `400` | `INVALID_REQUEST` |
 | 查询或停止未知实例 | `404` | `INSTANCE_NOT_FOUND` |
 | 端口已占用 | `409` | `PORT_IN_USE` |
+| 端口查询或系统占用枚举失败 | `503` | `PORT_INSPECTION_FAILED` |
 | 产物结构、OpenAPI 或运行时不符合约定 | `422` | `INVALID_ARTIFACT` |
 | 应用下载失败 | `502` | `ARTIFACT_DOWNLOAD_FAILED` |
 | 进程启动、健康检查或页面加载失败 | `502` | `APP_START_FAILED`、`APP_HEALTH_FAILED`、`PAGE_LOAD_FAILED` |
@@ -194,5 +270,7 @@ Chromium 负责运行页面，捕获编码组件负责把画面转换为 MPEG-TS
 5. 应用退出、浏览器退出或编码中断后，实例进入 `error`；控制面能够据此处理整体应用失败。
 6. 停止后相关进程、流连接和端口被释放；重复停止已知实例成功；清理失败可以重试。
 7. 将返回的 `source` 交给现有 Casting 服务，使用真实屏幕验证拉流和播放；Render 的 `ready` 与 Casting 的 `playing` 分别检查。
+8. 端口查询和列表能够区分空闲、应用预留、Render 自身服务及其他程序占用；清理完成后应用预留从列表消失，检查失败时返回错误而非误报空闲。
+9. 查询空闲后被其他程序抢先绑定，启动仍返回端口冲突，控制面可另选端口重试。
 
 本文定义预期行为，不代表 Render、Chromium 捕获或上述接口已经实现。
