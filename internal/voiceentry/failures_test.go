@@ -3,6 +3,7 @@ package voiceentry
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -55,4 +56,41 @@ func TestReconnectStopsWaitingWhenCancelled(t *testing.T) {
 	if err := reconnect(ctx, &s, &transport{}, c, linx.Device{}, nil, []time.Duration{time.Hour}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v", err)
 	}
+}
+
+func TestResidentRunSurvivesListeningFailingToStart(t *testing.T) {
+	f := newFakeLinx(t, false)
+	a, err := New(Config{DevicePath: writeDevice(t, f.wsURL()), Serve: true, Listener: mustListen(t), ReconnectDelays: []time.Duration{5 * time.Millisecond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.controller = voice.NewController(refusingTransport{}, voice.Realtime)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+	deadline := time.Now().Add(3 * time.Second)
+	for f.sessions.Load() < 2 { // the first session was closed and replaced
+		if time.Now().After(deadline) {
+			t.Fatalf("no reconnect attempt, sessions=%d", f.sessions.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned early: %v", err)
+	default:
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run=%v", err)
+	}
+}
+
+func mustListen(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ln
 }

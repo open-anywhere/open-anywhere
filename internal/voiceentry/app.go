@@ -162,7 +162,12 @@ func (a *App) Run(ctx context.Context) error {
 		a.transport.Set(s)
 		if err := a.controller.Start(); err != nil {
 			_ = s.Close()
-			return err
+			if !a.cfg.Serve {
+				return err
+			}
+			// A resident run must survive Linx hanging up right after the
+			// greeting: the closed session sends the loop into reconnecting.
+			log.Printf("start listening: %v", err)
 		}
 	}
 	defer func() {
