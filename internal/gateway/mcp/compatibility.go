@@ -61,7 +61,7 @@ func addCompatibility(server *sdk.Server, tools Apps, identity app.Identity, pro
 		add("get_openapi", "读取应用完整 OpenAPI 文档，先分析再调用。", id, func(ctx context.Context, b json.RawMessage) (any, error) {
 			return ext.GetOpenAPI(ctx, identity, getID(b))
 		})
-		add("list-apps", "列出这台设备和智能体构建过的应用（最多保留最近 10 个），最新的在前，不受重连影响。每项有 app_id、名字、标题、需求摘要、状态、操作列表 operations，以及 startable（能否用 start-app 启动）。用户说“玩上次的/之前那个”时先用它，选定后用 start-app 启动，需要时再用 get-app-operations 或 get_openapi 查看可调用的操作。", `{"type":"object","properties":{},"additionalProperties":false}`, func(ctx context.Context, b json.RawMessage) (any, error) {
+		add("list-apps", "列出你构建过的应用，最新的在前。历史最多保留最近 10 个，旧应用可能被挤掉。每项有 app_id、名字、标题、需求摘要、状态、操作列表 operations，以及 startable（能否用 start-app 启动）。用户说“玩上次的/之前那个”时先用它，选定后用 start-app 启动，需要时再用 get-app-operations 或 get_openapi 查看可调用的操作。", `{"type":"object","properties":{},"additionalProperties":false}`, func(ctx context.Context, b json.RawMessage) (any, error) {
 			a, err := ext.ListApps(ctx, identity)
 			return map[string]any{"apps": a}, err
 		})
@@ -81,7 +81,7 @@ func addCompatibility(server *sdk.Server, tools Apps, identity app.Identity, pro
 		return map[string]any{"ok": out.Status >= 200 && out.Status < 300, "status": out.Status, "data": out.Body}, nil
 	})
 	if probe {
-		add("probe_speaker", "测试声纹：传本轮平台声纹 speaker_name；speaker_id 未知传 null，不把姓名填作 ID。不从玩家列表或设备 ID 猜测。", `{"type":"object","properties":{"speaker_id":{"type":["string","null"]},"speaker_name":{"type":["string","null"]},"context_source":{"enum":["platform_voiceprint","unavailable"]}},"required":["speaker_id","speaker_name","context_source"],"additionalProperties":false}`, func(ctx context.Context, b json.RawMessage) (any, error) {
+		add("probe_speaker", "测试声纹：传本轮平台声纹 speaker_name；speaker_id 未知传 null，不把姓名填作 ID，也不要猜测。", `{"type":"object","properties":{"speaker_id":{"type":["string","null"]},"speaker_name":{"type":["string","null"]},"context_source":{"enum":["platform_voiceprint","unavailable"]}},"required":["speaker_id","speaker_name","context_source"],"additionalProperties":false}`, func(ctx context.Context, b json.RawMessage) (any, error) {
 			var a any
 			_ = json.Unmarshal(b, &a)
 			log.Printf("mcp: probe_speaker received=%s", b)
