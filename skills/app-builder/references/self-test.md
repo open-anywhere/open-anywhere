@@ -18,7 +18,9 @@ bash <skill-dir>/scripts/validate-artifact.sh .
 PORT=4310 node app/app.js
 ```
 
-保持前台运行。不要使用 `nohup`、`&` 或打开浏览器。端口被占用时只换一次测试端口，不要把换端口逻辑写进应用。
+保持前台运行。如果当前环境没有第二个终端，可以在一条命令里用 `&` 后台启动，紧接着执行下面的 curl；不要使用 `nohup`，也不要打开浏览器。端口被占用时只换一次测试端口，不要把换端口逻辑写进应用。
+
+测试结束后不需要停止进程，也不要使用 `pgrep`、`pkill` 或检查退出码；沙箱结束时会自动清理。
 
 ## 3. 三项 HTTP 检查
 
@@ -36,23 +38,21 @@ curl -fsS -X POST http://127.0.0.1:4310/api/join \
 
 错误处理抽查一个场景（例如空白 `user_name`）返回 JSON `message` 就够了，不要穷举所有错误分支。
 
-## 4. 停止并校验归档
+## 4. 打包并校验归档
 
 ```bash
-kill -TERM <pid>
 cd /mnt/session/outputs
 rm -f artifact.tar.gz
 tar -czf artifact.tar.gz app openapi.yaml launch.json
 bash <skill-dir>/scripts/validate-artifact.sh . artifact.tar.gz
 ```
 
-进程应在几秒内退出；归档校验必须再次看到 `artifact validation passed`。无需为了测试再解压启动一遍，脚本会检查归档结构和必填文件。
+归档校验必须再次看到 `artifact validation passed`。无需为了测试再解压启动一遍，脚本会检查归档结构和必填文件。不要测试 SIGTERM、退出码或残留进程。
 
 ## 完成标准
 
 - 两次 `validate-artifact.sh` 通过。
 - `/health` 返回 200 且内容正确，`/` 返回 HTML。
 - 一个业务操作返回 JSON，并包含 `message`。
-- 进程收到 `SIGTERM` 后退出。
 
 以上通过即视为完成，不要再追加验证步骤。

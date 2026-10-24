@@ -38,7 +38,7 @@
 1. 运行技能自带的 scripts/validate-artifact.sh，确认静态检查通过。
 2. 用测试 PORT 启动一次，确认 /health 返回 200 和 {"status":"ok"}，/ 返回 HTML。
 3. 调用一个能改变状态的业务操作，确认返回 JSON 且包含 message；错误分支抽查一个场景即可。
-4. 发送 SIGTERM 确认进程退出，打包后再次运行 validate-artifact.sh 检查归档。
+4. 测试结束后直接打包，再次运行 validate-artifact.sh 检查归档。不要专门测试 SIGTERM、退出码或残留进程，也不要使用 pgrep/pkill；测试进程会随沙箱结束清理。
 
 不要做浏览器截图、UI 自动化、逐项遍历错误分支、反复换端口重启或性能测试。以上检查通过就立即结束，不要追加验证步骤。
 

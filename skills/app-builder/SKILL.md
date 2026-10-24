@@ -82,7 +82,7 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 
 1. 运行 `scripts/validate-artifact.sh .` 确认静态检查通过。
 2. 用测试 `PORT` 启动一次，确认 `/health`、`/` 和一个业务操作可用。
-3. 停止进程，打包后再运行一次 `validate-artifact.sh` 检查归档。
+3. 直接打包（不要测试 SIGTERM 或结束进程），打包后再运行一次 `validate-artifact.sh` 检查归档。
 
 不要截图、跑浏览器或 UI 自动化，不要逐项测试所有错误分支，也不要反复换端口重启。细节见 `references/self-test.md`。
 
