@@ -72,6 +72,10 @@ func TestBuildingMessage(t *testing.T) {
 	if value.BuildingMessage() != "agent" {
 		t.Fatalf("message = %q", value.BuildingMessage())
 	}
+	value.LastProgress = "progress"
+	if value.BuildingMessage() != "progress" {
+		t.Fatalf("message = %q", value.BuildingMessage())
+	}
 }
 
 func TestIdentity(t *testing.T) {

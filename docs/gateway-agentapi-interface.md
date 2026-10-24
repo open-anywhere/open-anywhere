@@ -264,6 +264,7 @@ sequenceDiagram
   C->>A: GET /v1/sessions/{id}/events/stream（SSE）
   C->>A: POST /v1/sessions/{id}/events（user.message）
   A-->>C: session.status_running
+  A-->>C: agent.thinking
   A-->>C: agent.message
   A-->>C: session.status_idle（end_turn）
   C->>A: GET /v1/files?scope_id={id}
@@ -376,7 +377,8 @@ data: {"type":"session.status_idle","id":"evt_01J...","stop_reason":{"type":"end
 
 | `event.type` | 控制面动作 |
 | --- | --- |
-| `agent.message` | 取 `content` 中的 `text` 块，更新 `building.message`，同时保存 `last_agent_message` |
+| `agent.message` | 取 `content` 中的 `text` 块，更新 `building.message` 和最近进度，同时保存 `last_agent_message` |
+| `agent.thinking` | 取 `content` 中的 `text` 块，只更新 `building.message` 和最近进度；不覆盖 `last_agent_message` |
 | `user.message` | 标记构建任务已进入事件流，可用于确认提交；不改变应用状态 |
 | `session.status_running` | 记录本轮开始时间，保持 `building` |
 | `session.error` | 记录错误信息；它不代表会话已终止，继续等待后续状态 |
@@ -388,14 +390,16 @@ data: {"type":"session.status_idle","id":"evt_01J...","stop_reason":{"type":"end
 
 - 先注册消费者，再提交 `user.message`；即使首次连接晚于任务提交，回放也能补齐事件。
 - 按事件 `id` 去重；控制面持久化已处理事件 ID 的集合（或可排序的事件游标），重连后从头回放并跳过已处理事件。
-- 只有在观察到本轮 `user.message`、`session.status_running` 或 `agent.message` 之后，才接受 `session.status_idle`；提交前回放的旧 `idle` 不能当作本轮完成。
+- 只有在观察到本轮 `user.message`、`session.status_running`、`agent.message` 或 `agent.thinking` 之后，才接受 `session.status_idle`；提交前回放的旧 `idle` 不能当作本轮完成。
 - 连接断开时按 1、2、4、8、15 秒退避重连，上限 30 秒；重连期间不重复发送 `user.message`。
 - 同一 `session_id` 只允许一个消费者推进状态；多副本部署时用 `app_id` 或 `session_id` 加分布式锁。
 
 `building.message` 的取值：
 
-- 取最近一条完整 `agent.message`，把 `content` 中所有 `type=text` 的文本拼接，压缩连续空白。
-- 超过 200 个字符时截断，保留前 200 个字符；没有文本时保留上一条。
+- 维护一个“最近进度”字段：`agent.message`、`agent.thinking`、`session.error` 按到达顺序更新它，`building.message` 取该字段。agent 持续调用工具、没有正式消息输出时，thinking 让进度保持更新。
+- `agent.message` 把 `content` 中所有 `type=text` 的文本拼接，压缩连续空白，同时保存为 `last_agent_message`。
+- `agent.thinking` 同样取 `content` 中的 `type=text` 文本，但只更新最近进度，不写入 `last_agent_message`；内容可能为空或被脱敏，此时保留上一条进度。
+- 超过 200 个字符时截断，保留前 200 个字符；thinking 较长时优先截取到第一句。
 - 不使用 `event_delta` 增量预览；它不是持久事件，重连后无法补回。
 
 ### 3.5 停止原因处理

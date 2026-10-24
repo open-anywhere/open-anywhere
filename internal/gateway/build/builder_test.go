@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/artifact"
@@ -163,6 +164,77 @@ func TestBuilderReportsAgentStop(t *testing.T) {
 	waitFor(t, 2*time.Second, func() bool { return len(rec.archiveList()) == 1 })
 }
 
+func TestBuilderReportsThinkingAsProgress(t *testing.T) {
+	archive := testArtifact(t)
+	rec := &recorder{}
+	gate := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate) }) }
+	server := newAgentServerWithGate(t, "thinking", archive, rec, gate)
+	defer server.Close()
+	defer release()
+	notifier := &fakeNotifier{}
+	builder, registry, _ := newTestBuilder(t, server.URL, notifier)
+
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	entry := registry.Add(app.App{ID: "app_1", Owner: owner, Prompt: "做一个小游戏", State: app.StateBuilding, BuildStartedAt: time.Now().UTC()})
+	if err := builder.Start(context.Background(), entry.Snapshot()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	waitFor(t, 5*time.Second, func() bool {
+		return entry.Snapshot().BuildingMessage() == "先读模板和接口约定。然后写 app.js，再自测。"
+	})
+	if got := entry.Snapshot().LastAgentMessage; got != "" {
+		t.Fatalf("thinking must not become the agent message: %q", got)
+	}
+
+	release()
+	waitFor(t, 5*time.Second, func() bool { return entry.Snapshot().State == app.StateIdle })
+	if got := entry.Snapshot().LastProgress; got != "" {
+		t.Fatalf("progress was not cleared after the build: %q", got)
+	}
+}
+
+func TestRecordProgress(t *testing.T) {
+	builder, registry, _ := newTestBuilder(t, "http://127.0.0.1:1", &fakeNotifier{})
+	entry := registry.Add(app.App{ID: "app_1", State: app.StateBuilding})
+
+	builder.recordThinking("app_1", "   ")
+	if got := entry.Snapshot().LastProgress; got != "" {
+		t.Fatalf("blank thinking changed progress: %q", got)
+	}
+	builder.recordThinking("app_1", "Now write app.js.")
+	if got := entry.Snapshot().BuildingMessage(); got != "Now write app.js." {
+		t.Fatalf("message = %q", got)
+	}
+	builder.recordMessage("app_1", "正在实现页面")
+	snapshot := entry.Snapshot()
+	if snapshot.LastAgentMessage != "正在实现页面" || snapshot.LastProgress != "正在实现页面" {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	entry.Update(func(a *app.App) { a.State = app.StateIdle })
+	builder.recordThinking("app_1", "late thinking")
+	if got := entry.Snapshot().LastProgress; got != "正在实现页面" {
+		t.Fatalf("thinking was recorded outside building: %q", got)
+	}
+}
+
+func TestProgressText(t *testing.T) {
+	short := "先读模板和接口约定。然后写 app.js。"
+	if got := progressText(short); got != short {
+		t.Fatalf("short text = %q", got)
+	}
+	long := "先读模板和接口约定。" + strings.Repeat("细节", 300)
+	if got := progressText(long); got != "先读模板和接口约定。" {
+		t.Fatalf("long text = %q", got)
+	}
+	withoutStop := strings.Repeat("长", 300)
+	if got := progressText(withoutStop); utf8.RuneCountInString(got) != 200 {
+		t.Fatalf("truncated runes = %d", utf8.RuneCountInString(got))
+	}
+}
+
 func TestBuilderStartFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -214,6 +286,11 @@ func newTestBuilder(t *testing.T, serverURL string, notifier *fakeNotifier) (*Bu
 }
 
 func newAgentServer(t *testing.T, mode string, archive []byte, rec *recorder) *httptest.Server {
+	t.Helper()
+	return newAgentServerWithGate(t, mode, archive, rec, nil)
+}
+
+func newAgentServerWithGate(t *testing.T, mode string, archive []byte, rec *recorder, gate <-chan struct{}) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
@@ -271,6 +348,14 @@ func newAgentServer(t *testing.T, mode string, archive []byte, rec *recorder) *h
 			write(`{"id":"e0","type":"session.status_idle","stop_reason":{"type":"end_turn"}}`)
 		}
 		write(`{"id":"e1","type":"session.status_running"}`)
+		if mode == "thinking" {
+			write(`{"id":"e2","type":"agent.thinking","content":[{"type":"text","text":"先读模板和接口约定。然后写 app.js，再自测。"}]}`)
+			if gate != nil {
+				<-gate
+			}
+			write(`{"id":"e3","type":"session.status_idle","stop_reason":{"type":"end_turn"}}`)
+			return
+		}
 		write(`{"id":"e2","type":"agent.message","content":[{"type":"text","text":"正在实现页面"}]}`)
 		if mode == "error-event" {
 			write(`{"id":"e2b","type":"session.error","error":{"message":"重试中"}}`)
