@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -34,6 +35,21 @@ type Responder struct {
 	closeOnce sync.Once
 }
 
+// listenMulticastUDP is a variable so tests can substitute a loopback socket
+// instead of depending on a multicast route or the fixed SSDP port.
+var listenMulticastUDP = net.ListenMulticastUDP
+
+// udpReply is the unicast socket used to answer one search.
+type udpReply interface {
+	io.WriteCloser
+	SetWriteDeadline(time.Time) error
+}
+
+// dialUDP is a variable so tests can simulate an unavailable reply socket.
+var dialUDP = func(network string, laddr, raddr *net.UDPAddr) (udpReply, error) {
+	return net.DialUDP(network, laddr, raddr)
+}
+
 // ListenSSDP joins the SSDP multicast group and answers searches until Close.
 func ListenSSDP(cfg SSDPConfig) (*Responder, error) {
 	if strings.TrimSpace(cfg.Location) == "" {
@@ -47,7 +63,7 @@ func ListenSSDP(cfg SSDPConfig) (*Responder, error) {
 		logf = log.Printf
 	}
 	group := &net.UDPAddr{IP: net.IPv4(239, 255, 255, 250), Port: 1900}
-	conn, err := net.ListenMulticastUDP("udp4", cfg.Interface, group)
+	conn, err := listenMulticastUDP("udp4", cfg.Interface, group)
 	if err != nil {
 		return nil, fmt.Errorf("ssdp listen: %w", err)
 	}
@@ -88,7 +104,7 @@ func (r *Responder) loop() {
 		if !ok {
 			continue
 		}
-		reply, err := net.DialUDP("udp4", nil, sender)
+		reply, err := dialUDP("udp4", nil, sender)
 		if err != nil {
 			r.logf("mock-tv: ssdp reply socket: %v", err)
 			continue

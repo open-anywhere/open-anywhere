@@ -36,6 +36,11 @@ type Config struct {
 	StartupTimeout time.Duration
 	ServicePorts   []int
 	Logger         *log.Logger
+
+	// browser optionally overrides the browser/DevTools layer in tests.
+	browser browserHooks
+	// stopGroup optionally overrides process-group shutdown in tests.
+	stopGroup func(*exec.Cmd, <-chan struct{}) error
 }
 
 type run struct {
@@ -62,6 +67,7 @@ type Service struct {
 	ports        map[int]string
 	servicePorts map[int]bool
 	client       *http.Client
+	randRead     func([]byte) (int, error)
 	closed       bool
 }
 
@@ -127,7 +133,7 @@ func New(cfg Config) (*Service, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{cfg: cfg, ctx: ctx, cancel: cancel, instances: map[string]*run{}, apps: map[string]string{}, ports: map[int]string{}, servicePorts: map[int]bool{}, client: &http.Client{Timeout: 30 * time.Second}}
+	s := &Service{cfg: cfg, ctx: ctx, cancel: cancel, instances: map[string]*run{}, apps: map[string]string{}, ports: map[int]string{}, servicePorts: map[int]bool{}, client: &http.Client{Timeout: 30 * time.Second}, randRead: rand.Read}
 	for _, p := range cfg.ServicePorts {
 		s.servicePorts[p] = true
 	}
@@ -179,7 +185,7 @@ func (s *Service) Create(ctx context.Context, req api.CreateRequest) (api.Instan
 		return api.Instance{}, failure(409, "PORT_IN_USE", "requested port is occupied")
 	}
 	var idBytes [16]byte
-	if _, err = rand.Read(idBytes[:]); err != nil {
+	if _, err = s.randRead(idBytes[:]); err != nil {
 		s.mu.Unlock()
 		return api.Instance{}, failure(500, "APP_START_FAILED", err.Error())
 	}
@@ -234,7 +240,7 @@ func (s *Service) execute(r *run) {
 			}
 		}
 		if cmd != nil {
-			if err := stopProcess(cmd, processDone); err != nil {
+			if err := s.stopGroupProcess(cmd, processDone); err != nil {
 				errs = append(errs, err)
 			} else {
 				cmd = nil
@@ -469,6 +475,13 @@ func waitHealth(ctx context.Context, base string, pid, port int, done <-chan str
 		}
 	}
 }
+func (s *Service) stopGroupProcess(cmd *exec.Cmd, done <-chan struct{}) error {
+	if s.cfg.stopGroup != nil {
+		return s.cfg.stopGroup(cmd, done)
+	}
+	return stopProcess(cmd, done)
+}
+
 func (s *Service) Get(id string) (api.Instance, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

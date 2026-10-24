@@ -68,20 +68,26 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	case <-ctx.Done():
 	case err = <-errCh:
 	}
+	return finish(server, err, s.Close)
+}
+
+// finish stops the HTTP server and cleans up runtime instances, preferring a
+// cleanup failure over the shutdown outcome.
+func finish(server *http.Server, runErr error, cleanup func(context.Context) error) error {
 	shutdown, stop := context.WithTimeout(context.Background(), 20*time.Second)
 	defer stop()
-	cleanupErr := s.Close(shutdown)
+	cleanupErr := cleanup(shutdown)
 	if e := server.Shutdown(shutdown); e != nil {
 		_ = server.Close()
-		if err == nil {
-			err = e
+		if runErr == nil {
+			runErr = e
 		}
 	}
-	if errors.Is(err, http.ErrServerClosed) {
-		err = nil
+	if errors.Is(runErr, http.ErrServerClosed) {
+		runErr = nil
 	}
 	if cleanupErr != nil {
 		return fmt.Errorf("cleanup: %w", cleanupErr)
 	}
-	return err
+	return runErr
 }

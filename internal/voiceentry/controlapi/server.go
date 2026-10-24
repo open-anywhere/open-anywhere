@@ -178,6 +178,13 @@ func (s *Server) PublishAudio(packet []byte) {
 	}
 }
 
+// playbackConn is the part of a WebSocket connection used to stream downlink
+// audio; it is an interface so the write-failure paths can be exercised.
+type playbackConn interface {
+	CloseRead(context.Context) context.Context
+	Write(context.Context, websocket.MessageType, []byte) error
+}
+
 func (s *Server) playback(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
@@ -190,7 +197,13 @@ func (s *Server) playback(w http.ResponseWriter, r *http.Request) {
 	rate := s.sampleRate
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.audioSubs, ch); s.mu.Unlock() }()
-	ctx := c.CloseRead(r.Context())
+	s.streamPlayback(r.Context(), c, ch, rate)
+}
+
+// streamPlayback sends the negotiated sample rate and then every downlink
+// packet until the connection or the request is gone.
+func (s *Server) streamPlayback(parent context.Context, c playbackConn, ch <-chan []byte, rate int) {
+	ctx := c.CloseRead(parent)
 	if err := c.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(`{"sample_rate":%d}`, rate))); err != nil {
 		return
 	}

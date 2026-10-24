@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -21,6 +22,18 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/mocktv"
 )
 
+// listenTCP and listenSSDP are variables so tests can inject startup failures
+// without binding fixed ports or requiring a multicast route.
+var (
+	listenTCP     = net.Listen
+	listenSSDP    = defaultListenSSDP
+	notifyContext = signal.NotifyContext
+)
+
+func defaultListenSSDP(cfg mocktv.SSDPConfig) (io.Closer, error) {
+	return mocktv.ListenSSDP(cfg)
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -29,6 +42,12 @@ func main() {
 }
 
 func run(args []string) error {
+	ctx, stop := notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runContext(ctx, args)
+}
+
+func runContext(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("mock-tv", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	addr := flags.String("addr", ":8095", "HTTP listen address")
@@ -48,7 +67,7 @@ func run(args []string) error {
 		return errors.New("mock-tv does not accept positional arguments")
 	}
 
-	listener, err := net.Listen("tcp", *addr)
+	listener, err := listenTCP("tcp", *addr)
 	if err != nil {
 		return err
 	}
@@ -67,7 +86,7 @@ func run(args []string) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Serve(listener) }()
 
-	var responder *mocktv.Responder
+	var responder io.Closer
 	if !*noSSDP {
 		var nic *net.Interface
 		if *ifaceName != "" {
@@ -77,7 +96,7 @@ func run(args []string) error {
 				return err
 			}
 		}
-		responder, err = mocktv.ListenSSDP(mocktv.SSDPConfig{
+		responder, err = listenSSDP(mocktv.SSDPConfig{
 			Interface: nic,
 			Location:  base + "/device.xml",
 			UDN:       *udn,
@@ -96,8 +115,6 @@ func run(args []string) error {
 		log.Printf("mock-tv: SSDP disabled; POST /api/play to drive the page")
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	select {
 	case <-ctx.Done():
 	case err := <-errCh:

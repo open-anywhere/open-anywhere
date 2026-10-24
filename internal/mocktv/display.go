@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+// lookupIP is a variable so tests can simulate resolver failures without
+// depending on external DNS.
+var lookupIP = net.LookupIP
+
+// eventKeepAliveInterval controls the SSE keepalive cadence; tests shorten it.
+var eventKeepAliveInterval = 15 * time.Second
+
 // Config configures a Display.
 type Config struct {
 	Name string
@@ -217,7 +224,7 @@ func (d *Display) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if !writeState(w, flusher, current) {
 		return
 	}
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(eventKeepAliveInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -338,7 +345,7 @@ func checkStreamURL(target *url.URL) error {
 	if host == "" {
 		return errors.New("url has no host")
 	}
-	addresses, err := net.LookupIP(host)
+	addresses, err := lookupIP(host)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", host, err)
 	}

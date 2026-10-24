@@ -127,7 +127,24 @@ func serve(ctx context.Context, cfg config.Config) error {
 	mux.HandleFunc("GET /sse", server.ServeSSE)
 	mux.Handle("POST /mcp/message", http.MaxBytesHandler(http.HandlerFunc(server.ServeMessage), 1<<20))
 	mux.HandleFunc("GET /artifacts/{app_id}/{name}", artifactStore.ServeDownload)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /healthz", healthHandler(database))
+
+	httpServer := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           mcpAuth(cfg.MCPToken, mux),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	result := make(chan error, 1)
+	go func() { result <- httpServer.ListenAndServe() }()
+	log.Printf("gateway listening on %s", cfg.Addr)
+
+	return awaitShutdown(ctx, httpServer, server.Close, result)
+}
+
+// healthHandler reports readiness, including database availability.
+func healthHandler(database *store.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		status := "ok"
 		code := http.StatusOK
 		pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -139,29 +156,27 @@ func serve(ctx context.Context, cfg config.Config) error {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(code)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": status})
-	})
-
-	httpServer := &http.Server{
-		Addr: cfg.Addr,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/mcp" || r.URL.Path == "/mcp/message" || r.URL.Path == "/sse" {
-				if cfg.MCPToken != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+cfg.MCPToken)) != 1 {
-					http.Error(w, "Unauthorized", 401)
-					return
-				}
-			}
-			mux.ServeHTTP(w, r)
-		}),
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       120 * time.Second,
 	}
-	result := make(chan error, 1)
-	go func() { result <- httpServer.ListenAndServe() }()
-	log.Printf("gateway listening on %s", cfg.Addr)
+}
 
+// mcpAuth requires the bearer token on MCP endpoints when one is configured.
+func mcpAuth(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/mcp" || r.URL.Path == "/mcp/message" || r.URL.Path == "/sse" {
+			if token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+				http.Error(w, "Unauthorized", 401)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// awaitShutdown waits for cancellation or a serve failure and drains cleanly.
+func awaitShutdown(ctx context.Context, httpServer *http.Server, closeMCP func(), result <-chan error) error {
 	select {
 	case <-ctx.Done():
-		server.Close()
+		closeMCP()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
