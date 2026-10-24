@@ -46,7 +46,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "get-screens",
 		Title:       "查询可用屏幕",
-		Description: "列出当前可用的屏幕以及每块屏幕正在展示的应用。用户询问有哪些屏幕、投到哪块屏幕，或调用 start-app 前使用。available 表示当前能投送画面，不代表空闲；current_app 为 null 才表示空闲。",
+		Description: "列出当前的屏幕以及每块屏幕正在展示的应用。用户询问有哪些屏幕、投到哪块屏幕，或调用 start-app 前使用。status 表示这块屏幕现在能做什么：free 可以直接启动；showing_app 被你的应用占用，换应用要先征得用户同意；external 被其他来源占用，不能接管，建议换一块屏幕；unavailable 当前不能显示应用。current_app 非 null 表示占用它的是你的哪个应用。",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, _ emptyInput) (*sdk.CallToolResult, screensOutput, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -106,7 +106,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "start-app",
 		Title:       "在屏幕上启动应用",
-		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）启动到指定屏幕，历史应用也可以直接启动，等待应用健康检查和投屏都就绪后返回 running。screen_id 必须来自 get-screens。一块屏幕同时只能展示一个应用；默认被其他应用占用返回 TARGET_BUSY。仅当用户明确要求替换或抢占屏幕时才传 force=true：它会先停止该屏幕上正在展示的应用（返回里的 replaced_app_id 是被停止的应用），再启动本应用；停不掉时返回错误，不会覆盖。已在其他屏幕运行返回 APP_ALREADY_RUNNING。启动可能需要几十秒；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。",
+		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）启动到指定屏幕，历史应用也可以直接启动，等待应用健康检查和投屏都就绪后返回 running。screen_id 必须来自 get-screens；status 为 external 或 unavailable 的屏幕不要选，showing_app 时只有用户明确同意替换才能传 force=true。一块屏幕同时只能展示一个应用；默认被其他应用占用返回 TARGET_BUSY。仅当用户明确要求替换或抢占屏幕时才传 force=true：它会先停止该屏幕上通过本工具启动的应用（返回里的 replaced_app_id 是被停止的应用），再启动本应用；停不掉时返回错误，不会覆盖；其他来源占用的屏幕不能被 force 接管。已在其他屏幕运行返回 APP_ALREADY_RUNNING。启动可能需要几十秒；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。",
 		Annotations: mutatingAnnotations(false, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input startAppInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)

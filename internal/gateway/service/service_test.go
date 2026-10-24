@@ -771,7 +771,7 @@ func TestGetScreens(t *testing.T) {
 		if len(views) != 1 {
 			t.Fatalf("views = %+v", views)
 		}
-		if views[0].ScreenID != "living" || views[0].Name != "客厅" || !views[0].Available {
+		if views[0].ScreenID != "living" || views[0].Name != "客厅" || views[0].Status != ScreenShowingApp {
 			t.Fatalf("view = %+v", views[0])
 		}
 		if views[0].CurrentApp == nil || views[0].CurrentApp.AppID != "app_1" || views[0].CurrentApp.Name != "quiz" {
@@ -795,7 +795,7 @@ func TestGetScreens(t *testing.T) {
 		if len(views) != 3 {
 			t.Fatalf("views = %+v", views)
 		}
-		if !views[0].Available || views[1].Available || views[2].Available {
+		if views[0].Status != ScreenFree || views[1].Status != ScreenUnavailable || views[2].Status != ScreenUnavailable {
 			t.Fatalf("views = %+v", views)
 		}
 	})
