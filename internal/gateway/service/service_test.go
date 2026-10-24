@@ -339,10 +339,15 @@ func TestCreateApp(t *testing.T) {
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	ctx := context.Background()
 
-	if _, err := env.svc.CreateApp(ctx, owner, "   "); toolCode(t, err) != "INVALID_ARGUMENT" {
+	if _, err := env.svc.CreateApp(ctx, owner, "   ", nil); toolCode(t, err) != "INVALID_ARGUMENT" {
 		t.Fatal("empty prompt should be rejected")
 	}
-	result, err := env.svc.CreateApp(ctx, owner, "做一个小游戏")
+	for _, names := range [][]string{{"韩鲁鹏", "  "}, {"韩鲁鹏", " 韩鲁鹏 "}} {
+		if _, err := env.svc.CreateApp(ctx, owner, "做一个小游戏", names); toolCode(t, err) != "INVALID_PLAYER_NAMES" {
+			t.Fatalf("player names %+v should be rejected", names)
+		}
+	}
+	result, err := env.svc.CreateApp(ctx, owner, "做一个小游戏", []string{" 韩鲁鹏 ", "邓军辉"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
@@ -353,22 +358,33 @@ func TestCreateApp(t *testing.T) {
 	if len(started) != 1 || started[0].Prompt != "做一个小游戏" || started[0].State != app.StateBuilding {
 		t.Fatalf("builder requests = %+v", started)
 	}
+	if len(started[0].PlayerNames) != 2 || started[0].PlayerNames[0] != "韩鲁鹏" || started[0].PlayerNames[1] != "邓军辉" {
+		t.Fatalf("player names = %+v", started[0].PlayerNames)
+	}
 
-	again, err := env.svc.CreateApp(ctx, owner, "另一个需求")
+	again, err := env.svc.CreateApp(ctx, owner, "另一个需求", []string{"张之阳"})
 	if err != nil || again.AppID != result.AppID {
 		t.Fatalf("idempotent create = %+v, %v", again, err)
 	}
 	if len(env.builder.requests()) != 1 {
 		t.Fatal("duplicate build started for the same owner")
 	}
+	entry, ok := env.registry.Get(result.AppID)
+	if !ok {
+		t.Fatal("app was not registered")
+	}
+	snapshot := entry.Snapshot()
+	if snapshot.Prompt != "做一个小游戏" || len(snapshot.PlayerNames) != 2 {
+		t.Fatalf("duplicate create overwrote build input: %+v", snapshot)
+	}
 
-	other, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "device", SessionID: "other"}, "其他")
+	other, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "device", SessionID: "other"}, "其他", nil)
 	if err != nil || other.AppID == result.AppID {
 		t.Fatalf("other owner = %+v, %v", other, err)
 	}
 
 	env.builder.setError(errors.New("agent down"))
-	if _, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "device", SessionID: "third"}, "失败"); toolCode(t, err) != "BUILD_START_FAILED" {
+	if _, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "device", SessionID: "third"}, "失败", nil); toolCode(t, err) != "BUILD_START_FAILED" {
 		t.Fatal("builder failure should be reported")
 	}
 	if len(env.registry.List()) != 2 {

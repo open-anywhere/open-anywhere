@@ -89,7 +89,7 @@ func TestBuilderCompletesBuild(t *testing.T) {
 	builder, registry, artifacts := newTestBuilder(t, server.URL, notifier)
 
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	entry := registry.Add(app.App{ID: "app_1", Owner: owner, Prompt: "做一个小游戏", State: app.StateBuilding, BuildStartedAt: time.Now().UTC()})
+	entry := registry.Add(app.App{ID: "app_1", Owner: owner, Prompt: "做一个小游戏", PlayerNames: []string{"韩鲁鹏", "邓军辉"}, State: app.StateBuilding, BuildStartedAt: time.Now().UTC()})
 	if err := builder.Start(context.Background(), entry.Snapshot()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -123,6 +123,9 @@ func TestBuilderCompletesBuild(t *testing.T) {
 	prompts := rec.promptList()
 	if len(prompts) != 1 || !strings.Contains(prompts[0], "做一个小游戏") || !strings.Contains(prompts[0], "launch.json") {
 		t.Fatalf("prompts = %+v", prompts)
+	}
+	if !strings.Contains(prompts[0], `初始玩家（按加入顺序）：["韩鲁鹏","邓军辉"]`) {
+		t.Fatalf("prompt does not carry player names: %q", prompts[0])
 	}
 	if metadata := rec.metadataValue(); metadata["app_id"] != "app_1" {
 		t.Fatalf("metadata = %+v", metadata)
@@ -353,6 +356,23 @@ func testArtifact(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return buffer.Bytes()
+}
+
+func TestBuildPrompt(t *testing.T) {
+	without := BuildPrompt(" 做一个游戏 ", nil)
+	if !strings.Contains(without, "需求：做一个游戏\n") {
+		t.Fatalf("prompt = %q", without)
+	}
+	if strings.Contains(without, "初始玩家（按加入顺序）") {
+		t.Fatalf("prompt has player names without input: %q", without)
+	}
+	if !strings.Contains(without, "user_name") || strings.Contains(without, "身份字段使用 user_id") {
+		t.Fatalf("constraints were not updated: %q", without)
+	}
+	with := BuildPrompt("做一个游戏", []string{"韩鲁鹏", "邓军辉"})
+	if !strings.Contains(with, `初始玩家（按加入顺序）：["韩鲁鹏","邓军辉"]`) {
+		t.Fatalf("prompt does not carry player names: %q", with)
+	}
 }
 
 func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {

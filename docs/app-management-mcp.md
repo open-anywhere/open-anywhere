@@ -39,7 +39,7 @@
 | Tool | 作用 | 输入 | 输出 |
 | --- | --- | --- | --- |
 | `get-screens` | 查询当前可用屏幕及占用情况 | 无 | `screens` 数组，见第 5 章 |
-| `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt` | `app_id`, `state: building` |
+| `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt`、可选 `player_names` | `app_id`, `state: building` |
 | `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见第 4 章 |
 | `get-app-operations` | 查询应用声明的 OpenAPI 业务操作 | `app_id` | `app_id`, `state`, `operations` |
 | `start-app` | 在指定屏幕上启动已构建的应用 | `app_id`, `screen_id` | `app_id`, `screen_id`, `state: running` |
@@ -69,6 +69,46 @@
 }
 ```
 
+多人游戏同时传入已确认的初始玩家名称。名单使用独立字段，不只写在自由文本里：
+
+```json
+{
+  "prompt": "做一个三人五题知识竞赛，依次确认玩家准备后开始答题",
+  "player_names": ["韩鲁鹏", "邓军辉", "张之阳"]
+}
+```
+
+`create-app` 的输入 schema：
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "prompt": {"type": "string", "minLength": 1},
+    "player_names": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true,
+      "description": "用户已确认的初始玩家名称，按加入或点名顺序填写；未知时不要编造"
+    }
+  },
+  "required": ["prompt"],
+  "additionalProperties": false
+}
+```
+
+名单规则：
+
+* 非游戏应用或尚未确定名单时可省略 `player_names`；空数组与省略均表示没有提供初始名单，不代表零人游戏。可先构建支持后续加入的应用。
+* 灵矽只传已确认的参与者名称。当前说话人的声纹名字不代表所有玩家，也不表示其他人已加入。用户只说人数时不得补造姓名；应用必须预置完整名单时先询问。
+* 控制面去除名称首尾空白，拒绝空白名称、非字符串和规范化后的重复名称，返回 `INVALID_PLAYER_NAMES`。保持输入顺序，不做模糊匹配或同音替换。重名时先请用户选择可区分的称呼。
+* `prompt` 中明确指定的人数或名单与非空 `player_names` 冲突时，灵矽在调用前向用户确认，不能静默增删玩家。控制面对自然语言不再做第二次语义推断。
+* 控制面将规范化后的 `player_names` 与 `prompt` 一起保存为构建输入，并通过构建消息交给 AgentAPI。生成应用据此建立初始玩家，直接使用 `user_name` 作为本局唯一标识和展示名称，不另行生成用户 ID 或维护名字到 ID 的映射；见 [应用包约定](app-artifact.md#32-openapi-和业务响应)。
+* 名单中的名字表示参与者，不表示已准备好；准备状态由运行时的加入/确认操作更新。后续增减玩家走应用 OpenAPI，不通过再次 `create-app` 修改构建输入。
+* 一期直接以用户名标识玩家。运行时灵矽把声纹 `speaker_name` 作为业务接口的 `user_name` 传入，例如 `{"user_name":"韩鲁鹏"}`。应用去除首尾空白后与本局名单精确匹配，不生成额外 ID，不要求声纹 `speaker_id`。未知名字不能直接参与答题或计分，应先确认或通过应用加入操作登记。本局内名字保持不变，改名流程不在一期范围内。
+
+建议工具 description 包含："创建应用。多人游戏请在 player_names 中传入用户已确认的初始玩家姓名，保留顺序。未知姓名不要猜测；名单不完整且需要预置全部玩家时先询问。名单只定义初始玩家，不代表已准备好。"
+
 控制面创建 AgentAPI session 后立即返回，不等待构建完成：
 
 ```json
@@ -78,7 +118,7 @@
 }
 ```
 
-同一 device/session 已有 `building` 中的应用时，重复 `create-app` 返回现有 `app_id`，不重复创建 session。
+同一 device/session 已有 `building` 中的应用时，重复 `create-app` 返回现有 `app_id`，不重复创建 session，也不覆盖原构建的 `prompt` 或 `player_names`。调用方不能把该返回解释为新名单已生效。
 
 ## 4. `get-app-status`
 
@@ -287,7 +327,7 @@ sequenceDiagram
   participant P as 投屏服务
 
   U->>L: 帮我做一个掷骰子游戏
-  L->>C: create-app(prompt)
+  L->>C: create-app(prompt, player_names 可选)
   C->>A: 创建编码 session
   A-->>C: session_id
   C-->>L: app_id, state=building
@@ -362,6 +402,7 @@ sequenceDiagram
 
 | `code` | 工具 | 场景 |
 | --- | --- | --- |
+| `INVALID_PLAYER_NAMES` | `create-app` | 名称为空白、类型错误或去除首尾空白后重名 |
 | `APP_BUILDING` | `start-app`, `stop-app`, `get-app-operations` | 应用仍在构建 |
 | `APP_IN_ERROR` | `start-app`, `get-app-operations` | 应用处于 `error` |
 | `APP_ALREADY_RUNNING` | `start-app` | 应用已在其他屏幕运行 |

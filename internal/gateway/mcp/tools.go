@@ -14,7 +14,8 @@ import (
 type emptyInput struct{}
 
 type createAppInput struct {
-	Prompt string `json:"prompt" jsonschema:"整理后的中文应用需求，描述页面、交互和业务规则；不能为空"`
+	Prompt      string   `json:"prompt" jsonschema:"整理后的中文应用需求，描述页面、交互和业务规则；不能为空"`
+	PlayerNames []string `json:"player_names,omitempty" jsonschema:"用户已确认的初始玩家名称，按加入或点名顺序填写；未知时不要编造。名称不能为空白或重复"`
 }
 
 type appIDInput struct {
@@ -59,12 +60,12 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "create-app",
 		Title:       "创建应用",
-		Description: "根据用户已确认的需求创建应用，并异步启动构建。prompt 必须是整理后的需求，包含页面、交互和规则，不要把原始语音转写直接传入。立即返回 app_id 和 building；之后用 get-app-status 查询进度，构建完成会收到 notifications/app_status。同一 Linx 会话已有构建中的应用时返回原 app_id，不会重复创建。",
+		Description: "根据用户已确认的需求创建应用，并异步启动构建。prompt 必须是整理后的需求，包含页面、交互和规则，不要把原始语音转写直接传入。多人游戏请在 player_names 中传入用户已确认的初始玩家姓名，保留顺序；未知姓名不要猜测，名单不完整且需要预置全部玩家时先询问。名单只定义初始玩家，不代表已准备好。立即返回 app_id 和 building；之后用 get-app-status 查询进度，构建完成会收到 notifications/app_status。同一 Linx 会话已有构建中的应用时返回原 app_id，不会重复创建，也不会覆盖原构建的 prompt 或 player_names。",
 		Annotations: mutatingAnnotations(false, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input createAppInput) (*sdk.CallToolResult, service.CreateResult, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		result, err := tools.CreateApp(ctx, identity, input.Prompt)
+		result, err := tools.CreateApp(ctx, identity, input.Prompt, input.PlayerNames)
 		if err != nil {
 			return nil, service.CreateResult{}, err
 		}

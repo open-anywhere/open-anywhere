@@ -22,6 +22,7 @@ type fakeApps struct {
 	mu          sync.Mutex
 	identity    app.Identity
 	prompt      string
+	playerNames []string
 	screens     []service.ScreenView
 	create      service.CreateResult
 	status      service.StatusView
@@ -50,10 +51,11 @@ func (f *fakeApps) GetScreens(_ context.Context, owner app.Identity) ([]service.
 	return f.screens, f.err
 }
 
-func (f *fakeApps) CreateApp(_ context.Context, owner app.Identity, prompt string) (service.CreateResult, error) {
+func (f *fakeApps) CreateApp(_ context.Context, owner app.Identity, prompt string, playerNames []string) (service.CreateResult, error) {
 	f.record(owner)
 	f.mu.Lock()
 	f.prompt = prompt
+	f.playerNames = append([]string(nil), playerNames...)
 	f.mu.Unlock()
 	return f.create, f.err
 }
@@ -207,13 +209,31 @@ func TestServerSessionFlow(t *testing.T) {
 		t.Fatalf("tools = %d", len(tools))
 	}
 	names := make(map[string]bool, len(tools))
+	var createTool map[string]any
 	for _, raw := range tools {
-		names[raw.(map[string]any)["name"].(string)] = true
+		tool := raw.(map[string]any)
+		names[tool["name"].(string)] = true
+		if tool["name"] == "create-app" {
+			createTool = tool
+		}
 	}
 	for _, want := range []string{"get-screens", "create-app", "get-app-status", "get-app-operations", "start-app", "stop-app", "send-request"} {
 		if !names[want] {
 			t.Fatalf("missing tool %q in %+v", want, names)
 		}
+	}
+	inputSchema, _ := createTool["inputSchema"].(map[string]any)
+	properties, _ := inputSchema["properties"].(map[string]any)
+	playerNamesSchema, _ := properties["player_names"].(map[string]any)
+	if !schemaAllowsType(playerNamesSchema, "array") {
+		t.Fatalf("player_names schema = %+v", playerNamesSchema)
+	}
+	items, _ := playerNamesSchema["items"].(map[string]any)
+	if items["type"] != "string" {
+		t.Fatalf("player_names items = %+v", items)
+	}
+	if description, _ := createTool["description"].(string); !strings.Contains(description, "player_names") || !strings.Contains(description, "不代表已准备好") {
+		t.Fatalf("create-app description = %q", description)
 	}
 
 	call(4, "tools/call", map[string]any{"name": "get-screens", "arguments": map[string]any{}})
@@ -228,16 +248,20 @@ func TestServerSessionFlow(t *testing.T) {
 		t.Fatalf("identity = %+v", identity)
 	}
 
-	call(5, "tools/call", map[string]any{"name": "create-app", "arguments": map[string]any{"prompt": "做一个小游戏"}})
+	call(5, "tools/call", map[string]any{"name": "create-app", "arguments": map[string]any{"prompt": "做一个小游戏", "player_names": []string{"韩鲁鹏", "邓军辉"}}})
 	result = resultOf(t, readResponse())
 	if text := toolText(t, result); !strings.Contains(text, "app_1") {
 		t.Fatalf("text = %q", text)
 	}
 	fake.mu.Lock()
 	prompt := fake.prompt
+	playerNames := append([]string(nil), fake.playerNames...)
 	fake.mu.Unlock()
 	if prompt != "做一个小游戏" {
 		t.Fatalf("prompt = %q", prompt)
+	}
+	if len(playerNames) != 2 || playerNames[0] != "韩鲁鹏" || playerNames[1] != "邓军辉" {
+		t.Fatalf("player_names = %+v", playerNames)
 	}
 
 	call(6, "tools/call", map[string]any{"name": "get-app-status", "arguments": map[string]any{"app_id": "app_1"}})
@@ -370,6 +394,20 @@ func TestServerSessionFlow(t *testing.T) {
 	if response400.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid body status = %d", response400.StatusCode)
 	}
+}
+
+func schemaAllowsType(schema map[string]any, want string) bool {
+	switch value := schema["type"].(type) {
+	case string:
+		return value == want
+	case []any:
+		for _, item := range value {
+			if item == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func resultOf(t *testing.T, payload map[string]any) map[string]any {

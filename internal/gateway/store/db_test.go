@@ -38,6 +38,7 @@ func TestAppPersistence(t *testing.T) {
 		Revision:         3,
 		Owner:            app.Identity{DeviceID: "device", SessionID: "session"},
 		Prompt:           "做一个小游戏",
+		PlayerNames:      []string{"韩鲁鹏", "邓军辉"},
 		Name:             "quiz",
 		State:            app.StateIdle,
 		SessionID:        "ses_1",
@@ -73,6 +74,9 @@ func TestAppPersistence(t *testing.T) {
 	}
 	if !got.BuildStartedAt.Equal(started) {
 		t.Fatalf("BuildStartedAt = %v", got.BuildStartedAt)
+	}
+	if len(got.PlayerNames) != 2 || got.PlayerNames[0] != "韩鲁鹏" || got.PlayerNames[1] != "邓军辉" {
+		t.Fatalf("PlayerNames = %+v", got.PlayerNames)
 	}
 	if operation, ok := got.OpenAPI.Lookup("rollDice"); !ok || operation.Method != "POST" {
 		t.Fatalf("OpenAPI was not restored: %+v", got.OpenAPI)

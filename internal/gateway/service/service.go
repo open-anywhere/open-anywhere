@@ -219,10 +219,14 @@ func (s *Service) GetScreens(ctx context.Context, _ app.Identity) ([]ScreenView,
 }
 
 // CreateApp registers an application and starts its build.
-func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt string) (CreateResult, error) {
+func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt string, playerNames []string) (CreateResult, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return CreateResult{}, &ToolError{Code: "INVALID_ARGUMENT", Message: "prompt 不能为空"}
+	}
+	normalizedNames, err := normalizePlayerNames(playerNames)
+	if err != nil {
+		return CreateResult{}, err
 	}
 	if existing, ok := s.apps.FindBuilding(owner); ok {
 		return CreateResult{AppID: existing.ID, State: existing.State}, nil
@@ -232,6 +236,7 @@ func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt stri
 		ID:             id,
 		Owner:          owner,
 		Prompt:         prompt,
+		PlayerNames:    normalizedNames,
 		State:          app.StateBuilding,
 		BuildStartedAt: s.now(),
 	})
@@ -241,6 +246,28 @@ func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt stri
 		return CreateResult{}, &ToolError{Code: "BUILD_START_FAILED", Message: "无法启动构建"}
 	}
 	return CreateResult{AppID: id, State: app.StateBuilding}, nil
+}
+
+// normalizePlayerNames trims names, rejects blanks and duplicates, and keeps
+// the caller's order. An empty list means the build has no initial players.
+func normalizePlayerNames(names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	normalized := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, &ToolError{Code: "INVALID_PLAYER_NAMES", Message: "玩家名称不能为空白"}
+		}
+		if _, exists := seen[name]; exists {
+			return nil, &ToolError{Code: "INVALID_PLAYER_NAMES", Message: "玩家名称不能重复：" + name}
+		}
+		seen[name] = struct{}{}
+		normalized = append(normalized, name)
+	}
+	return normalized, nil
 }
 
 // GetAppStatus returns the state-dependent status of an application.

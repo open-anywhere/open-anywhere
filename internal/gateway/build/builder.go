@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -82,7 +83,7 @@ func (b *Builder) Start(ctx context.Context, value app.App) error {
 			a.BuildStartedAt = started
 		})
 	}
-	if err := b.client.SubmitMessage(ctx, session.ID, BuildPrompt(value.Prompt)); err != nil {
+	if err := b.client.SubmitMessage(ctx, session.ID, BuildPrompt(value.Prompt, value.PlayerNames)); err != nil {
 		status := b.sessionStatus(session.ID)
 		if status == "running" || status == "rescheduling" {
 			b.logf("build %s: submit returned %v but session is %s; continuing", value.ID, err, status)
@@ -500,11 +501,16 @@ func compact(text string) string {
 	return string(runes[:200])
 }
 
-// BuildPrompt combines the user's request with the fixed artifact contract.
-// The build agent has no skills in this version, so the contract travels in
-// the message itself.
-func BuildPrompt(requirement string) string {
-	return "需求：" + strings.TrimSpace(requirement) + "\n\n" + buildConstraints
+// BuildPrompt combines the user's request, the initial player names and the
+// fixed artifact contract. The build agent has no skills in this version, so
+// the contract travels in the message itself.
+func BuildPrompt(requirement string, playerNames []string) string {
+	prompt := "需求：" + strings.TrimSpace(requirement) + "\n\n"
+	if len(playerNames) > 0 {
+		encoded, _ := json.Marshal(playerNames)
+		prompt += "初始玩家（按加入顺序）：" + string(encoded) + "\n\n"
+	}
+	return prompt + buildConstraints
 }
 
 const buildConstraints = `请生成一个可直接运行的独立 Node.js Web 应用，并遵守以下交付契约：
@@ -514,7 +520,7 @@ const buildConstraints = `请生成一个可直接运行的独立 Node.js Web �
 3. 必须实际实现 GET /health。只有页面和业务接口准备好后，才返回 HTTP 200、Content-Type: application/json 和 {"status":"ok"}，不要只在 launch.json 中声明。
 4. GET / 返回可由 Chromium 直接加载的 UI；/api/* 提供业务操作。UI 与 API 使用同一份状态，外部 HTTP 操作后 UI 自动刷新，可用轮询或 SSE。
 5. openapi.yaml 使用 OpenAPI 3.1，只描述 /api/* 业务操作。各操作具有唯一且稳定的 operationId、description、参数和响应 schema。业务成功/错误响应都是 JSON，包含必需的字符串 message。不把 /health 加入业务操作列表。不写死部署地址或端口。
-6. 应用身份字段使用 user_id，不接入声纹、灵矽或 MCP。应用以前台进程运行，日志写 stdout/stderr，收到 SIGTERM 时退出并清理资源。
+6. 应用用 user_name 同时表示本局玩家身份和展示名称，不另行生成 user_id。若构建输入提供初始玩家名单，按该顺序建立初始玩家 user_name，玩家查询或状态 API 返回名字；去除首尾空白，禁止空名和重名，按名字精确匹配，本局内名字不变。未登记名字不能直接参与答题或计分。初始玩家未准备好，需通过应用确认操作更新状态。名单为空或省略时不得编造姓名，按需求支持运行时加入。不接入声纹、灵矽或 MCP。应用以前台进程运行，日志写 stdout/stderr，收到 SIGTERM 时退出并清理资源。
 7. 请实际自测：在干净的解压目录中按 launch.json 启动，注入一个测试 PORT；验证 /health、/、一个改变状态的业务请求，以及打开的 UI 随之更新。停止后换一个可用 PORT 再次启动，确认产物未写死端口。校验 OpenAPI 并核对实现。
 8. 最后执行 tar -czf /mnt/session/outputs/artifact.tar.gz -C outputs .，使 launch.json 位于归档根目录。
 

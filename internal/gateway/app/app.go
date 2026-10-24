@@ -68,6 +68,7 @@ type App struct {
 	Revision         uint64
 	Owner            Identity
 	Prompt           string
+	PlayerNames      []string
 	Name             string
 	State            State
 	Error            *Error

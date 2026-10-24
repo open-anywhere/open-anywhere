@@ -22,7 +22,7 @@ import (
 // Apps is the application service surface used by the tools.
 type Apps interface {
 	GetScreens(ctx context.Context, owner app.Identity) ([]service.ScreenView, error)
-	CreateApp(ctx context.Context, owner app.Identity, prompt string) (service.CreateResult, error)
+	CreateApp(ctx context.Context, owner app.Identity, prompt string, playerNames []string) (service.CreateResult, error)
 	GetAppStatus(ctx context.Context, owner app.Identity, appID string) (service.StatusView, error)
 	GetAppOperations(ctx context.Context, owner app.Identity, appID string) (service.OperationsView, error)
 	StartApp(ctx context.Context, owner app.Identity, appID, screenID string) (service.StatusView, error)
