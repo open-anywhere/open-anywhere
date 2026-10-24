@@ -106,7 +106,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "start-app",
 		Title:       "在屏幕上启动应用",
-		Description: "把已构建完成（idle）的应用启动到指定屏幕，等待应用健康检查和投屏都就绪后返回 running。screen_id 必须来自 get-screens。一块屏幕同时只能展示一个应用；默认被其他应用占用返回 TARGET_BUSY。仅当用户明确要求替换或抢占屏幕时才传 force=true：它会先停止该屏幕上正在展示的应用（返回里的 replaced_app_id 是被停止的应用），再启动本应用；停不掉时返回错误，不会覆盖。已在其他屏幕运行返回 APP_ALREADY_RUNNING。启动可能需要几十秒；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。",
+		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）启动到指定屏幕，历史应用也可以直接启动，等待应用健康检查和投屏都就绪后返回 running。screen_id 必须来自 get-screens。一块屏幕同时只能展示一个应用；默认被其他应用占用返回 TARGET_BUSY。仅当用户明确要求替换或抢占屏幕时才传 force=true：它会先停止该屏幕上正在展示的应用（返回里的 replaced_app_id 是被停止的应用），再启动本应用；停不掉时返回错误，不会覆盖。已在其他屏幕运行返回 APP_ALREADY_RUNNING。启动可能需要几十秒；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。",
 		Annotations: mutatingAnnotations(false, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input startAppInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)

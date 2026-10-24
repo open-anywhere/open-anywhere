@@ -47,11 +47,12 @@ type Identity struct {
 	SessionID string `json:"session_id"`
 }
 
-// Key returns a stable comparison key for the owning device/session.
-func (i Identity) Key() string { return i.DeviceID + "\x00" + i.AgentID + "\x00" + i.SessionID }
-
-// Equal reports whether two identities refer to the same device/session.
-func (i Identity) Equal(other Identity) bool { return i.Key() == other.Key() }
+// SameOwner reports whether two identities belong to the same device and agent.
+// The Linx session is deliberately not part of ownership: it changes on every
+// reconnect, while the applications built for a device and agent stay theirs.
+func (i Identity) SameOwner(other Identity) bool {
+	return i.DeviceID != "" && i.DeviceID == other.DeviceID && i.AgentID == other.AgentID
+}
 
 // Artifact describes the stored application package.
 type Artifact struct {
@@ -301,7 +302,7 @@ func (r *Registry) List() []App {
 // FindBuilding returns the owner's current building application, if any.
 func (r *Registry) FindBuilding(owner Identity) (App, bool) {
 	for _, value := range r.List() {
-		if value.State == StateBuilding && value.Owner.Equal(owner) {
+		if value.State == StateBuilding && value.Owner.SameOwner(owner) {
 			return value, true
 		}
 	}

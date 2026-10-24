@@ -31,6 +31,7 @@ type Item struct {
 type Repository interface {
 	SaveArtifact(Item) error
 	ListArtifacts() ([]Item, error)
+	DeleteArtifact(appID string) error
 }
 
 // Store keeps artifacts on disk and exposes tokenized download URLs for
@@ -130,6 +131,36 @@ func (s *Store) Get(appID string) (Item, bool) {
 	defer s.mu.Unlock()
 	item, ok := s.items[appID]
 	return item, ok
+}
+
+// Has reports whether the package of appID is recorded and still on disk.
+func (s *Store) Has(appID string) bool {
+	item, ok := s.Get(appID)
+	if !ok {
+		return false
+	}
+	info, err := os.Stat(item.Path)
+	return err == nil && !info.IsDir()
+}
+
+// Remove deletes the package of appID from disk and from the repository.
+func (s *Store) Remove(appID string) error {
+	if !safeID(appID) {
+		return fmt.Errorf("unsafe application id %q", appID)
+	}
+	s.mu.Lock()
+	item, ok := s.items[appID]
+	delete(s.items, appID)
+	s.mu.Unlock()
+	if ok {
+		if err := os.Remove(item.Path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if s.repo != nil {
+		return s.repo.DeleteArtifact(appID)
+	}
+	return nil
 }
 
 // ServeDownload serves GET /artifacts/{app_id}/{name}.

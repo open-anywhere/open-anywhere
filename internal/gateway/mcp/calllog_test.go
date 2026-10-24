@@ -36,7 +36,7 @@ func connectLogged(t *testing.T, fake Apps) (*sdk.ClientSession, *logSink, conte
 	sink := &logSink{}
 	server := New(fake, time.Second)
 	server.logf = sink.logf
-	httpServer := httptest.NewServer(server.StreamableHTTP("", false, false))
+	httpServer := httptest.NewServer(server.StreamableHTTP("", false))
 	t.Cleanup(httpServer.Close)
 	t.Cleanup(server.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

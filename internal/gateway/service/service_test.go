@@ -394,13 +394,13 @@ func TestCreateApp(t *testing.T) {
 		t.Fatalf("duplicate create overwrote build input: %+v", snapshot)
 	}
 
-	other, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "device", SessionID: "other"}, "其他", nil)
+	other, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "other-device", SessionID: "other"}, "其他", nil)
 	if err != nil || other.AppID == result.AppID {
 		t.Fatalf("other owner = %+v, %v", other, err)
 	}
 
 	env.builder.setError(errors.New("agent down"))
-	if _, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "device", SessionID: "third"}, "失败", nil); toolCode(t, err) != "BUILD_START_FAILED" {
+	if _, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "third-device", SessionID: "third"}, "失败", nil); toolCode(t, err) != "BUILD_START_FAILED" {
 		t.Fatal("builder failure should be reported")
 	}
 	if len(env.registry.List()) != 2 {
@@ -448,7 +448,7 @@ func TestGetAppStatusStates(t *testing.T) {
 	if failed.Error == nil || failed.Error.Code != "APP_EXITED" || failed.Error.Stage != app.StageRunning || failed.ScreenID != "tv_1" {
 		t.Fatalf("error = %+v", failed)
 	}
-	if _, err := env.svc.GetAppStatus(ctx, app.Identity{DeviceID: "device", SessionID: "other"}, "idle"); toolCode(t, err) != "APP_NOT_FOUND" {
+	if _, err := env.svc.GetAppStatus(ctx, app.Identity{DeviceID: "other-device", SessionID: "other"}, "idle"); toolCode(t, err) != "APP_NOT_FOUND" {
 		t.Fatal("owner isolation failed")
 	}
 	if _, err := env.svc.GetAppStatus(ctx, owner, "missing"); toolCode(t, err) != "APP_NOT_FOUND" {
@@ -750,7 +750,7 @@ func TestSendRequest(t *testing.T) {
 	if _, err := env.svc.SendRequest(ctx, owner, "app_1", "updateItem", nil, func() {}); toolCode(t, err) != "INVALID_ARGUMENT" {
 		t.Fatal("unserializable body should fail")
 	}
-	if _, err := env.svc.SendRequest(ctx, app.Identity{DeviceID: "device", SessionID: "other"}, "app_1", "updateItem", nil, nil); toolCode(t, err) != "APP_NOT_FOUND" {
+	if _, err := env.svc.SendRequest(ctx, app.Identity{DeviceID: "other-device", SessionID: "other"}, "app_1", "updateItem", nil, nil); toolCode(t, err) != "APP_NOT_FOUND" {
 		t.Fatal("owner isolation failed")
 	}
 }

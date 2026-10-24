@@ -133,6 +133,7 @@ type Service struct {
 	casting   CastingClient
 	screens   *screen.Catalog
 	notifier  app.Notifier
+	artifacts ArtifactStore
 	cfg       Config
 
 	http *http.Client
@@ -253,6 +254,7 @@ func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt stri
 		s.logf("create-app %s: %v", id, err)
 		return CreateResult{}, &ToolError{Code: "BUILD_START_FAILED", Message: "无法启动构建"}
 	}
+	s.PruneHistory()
 	return CreateResult{AppID: id, State: app.StateBuilding}, nil
 }
 
@@ -299,7 +301,9 @@ func (s *Service) GetAppOperations(ctx context.Context, owner app.Identity, appI
 	case app.StateBuilding:
 		return OperationsView{}, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
 	case app.StateError:
-		return OperationsView{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态"}
+		if value.OpenAPI == nil {
+			return OperationsView{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态"}
+		}
 	}
 	operations := []OperationView{}
 	if value.OpenAPI != nil {
@@ -334,8 +338,8 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	entry.Begin()
 	defer entry.End()
 	value := entry.Snapshot()
-	if !value.Owner.Equal(owner) {
-		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "会话归属已改变"}
+	if !value.Owner.SameOwner(owner) {
+		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "应用归属已改变"}
 	}
 	switch value.State {
 	case app.StateRunning:
@@ -349,10 +353,33 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	case app.StateBuilding:
 		return StatusView{}, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
 	case app.StateError:
-		return StatusView{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态"}
+		if !retryable(value) {
+			return StatusView{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态"}
+		}
+		// Built fine, failed later: release whatever the failed start left behind
+		// and start again from idle.
+		if err := s.reconcile(ctx, entry); err != nil {
+			var toolErr *ToolError
+			if errors.As(err, &toolErr) {
+				return StatusView{}, err
+			}
+			return StatusView{}, &ToolError{Code: "CLEANUP_PENDING", Message: "上次启动遗留的资源还没清理干净，请稍后再试"}
+		}
+		if err := persistRuntime(entry, func(a *app.App) {
+			if a.State == app.StateError {
+				a.State = app.StateIdle
+				a.Error = nil
+			}
+		}); err != nil {
+			return StatusView{}, err
+		}
+		value = entry.Snapshot()
 	case app.StateIdle:
 	default:
 		return StatusView{}, &ToolError{Code: "INVALID_STATE", Message: "应用状态不允许启动"}
+	}
+	if s.artifacts != nil && !s.artifacts.Has(value.ID) {
+		return StatusView{}, &ToolError{Code: "ARTIFACT_MISSING", Message: "应用包已丢失，请重新创建应用"}
 	}
 	target, err := s.target(ctx, screenID)
 	if err != nil {
@@ -453,8 +480,8 @@ func (s *Service) StopApp(ctx context.Context, owner app.Identity, appID string)
 	entry.Begin()
 	defer entry.End()
 	value := entry.Snapshot()
-	if !value.Owner.Equal(owner) {
-		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "会话归属已改变"}
+	if !value.Owner.SameOwner(owner) {
+		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "应用归属已改变"}
 	}
 	switch value.State {
 	case app.StateIdle:
@@ -509,8 +536,8 @@ func (s *Service) SendRequest(ctx context.Context, owner app.Identity, appID, op
 	record.Begin()
 	defer record.End()
 	value := record.Snapshot()
-	if !value.Owner.Equal(owner) {
-		return OperationResult{}, &ToolError{Code: "APP_NOT_FOUND", Message: "会话归属已改变"}
+	if !value.Owner.SameOwner(owner) {
+		return OperationResult{}, &ToolError{Code: "APP_NOT_FOUND", Message: "应用归属已改变"}
 	}
 	if err = s.verifyRunning(ctx, value); err != nil {
 		return OperationResult{}, err
@@ -836,7 +863,7 @@ func (s *Service) entry(owner app.Identity, appID string) (*app.Record, error) {
 	if !ok {
 		return nil, &ToolError{Code: "APP_NOT_FOUND", Message: "应用不存在"}
 	}
-	if !entry.Snapshot().Owner.Equal(owner) || entry.Snapshot().Owner.AgentID != owner.AgentID {
+	if !entry.Snapshot().Owner.SameOwner(owner) {
 		return nil, &ToolError{Code: "APP_NOT_FOUND", Message: "应用不存在"}
 	}
 	return entry, nil
@@ -925,6 +952,9 @@ func (s *Service) GetOpenAPI(ctx context.Context, owner app.Identity, id string)
 	}
 	if a.State == app.StateBuilding {
 		return nil, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
+	}
+	if a.OpenAPI == nil {
+		return nil, &ToolError{Code: "APP_IN_ERROR", Message: "应用没有可用的 OpenAPI 文档"}
 	}
 	return a.OpenAPI.Document()
 }

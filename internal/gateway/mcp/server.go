@@ -33,7 +33,7 @@ type Apps interface {
 const (
 	serverName         = "open-anywhere-gateway"
 	defaultTimeout     = 2 * time.Minute
-	serverInstructions = "Open Anywhere 控制面用于让应用在身边屏幕上生成并运行。创建应用是异步任务：create-app 后先告诉用户正在制作，再用 get-app-status 查询；构建完成会发送 notifications/app_status。启动前先用 get-screens 获取明确的 screen_id。调用应用业务接口前，必须先用 get-app-operations 获取 operation_id、参数和请求体结构，再用 send-request。除 app_id 和 screen_id 外，不要向用户提及端口、实例或投屏会话等内部标识。"
+	serverInstructions = "Open Anywhere 控制面用于让应用在身边屏幕上生成并运行。创建应用是异步任务：create-app 后先告诉用户正在制作，再用 get-app-status 查询；构建完成会发送 notifications/app_status。启动前先用 get-screens 获取明确的 screen_id。用户想再玩之前做过的应用时，先用 list-apps 找到它，不要重新创建。调用应用业务接口前，必须先用 get-app-operations 获取 operation_id、参数和请求体结构，再用 send-request。除 app_id 和 screen_id 外，不要向用户提及端口、实例或投屏会话等内部标识。"
 )
 
 // Server owns one MCP server per SSE connection and routes Linx's POST
@@ -48,7 +48,6 @@ type Server struct {
 	logf          func(string, ...any)
 	Compatibility bool
 	SpeakerProbe  bool
-	AllowClaim    bool
 }
 
 type session struct {
@@ -170,7 +169,7 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 	server.AddReceivingMiddleware(withCallLog(s.logf, identity))
 	addTools(server, tools, identity, s.callTimeout)
 	if s.Compatibility {
-		addCompatibility(server, tools, identity, s.SpeakerProbe, s.AllowClaim)
+		addCompatibility(server, tools, identity, s.SpeakerProbe)
 	}
 	binding := &connectionTransport{inner: transport}
 
@@ -237,7 +236,7 @@ func (s *Server) Notify(owner app.Identity, notification app.Notification) {
 	s.mu.Lock()
 	sessions := make([]*session, 0, len(s.sessions))
 	for _, item := range s.sessions {
-		if item.identity.Equal(owner) {
+		if item.identity.SameOwner(owner) {
 			sessions = append(sessions, item)
 		}
 	}

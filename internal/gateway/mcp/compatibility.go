@@ -15,11 +15,10 @@ import (
 
 type extendedApps interface {
 	GetOpenAPI(context.Context, app.Identity, string) (map[string]any, error)
-	ListApps(context.Context, app.Identity) ([]service.StatusView, error)
-	ClaimApp(context.Context, app.Identity, string) (service.StatusView, error)
+	ListApps(context.Context, app.Identity) ([]service.AppSummary, error)
 }
 
-func addCompatibility(server *sdk.Server, tools Apps, identity app.Identity, probe, claim bool) {
+func addCompatibility(server *sdk.Server, tools Apps, identity app.Identity, probe bool) {
 	add := func(name, description, schema string, fn func(context.Context, json.RawMessage) (any, error)) {
 		var input any
 		_ = json.Unmarshal([]byte(schema), &input)
@@ -62,15 +61,10 @@ func addCompatibility(server *sdk.Server, tools Apps, identity app.Identity, pro
 		add("get_openapi", "读取应用完整 OpenAPI 文档，先分析再调用。", id, func(ctx context.Context, b json.RawMessage) (any, error) {
 			return ext.GetOpenAPI(ctx, identity, getID(b))
 		})
-		if claim {
-			add("list-apps", "重新连接后查询同一设备和智能体创建的应用；选择 app_id 后用 claim-app 接管。", `{"type":"object","properties":{},"additionalProperties":false}`, func(ctx context.Context, b json.RawMessage) (any, error) {
-				a, err := ext.ListApps(ctx, identity)
-				return map[string]any{"apps": a}, err
-			})
-			add("claim-app", "同一设备和智能体的新会话显式接管应用，旧会话随后失去访问权。", id, func(ctx context.Context, b json.RawMessage) (any, error) {
-				return ext.ClaimApp(ctx, identity, getID(b))
-			})
-		}
+		add("list-apps", "列出这台设备和智能体构建过的应用（最多保留最近 10 个），最新的在前，不受重连影响。每项有 app_id、名字、标题、需求摘要、状态、操作列表 operations，以及 startable（能否用 start-app 启动）。用户说“玩上次的/之前那个”时先用它，选定后用 start-app 启动，需要时再用 get-app-operations 或 get_openapi 查看可调用的操作。", `{"type":"object","properties":{},"additionalProperties":false}`, func(ctx context.Context, b json.RawMessage) (any, error) {
+			a, err := ext.ListApps(ctx, identity)
+			return map[string]any{"apps": a}, err
+		})
 	}
 	add("send_request", "兼容调用：按已读取 OpenAPI 的 operationId 执行应用操作。parameters 放参数，requestBody 放 JSON body。", `{"type":"object","properties":{"app_id":{"type":"string"},"operationId":{"type":"string"},"parameters":{"type":"object"},"requestBody":{}},"required":["app_id","operationId"],"additionalProperties":false}`, func(ctx context.Context, b json.RawMessage) (any, error) {
 		var a struct {
@@ -101,7 +95,7 @@ func identityFrom(r *http.Request) app.Identity {
 
 // StreamableHTTP preserves the deployed request/response transport. Server-initiated
 // notifications are delivered over the separate SSE endpoint, not this stateless channel.
-func (s *Server) StreamableHTTP(publicHost string, probe, claim bool) http.Handler {
+func (s *Server) StreamableHTTP(publicHost string, probe bool) http.Handler {
 	handler := sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
 		identity := identityFrom(r)
 		if identity.DeviceID == "" || identity.SessionID == "" {
@@ -114,7 +108,7 @@ func (s *Server) StreamableHTTP(publicHost string, probe, claim bool) http.Handl
 		server := sdk.NewServer(&sdk.Implementation{Name: serverName, Version: "0.2.0"}, nil)
 		server.AddReceivingMiddleware(withCallLog(s.logf, identity))
 		addTools(server, tools, identity, s.callTimeout)
-		addCompatibility(server, tools, identity, probe, claim)
+		addCompatibility(server, tools, identity, probe)
 		return server
 	}, &sdk.StreamableHTTPOptions{Stateless: true, MaxRequestBodyBytes: 1 << 20, DisableLocalhostProtection: publicHost != ""})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

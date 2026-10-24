@@ -103,13 +103,14 @@ func serve(ctx context.Context, cfg config.Config) error {
 		PortMin:           cfg.PortMin,
 		PortMax:           cfg.PortMax,
 	})
+	apps.SetArtifactStore(artifactStore)
 	if err := apps.RecoverRuntime(); err != nil {
 		return err
 	}
+	apps.PruneHistory()
 	server.SetTools(apps)
 	server.Compatibility = true
 	server.SpeakerProbe = cfg.SpeakerProbe
-	server.AllowClaim = cfg.MCPToken != ""
 
 	for _, value := range persisted {
 		if value.State != app.StateBuilding {
@@ -122,7 +123,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 	go apps.RunMonitor(ctx)
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", server.StreamableHTTP(cfg.PublicHost, cfg.SpeakerProbe, cfg.MCPToken != ""))
+	mux.Handle("/mcp", server.StreamableHTTP(cfg.PublicHost, cfg.SpeakerProbe))
 	mux.HandleFunc("GET /sse", server.ServeSSE)
 	mux.Handle("POST /mcp/message", http.MaxBytesHandler(http.HandlerFunc(server.ServeMessage), 1<<20))
 	mux.HandleFunc("GET /artifacts/{app_id}/{name}", artifactStore.ServeDownload)

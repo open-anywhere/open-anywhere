@@ -10,35 +10,6 @@ import (
 	"github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
-func TestExplicitSessionTakeover(t *testing.T) {
-	env := newTestEnv(t, nil)
-	old := app.Identity{DeviceID: "d", AgentID: "agent", SessionID: "old"}
-	fresh := old
-	fresh.SessionID = "fresh"
-	env.registry.Add(app.App{ID: "app", Owner: old, State: app.StateIdle})
-	ctx := context.Background()
-	if _, err := env.svc.GetAppStatus(ctx, fresh, "app"); err == nil {
-		t.Fatal("implicit takeover")
-	}
-	list, err := env.svc.ListApps(ctx, fresh)
-	if err != nil || len(list) != 1 {
-		t.Fatal(list, err)
-	}
-	if _, err = env.svc.ClaimApp(ctx, fresh, "app"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = env.svc.GetAppStatus(ctx, fresh, "app"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = env.svc.GetAppStatus(ctx, old, "app"); err == nil {
-		t.Fatal("old session retained access")
-	}
-	for _, bad := range []app.Identity{{DeviceID: "other", AgentID: "agent", SessionID: "s"}, {DeviceID: "d", AgentID: "other", SessionID: "s"}, {DeviceID: "d", SessionID: "s"}} {
-		if _, err = env.svc.ClaimApp(ctx, bad, "app"); err == nil {
-			t.Fatal("foreign claim")
-		}
-	}
-}
 func TestReconcileLostRenderResponse(t *testing.T) {
 	env := newTestEnv(t, nil)
 	a := app.App{ID: "app_1", State: app.StateError, ScreenID: "screen", TargetID: "tv_1", PendingRuntime: true, CleanupPending: true}
