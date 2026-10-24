@@ -1,0 +1,9 @@
+{
+  "name": "open-anywhere-quiz-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A standalone Open Anywhere quiz app with an HTTP API and live HTML renderer.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
