@@ -80,4 +80,4 @@ tar -czf artifact.tar.gz app openapi.yaml launch.json
 tar -tzf artifact.tar.gz
 ```
 
-只把 `app/`、`openapi.yaml`、`launch.json` 放进归档；不要把 `artifact.tar.gz` 自身、测试脚本或 `outputs/` 目录打进去。打包后运行 `scripts/validate-artifact.sh` 做静态检查。
+只把 `app/`、`openapi.yaml`、`launch.json` 放进归档；不要把 `artifact.tar.gz` 自身、测试脚本或 `outputs/` 目录打进去。实际构建由 `scripts/self-test.sh --package` 完成打包和静态检查，不要手工执行。
