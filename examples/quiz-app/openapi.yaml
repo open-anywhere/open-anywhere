@@ -1,4 +1,4 @@
-openapi: 3.1.0
+openapi: 3.0.3
 info:
   title: Open Anywhere Quiz App
   version: 0.1.0
@@ -32,6 +32,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RegisterPlayerRequest'
+            example:
+              user_id: u4
+              display_name: 新玩家
       responses:
         '200':
           $ref: '#/components/responses/AppResponse'
@@ -67,6 +70,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SubmitAnswerRequest'
+            example:
+              user_id: u2
+              transcript: 火车进站
       responses:
         '200':
           $ref: '#/components/responses/AnswerResponse'
@@ -81,12 +87,16 @@ paths:
           required: true
           schema:
             type: string
+          example: answer-001
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/EvaluateAnswerRequest'
+            example:
+              answer_right: true
+              reason: 回答正确
       responses:
         '200':
           $ref: '#/components/responses/AppResponse'
@@ -125,12 +135,14 @@ components:
       required: true
       schema:
         type: string
+      example: quiz-session-001
     PlayerId:
       name: player_id
       in: path
       required: true
       schema:
         type: string
+      example: p1
   responses:
     AppResponse:
       description: Semantic result and current application state
@@ -264,7 +276,16 @@ components:
             $ref: '#/components/schemas/Player'
         current_question:
           nullable: true
-          $ref: '#/components/schemas/Question'
+          type: object
+          properties:
+            id:
+              type: string
+            text:
+              type: string
+            options:
+              type: array
+              items:
+                type: string
         pending_answer:
           nullable: true
           type: object
