@@ -42,6 +42,19 @@ func (r *fakeRepository) ListArtifacts() ([]Item, error) {
 	return append([]Item(nil), r.items...), nil
 }
 
+func (r *fakeRepository) DeleteArtifact(appID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := r.items[:0]
+	for _, item := range r.items {
+		if item.AppID != appID {
+			kept = append(kept, item)
+		}
+	}
+	r.items = kept
+	return nil
+}
+
 func TestStoreRestoresPersistedArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(t.TempDir(), "artifact.tar.gz")
@@ -121,5 +134,40 @@ func TestStoreSaveFileRemovesFileWhenPersistFails(t *testing.T) {
 func TestStoreLoadFailure(t *testing.T) {
 	if _, err := NewStore(t.TempDir(), "http://gateway:8090", &fakeRepository{listErr: errors.New("boom")}); err == nil {
 		t.Fatal("expected a load error")
+	}
+}
+
+func TestStoreHasAndRemove(t *testing.T) {
+	repo := &fakeRepository{}
+	store, err := NewStore(t.TempDir(), "http://gateway:8090", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "pkg.tar.gz")
+	if err := os.WriteFile(source, []byte("bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte("bytes"))
+	item, err := store.SaveFile("app_1", source, 5, hex.EncodeToString(digest[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.Has("app_1") || store.Has("app_2") {
+		t.Fatal("Has does not reflect the stored packages")
+	}
+	if err := os.Remove(item.Path); err != nil {
+		t.Fatal(err)
+	}
+	if store.Has("app_1") {
+		t.Fatal("a package deleted from disk is still reported as present")
+	}
+	if err := store.Remove("app_1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.Get("app_1"); ok || len(repo.items) != 0 {
+		t.Fatalf("Remove left traces: items=%v", repo.items)
+	}
+	if err := store.Remove("../etc"); err == nil {
+		t.Fatal("unsafe id accepted")
 	}
 }

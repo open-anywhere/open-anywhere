@@ -214,7 +214,7 @@ func TestStartRuntimeFailures(t *testing.T) {
 			env := newTestEnv(t, nil)
 			entry := env.registry.Add(idleApp(t, owner))
 			test.setup(env)
-			if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1"); toolCode(t, err) != test.code {
+			if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != test.code {
 				t.Fatalf("error = %v, want %s", err, test.code)
 			}
 			snapshot := entry.Snapshot()

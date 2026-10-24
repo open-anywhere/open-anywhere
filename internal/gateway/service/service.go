@@ -95,6 +95,8 @@ type StatusView struct {
 	UptimeSeconds        int64      `json:"uptime_seconds,omitempty"`
 	StoppedAt            *time.Time `json:"stopped_at,omitempty"`
 	Error                *app.Error `json:"error,omitempty"`
+	// ReplacedAppID is set when start-app force-stopped another application on the screen.
+	ReplacedAppID string `json:"replaced_app_id,omitempty"`
 }
 
 // OperationView describes one business operation for MCP clients.
@@ -131,6 +133,7 @@ type Service struct {
 	casting   CastingClient
 	screens   *screen.Catalog
 	notifier  app.Notifier
+	artifacts ArtifactStore
 	cfg       Config
 
 	http *http.Client
@@ -251,6 +254,7 @@ func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt stri
 		s.logf("create-app %s: %v", id, err)
 		return CreateResult{}, &ToolError{Code: "BUILD_START_FAILED", Message: "无法启动构建"}
 	}
+	s.PruneHistory()
 	return CreateResult{AppID: id, State: app.StateBuilding}, nil
 }
 
@@ -297,7 +301,9 @@ func (s *Service) GetAppOperations(ctx context.Context, owner app.Identity, appI
 	case app.StateBuilding:
 		return OperationsView{}, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
 	case app.StateError:
-		return OperationsView{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态"}
+		if value.OpenAPI == nil {
+			return OperationsView{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态"}
+		}
 	}
 	operations := []OperationView{}
 	if value.OpenAPI != nil {
@@ -317,7 +323,9 @@ func (s *Service) GetAppOperations(ctx context.Context, owner app.Identity, appI
 }
 
 // StartApp starts the application on the screen and waits for projection.
-func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, screenID string) (StatusView, error) {
+// A screen holds one application at a time: without force an occupied screen is
+// refused with TARGET_BUSY; with force the application on it is stopped first.
+func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, screenID string, force bool) (StatusView, error) {
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
 	if strings.TrimSpace(screenID) == "" {
@@ -330,8 +338,8 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	entry.Begin()
 	defer entry.End()
 	value := entry.Snapshot()
-	if !value.Owner.Equal(owner) {
-		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "会话归属已改变"}
+	if !value.Owner.SameOwner(owner) {
+		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "应用归属已改变"}
 	}
 	switch value.State {
 	case app.StateRunning:
@@ -345,17 +353,29 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	case app.StateBuilding:
 		return StatusView{}, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
 	case app.StateError:
-		return StatusView{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态"}
+		if !retryable(value) {
+			return StatusView{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态"}
+		}
+		// Built fine, failed later: release whatever the failed start left behind
+		// and start again from idle.
+		if err := s.releaseFailedStart(ctx, entry); err != nil {
+			return StatusView{}, err
+		}
+		value = entry.Snapshot()
 	case app.StateIdle:
 	default:
 		return StatusView{}, &ToolError{Code: "INVALID_STATE", Message: "应用状态不允许启动"}
+	}
+	if s.artifacts != nil && !s.artifacts.Has(value.ID) {
+		return StatusView{}, &ToolError{Code: "ARTIFACT_MISSING", Message: "应用包已丢失，请重新创建应用"}
 	}
 	target, err := s.target(ctx, screenID)
 	if err != nil {
 		return StatusView{}, err
 	}
-	if other, ok := s.apps.RunningOnScreen(screenID); ok && other.ID != appID {
-		return StatusView{}, &ToolError{Code: "TARGET_BUSY", Message: "目标屏幕已被占用"}
+	replaced, err := s.claimScreen(ctx, screenID, appID, force)
+	if err != nil {
+		return StatusView{}, err
 	}
 	if err := persistRuntime(entry, func(a *app.App) {
 		a.ScreenID = screenID
@@ -411,7 +431,32 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 		entry.Update(func(a *app.App) { a.State = app.StateError; a.CleanupPending = true })
 		return StatusView{}, err
 	}
-	return s.statusView(entry.Snapshot()), nil
+	view := s.statusView(entry.Snapshot())
+	view.ReplacedAppID = replaced
+	return view, nil
+}
+
+// claimScreen makes screenID free for appID. Another application on it is
+// refused with TARGET_BUSY unless force is set, in which case it is stopped
+// through its own owner (projection first, then the Render instance). The
+// screen is only claimed once it is really free; a failed stop is returned so
+// nothing is projected over an application that is still running.
+func (s *Service) claimScreen(ctx context.Context, screenID, appID string, force bool) (replaced string, err error) {
+	for attempts := 0; attempts < 4; attempts++ {
+		other, busy := s.apps.RunningOnScreen(screenID)
+		if !busy || other.ID == appID {
+			return replaced, nil
+		}
+		if !force {
+			return "", &ToolError{Code: "TARGET_BUSY", Message: "目标屏幕已被占用"}
+		}
+		if _, err := s.StopApp(ctx, other.Owner, other.ID); err != nil {
+			return "", err
+		}
+		replaced = other.ID
+		s.notifier.Notify(other.Owner, app.Notification{AppID: other.ID, State: app.StateIdle, ScreenID: screenID, Message: "屏幕被其他应用接管，已停止"})
+	}
+	return "", &ToolError{Code: "TARGET_BUSY", Message: "无法释放目标屏幕"}
 }
 
 // StopApp stops projection first and then the Render instance.
@@ -423,13 +468,21 @@ func (s *Service) StopApp(ctx context.Context, owner app.Identity, appID string)
 	entry.Begin()
 	defer entry.End()
 	value := entry.Snapshot()
-	if !value.Owner.Equal(owner) {
-		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "会话归属已改变"}
+	if !value.Owner.SameOwner(owner) {
+		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "应用归属已改变"}
 	}
 	switch value.State {
 	case app.StateIdle:
 		return s.statusView(value), nil
 	case app.StateError:
+		if retryable(value) {
+			// Built fine, failed later: release what the failure left behind and
+			// make the application startable again.
+			if err := s.releaseFailedStart(ctx, entry); err != nil {
+				return StatusView{}, err
+			}
+			return s.statusView(entry.Snapshot()), nil
+		}
 		if err := s.reconcile(ctx, entry); err != nil {
 			return StatusView{}, err
 		}
@@ -479,8 +532,8 @@ func (s *Service) SendRequest(ctx context.Context, owner app.Identity, appID, op
 	record.Begin()
 	defer record.End()
 	value := record.Snapshot()
-	if !value.Owner.Equal(owner) {
-		return OperationResult{}, &ToolError{Code: "APP_NOT_FOUND", Message: "会话归属已改变"}
+	if !value.Owner.SameOwner(owner) {
+		return OperationResult{}, &ToolError{Code: "APP_NOT_FOUND", Message: "应用归属已改变"}
 	}
 	if err = s.verifyRunning(ctx, value); err != nil {
 		return OperationResult{}, err
@@ -806,7 +859,7 @@ func (s *Service) entry(owner app.Identity, appID string) (*app.Record, error) {
 	if !ok {
 		return nil, &ToolError{Code: "APP_NOT_FOUND", Message: "应用不存在"}
 	}
-	if !entry.Snapshot().Owner.Equal(owner) || entry.Snapshot().Owner.AgentID != owner.AgentID {
+	if !entry.Snapshot().Owner.SameOwner(owner) {
 		return nil, &ToolError{Code: "APP_NOT_FOUND", Message: "应用不存在"}
 	}
 	return entry, nil
@@ -895,6 +948,9 @@ func (s *Service) GetOpenAPI(ctx context.Context, owner app.Identity, id string)
 	}
 	if a.State == app.StateBuilding {
 		return nil, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
+	}
+	if a.OpenAPI == nil {
+		return nil, &ToolError{Code: "APP_IN_ERROR", Message: "应用没有可用的 OpenAPI 文档"}
 	}
 	return a.OpenAPI.Document()
 }

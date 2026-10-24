@@ -14,8 +14,11 @@ func TestRegistryOwnershipAndQueries(t *testing.T) {
 	if existing, ok := registry.FindBuilding(owner); !ok || existing.ID != "app_1" {
 		t.Fatalf("FindBuilding = %+v, %v", existing, ok)
 	}
-	if _, ok := registry.FindBuilding(Identity{DeviceID: "device", SessionID: "other"}); ok {
-		t.Fatal("other session should not find the building app")
+	if _, ok := registry.FindBuilding(Identity{DeviceID: "other-device", SessionID: "other"}); ok {
+		t.Fatal("another device should not find the building app")
+	}
+	if _, ok := registry.FindBuilding(Identity{DeviceID: "device", SessionID: "reconnected"}); !ok {
+		t.Fatal("a new session of the same device must still find its building app")
 	}
 	if running, ok := registry.RunningOnScreen("tv"); !ok || running.ID != "app_2" {
 		t.Fatalf("RunningOnScreen = %+v, %v", running, ok)
@@ -79,11 +82,15 @@ func TestBuildingMessage(t *testing.T) {
 }
 
 func TestIdentity(t *testing.T) {
-	a := Identity{DeviceID: "d", SessionID: "s"}
-	b := Identity{DeviceID: "d", SessionID: "s"}
-	c := Identity{DeviceID: "d", SessionID: "x"}
-	if !a.Equal(b) || a.Equal(c) {
-		t.Fatal("identity comparison is wrong")
+	a := Identity{DeviceID: "d", AgentID: "agent", SessionID: "s"}
+	sameOwnerNewSession := Identity{DeviceID: "d", AgentID: "agent", SessionID: "x"}
+	otherAgent := Identity{DeviceID: "d", AgentID: "other", SessionID: "s"}
+	otherDevice := Identity{DeviceID: "e", AgentID: "agent", SessionID: "s"}
+	if !a.SameOwner(sameOwnerNewSession) {
+		t.Fatal("a new session of the same device and agent must keep ownership")
+	}
+	if a.SameOwner(otherAgent) || a.SameOwner(otherDevice) || (Identity{}).SameOwner(Identity{}) {
+		t.Fatal("a different agent or device, or no device at all, must not match")
 	}
 	first, second := NewID(), NewID()
 	if first == second {

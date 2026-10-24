@@ -193,6 +193,14 @@ func (d *DB) SaveArtifact(item artifact.Item) error {
 	return nil
 }
 
+// DeleteArtifact removes the metadata of one application's package.
+func (d *DB) DeleteArtifact(appID string) error {
+	if _, err := d.sql.Exec(`DELETE FROM artifacts WHERE app_id = ?`, appID); err != nil {
+		return fmt.Errorf("store: delete artifact %s: %w", appID, err)
+	}
+	return nil
+}
+
 // ListArtifacts returns every persisted artifact.
 func (d *DB) ListArtifacts() ([]artifact.Item, error) {
 	rows, err := d.sql.Query(`SELECT app_id, path, size, sha256, token, download_url, stored_at FROM artifacts ORDER BY stored_at, app_id`)
