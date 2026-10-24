@@ -295,7 +295,9 @@ func (b *Builder) complete(appID, sessionID string) {
 			if err == nil {
 				b.register(entry, result, item)
 				os.Remove(path)
-				b.archive(sessionID)
+				// Keep a successful build session alive: AgentAPI pauses idle
+				// sandboxes, so the cost is negligible, and the session stays
+				// available for follow-up conversations.
 				return
 			}
 		}

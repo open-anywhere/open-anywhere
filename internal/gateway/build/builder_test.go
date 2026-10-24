@@ -115,8 +115,11 @@ func TestBuilderCompletesBuild(t *testing.T) {
 	if _, ok := artifacts.Get("app_1"); !ok {
 		t.Fatal("artifact was not stored")
 	}
-	waitFor(t, 2*time.Second, func() bool { return len(rec.archiveList()) == 1 })
 	waitFor(t, 2*time.Second, func() bool { return len(notifier.list()) == 1 })
+	time.Sleep(100 * time.Millisecond)
+	if archived := rec.archiveList(); len(archived) != 0 {
+		t.Fatalf("successful build must keep the session idle, archives = %+v", archived)
+	}
 	notes := notifier.list()
 	if notes[0].State != app.StateIdle || notes[0].Message != "APP 创建完成" {
 		t.Fatalf("notes = %+v", notes)
