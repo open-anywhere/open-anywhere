@@ -137,6 +137,26 @@ func TestHTTPServiceErrors(t *testing.T) {
 	})
 }
 
+// The control plane relies on error.session_id to clean up a projection whose
+// start failed after the session was recorded.
+func TestHTTPServiceErrorCarriesTheSessionID(t *testing.T) {
+	a := &fakeAdapter{startErr: errors.New("device timeout")}
+	s, _ := setup(a)
+	body, _ := json.Marshal(testRequest())
+	w := httpCall(t, NewHandler(s), "POST", "/v1/projection-sessions", string(body), "application/json")
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var payload struct {
+		Error struct {
+			SessionID string `json:"session_id"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil || payload.Error.SessionID == "" {
+		t.Fatalf("error body has no session_id: %s", w.Body)
+	}
+}
+
 // Exercise handlers over a real local HTTP connection as well as recorder tests.
 func TestHTTPServer(t *testing.T) {
 	server := httptest.NewServer(NewHandler(sEmpty()))

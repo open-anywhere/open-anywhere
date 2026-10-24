@@ -104,18 +104,20 @@ func (p *Player) Flush() {
 	p.stopLocked()
 }
 
-// Drain closes the input pipe and waits for the buffered audio to finish.
+// Drain closes the input pipe and waits for the buffered audio to finish. The
+// process is detached from the player before the wait, so neither a concurrent
+// Write, Flush nor a hung ffplay holds the lock while the buffered audio plays.
 func (p *Player) Drain() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.cmd == nil {
-		return nil
-	}
-	if p.stdin != nil {
-		_ = p.stdin.Close()
-	}
-	err := p.cmd.Wait()
+	cmd, in := p.cmd, p.stdin
 	p.cmd, p.stdin = nil, nil
 	p.queued = 0
-	return err
+	p.mu.Unlock()
+	if cmd == nil {
+		return nil
+	}
+	if in != nil {
+		_ = in.Close()
+	}
+	return cmd.Wait()
 }

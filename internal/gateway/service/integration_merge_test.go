@@ -82,6 +82,20 @@ func TestReconcileLostProjectionResponse(t *testing.T) {
 	}
 }
 
+func TestReconcileReleasesProjectionWhenTheTargetHasNoSession(t *testing.T) {
+	env := newTestEnv(t, nil)
+	record := env.registry.Add(app.App{ID: "app_1", State: app.StateError, ScreenID: "screen", TargetID: "tv_1", PendingProjection: true, CleanupPending: true})
+	// The target reports no active session: whatever the timed-out create did,
+	// nothing is projecting, so the reservation must not outlive it.
+	if err := env.svc.reconcile(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	got := record.Snapshot()
+	if got.PendingProjection || got.CleanupPending || got.ScreenID != "" || got.TargetID != "" {
+		t.Fatalf("reservation kept without any active session: %+v", got)
+	}
+}
+
 func TestCrashAfterRenderSuccessIsReconciled(t *testing.T) {
 	env := newTestEnv(t, nil)
 	r := env.registry.Add(app.App{ID: "app_1", State: app.StateIdle, ScreenID: "screen", InstanceID: "inst_1"})

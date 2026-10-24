@@ -78,19 +78,27 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 			return err
 		}
 		if target.ActiveSessionID == "" {
-			return &ToolError{Code: "RECONCILIATION_PENDING", Message: "投屏结果未确认，保留占用"}
+			// The target reports no active session, so the unknown projection
+			// outcome is resolved: either nothing was created or what was
+			// created is already gone. Keeping the reservation would leave the
+			// screen occupied by an application that is not projecting.
+			if err := persistRuntime(record, func(v *app.App) { v.PendingProjection = false }); err != nil {
+				return err
+			}
+			a = record.Snapshot()
+		} else {
+			p, err := s.casting.GetSession(ctx, target.ActiveSessionID)
+			if err != nil {
+				return err
+			}
+			if p.TargetID != a.TargetID || p.EndpointID != a.EndpointID || p.Source.URL != a.Source.URL {
+				return fmt.Errorf("foreign projection session; no cleanup")
+			}
+			if err := persistRuntime(record, func(v *app.App) { v.ProjectionSessionID = p.ID; v.PendingProjection = false }); err != nil {
+				return err
+			}
+			a = record.Snapshot()
 		}
-		p, err := s.casting.GetSession(ctx, target.ActiveSessionID)
-		if err != nil {
-			return err
-		}
-		if p.TargetID != a.TargetID || p.EndpointID != a.EndpointID || p.Source.URL != a.Source.URL {
-			return fmt.Errorf("foreign projection session; no cleanup")
-		}
-		if err := persistRuntime(record, func(v *app.App) { v.ProjectionSessionID = p.ID; v.PendingProjection = false }); err != nil {
-			return err
-		}
-		a = record.Snapshot()
 	}
 	if a.ProjectionSessionID != "" {
 		p, err := s.casting.StopSession(ctx, a.ProjectionSessionID)
