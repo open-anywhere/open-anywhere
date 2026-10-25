@@ -1,7 +1,9 @@
 <p align="center">
+  <img src="docs/assets/open-anywhere-mascot.png" alt="Open Anywhere 吉祥物百变怪" height="96">
+  &nbsp;&nbsp;&nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/open-anywhere/.github/main/assets/logo/open-anywhere-logo-dark.svg">
-    <img src="https://raw.githubusercontent.com/open-anywhere/.github/main/assets/logo/open-anywhere-logo.svg" alt="open anywhere" width="440">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/open-anywhere-wordmark-dark.svg">
+    <img src="docs/assets/open-anywhere-wordmark.svg" alt="Open Anywhere" height="96">
   </picture>
 </p>
 
