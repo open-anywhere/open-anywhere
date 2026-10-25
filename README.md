@@ -99,3 +99,11 @@ go run ./cmd/voiceentry -serve
 ```
 
 然后打开 <http://127.0.0.1:8788/>。设计见 [现场语音入口](docs/voice-entry.md)，使用、接口和目录见 [实现与使用](internal/voiceentry/README.md)。
+
+## 团队
+
+| 成员 | 分工 |
+| --- | --- |
+| 张之阳 [@luoliwoshang](https://github.com/luoliwoshang) | 架构设计、产品设计、商业规划、视频剪辑、Render 技术实现、Cast 端技术实现。负责产品方向与整体架构的顶层设计，落地运行端与投屏端，并产出对外宣传素材 |
+| 邓军辉 [@minorcell](https://github.com/minorcell) | 架构设计、Gateway 技术、控制面业务架构、Portal 设计、质量保障。负责控制面从语音接口、构建编排到运行调度的服务实现，以及管理端设计 |
+| 韩鲁鹏 [@LUPENGHAN](https://github.com/LUPENGHAN) | 灵矽技术实现、架构设计、质量保障。负责语音设备侧接入与现场语音入口，协同灵矽云打通端到端语音链路 |
