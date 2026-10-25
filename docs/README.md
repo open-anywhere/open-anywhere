@@ -22,7 +22,7 @@ docs/
 │   ├── business-plan.md        商业模型、第一周闭环、年龄分段、定价与三年目标
 │   └── research.md             同类产品调研与扩展方向
 ├── architecture/               系统怎么切、契约是什么
-│   ├── overview.md             分层、上下文、三条契约、关键取舍
+│   ├── overview.md             分层、上下文、三条契约、应用即接口与关键取舍
 │   ├── modules.md              模块职责、接口、不变量、分工
 │   ├── database.md             控制面持久化模型
 │   ├── voice-entry.md          现场语音入口与设备协议
