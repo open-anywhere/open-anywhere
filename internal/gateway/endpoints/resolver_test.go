@@ -28,27 +28,7 @@ type resolverEnv struct {
 
 func newResolverEnv(t *testing.T) *resolverEnv {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "portal.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	box, err := secret.New(bytes.Repeat([]byte{3}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	catalog, err := screen.LoadCatalog("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider := settings.New(db, box)
-	return &resolverEnv{
-		db:       db,
-		box:      box,
-		provider: provider,
-		resolver: NewResolver(db, provider, box, netguard.New(false), catalog),
-		catalog:  catalog,
-	}
+	return newResolverEnvAtPath(t, filepath.Join(t.TempDir(), "portal.db"))
 }
 
 func (e *resolverEnv) seedDefaults(t *testing.T) {
