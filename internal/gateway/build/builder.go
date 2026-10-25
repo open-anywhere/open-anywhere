@@ -372,12 +372,18 @@ func (b *Builder) complete(appID, sessionID string) {
 		}
 	}
 	os.Remove(path)
-	// Premature end_turn can surface the previous turn's package. Stay in
-	// building and keep watching so a later real delivery can still register.
+	// Premature end_turn can surface the previous turn's package. If the
+	// session is still running, keep watching for a real delivery; if it is
+	// already idle, the agent finished without a fresh artifact — fail (and
+	// keep the previous package on update) instead of looping forever.
 	if isStaleArtifact(err) && entry.Snapshot().State == app.StateBuilding {
-		b.logf("build %s: %v; resume watch for a fresher artifact", appID, err)
-		go b.watch(appID, sessionID)
-		return
+		status := b.sessionStatus(sessionID)
+		if status == "running" || status == "rescheduling" {
+			b.logf("build %s: %v (session %s); resume watch for a fresher artifact", appID, err, status)
+			go b.watch(appID, sessionID)
+			return
+		}
+		b.logf("build %s: %v (session %s); giving up without a fresher artifact", appID, err, status)
 	}
 	kept := b.fail(appID, userMessage(err), err)
 	if !kept {
