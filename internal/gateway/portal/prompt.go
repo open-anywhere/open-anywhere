@@ -16,8 +16,11 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/store"
 )
 
-// agent-prompt.txt is a copy of docs/agent-system-prompts/open-anywhere-host.txt.
-// It is embedded so deployment does not depend on the repository checkout.
+// agent-prompt.txt is a byte-for-byte copy of
+// docs/agent-system-prompts/open-anywhere-host.txt. It is embedded so
+// deployment does not depend on the repository checkout.
+// TestEmbeddedPromptMatchesDocs fails when the two drift, so edit the docs
+// file and copy it here instead of editing only one side.
 //
 //go:embed agent-prompt.txt
 var defaultSystemPrompt string
@@ -131,6 +134,7 @@ func NewService(ctx context.Context, cfg BuildConfig, db *store.DB, apps *servic
 		TokenPollAttempts: cfg.TokenPollAttempts,
 	})
 	api := NewAPI(db, auth, apps, voice, provision, webDir)
+	api.SetCookieSecure(cfg.CookieSecure)
 	api.SetPlatform(provider, pool, resolver)
 	logMissingWebDir(webDir)
 	return &Service{Auth: auth, Provision: provision, Voice: voice, API: api, Settings: provider, Resolver: resolver}, nil

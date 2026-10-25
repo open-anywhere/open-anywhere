@@ -67,7 +67,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 		Name:        "create-app",
 		Title:       "创建应用",
 		Description: "根据用户已确认的需求创建应用，并异步启动构建。prompt 必须是整理后的需求，包含页面、交互和规则，不要把原始语音转写直接传入。多人游戏请在 player_names 中传入用户已确认的初始玩家姓名，保留顺序；未知姓名不要猜测，名单不完整且需要预置全部玩家时先询问。名单只定义初始玩家，不代表已准备好。立即返回 app_id 和 building；之后用 get-app-status 查询进度，构建完成会收到 notifications/app_status。同一设备可同时有多个构建中的应用：每次调用都会新建 app_id 与构建会话。已返回的 app_id 用 get-app-status 跟踪；不要为同一意图盲目重试 create-app。修改已有应用用 update-app。",
-		Annotations: mutatingAnnotations(false, true),
+		Annotations: mutatingAnnotations(false, false),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input createAppInput) (*sdk.CallToolResult, service.CreateResult, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -82,7 +82,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 		Name:        "update-app",
 		Title:       "修订已有应用",
 		Description: "在已有应用的绑定构建会话上提交修改说明，异步重建产物。app_id 必填。prompt 为整理后的修改说明，不是原始语音。应用 building 时不要调用；running 时先 stop-app。新应用用 create-app；答题计分等运行中操作用 send-request。立即返回 building；完成后收到 notifications/app_status。会话不可用时返回 SESSION_UNAVAILABLE，需重新 create-app。",
-		Annotations: mutatingAnnotations(false, true),
+		Annotations: mutatingAnnotations(false, false),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input updateAppInput) (*sdk.CallToolResult, service.CreateResult, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -126,7 +126,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "start-app",
 		Title:       "在屏幕上启动应用",
-		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）启动到指定屏幕，历史应用也可以直接启动，等待应用就绪后返回 running。screen_id 必须来自 get-screens；status 为 external 或 unavailable 的屏幕不要选，showing_app 时只有用户明确同意替换才能传 force=true。一块屏幕同时只能展示一个应用；默认被其他应用占用返回 TARGET_BUSY。仅当用户明确要求替换或抢占屏幕时才传 force=true：它会先停止该屏幕上通过本工具启动的应用，再启动本应用；停不掉时返回错误，不会覆盖；其他来源占用的屏幕不能被 force 接管。已在其他屏幕运行返回 APP_ALREADY_RUNNING。启动需要一些时间；失败时应用进入 error，并返回 error.stage=starting 的结构化原因，构建成功的应用可以再次 start-app 重试。上次启动还在收尾时返回 CLEANUP_PENDING，稍后再试，不要重新创建应用。",
+		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）启动到指定屏幕，历史应用也可以直接启动，等待应用就绪后返回 running。screen_id 必须来自 get-screens；status 为 external 或 unavailable 的屏幕不要选，showing_app 时只有用户明确同意替换才能传 force=true。一块屏幕同时只能展示一个应用；默认被其他应用占用返回 TARGET_BUSY。仅当用户明确要求替换或抢占屏幕时才传 force=true：它会先停止该屏幕上通过本工具启动的应用，再启动本应用；停不掉时返回错误，不会覆盖；其他来源占用的屏幕不能被 force 接管。已在其他屏幕运行返回 APP_ALREADY_RUNNING。启动需要一些时间；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。ARTIFACT_INVALID 表示产物本身无效，不要反复 start-app，改用 update-app 重做一版；连接、屏幕或就绪超时类失败可以再次 start-app 重试。上次启动还在收尾时返回 CLEANUP_PENDING，稍后再试，不要重新创建应用。",
 		Annotations: mutatingAnnotations(false, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input startAppInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -178,6 +178,8 @@ func readOnlyAnnotations() *sdk.ToolAnnotations {
 	}
 }
 
+// mutatingAnnotations describes a write tool. create-app and update-app are
+// not idempotent: repeating them creates another build instead of converging.
 func mutatingAnnotations(destructive, idempotent bool) *sdk.ToolAnnotations {
 	return &sdk.ToolAnnotations{
 		ReadOnlyHint:    false,

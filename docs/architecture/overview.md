@@ -2,7 +2,7 @@
 
 ## 1. 摘要
 
-Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成一个可运行的 Web 应用，并在身边的屏幕上通过 AirPlay 呈现和控制。
+Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成一个可运行的 Web 应用，并在身边的屏幕上通过 DLNA 呈现和控制（AirPlay 是后续扩展）。
 
 系统由四个组件、一个现场语音入口和一个多租户 Portal 构成：
 
@@ -11,7 +11,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | 灵矽云（Linx） | 语音入口：ASR、TTS、意图识别、MCP Client |
 | 控制面（Control Plane） | MCP Server、任务编排、应用注册表、OpenAPI 到 HTTP 的适配、多租户 Portal 与管理后台 |
 | AgentAPI | 异步应用工厂：编码 Agent + 沙箱，产出应用 artifact |
-| Render | 应用运行时与舞台：启动应用、转发 HTTP、AirPlay 投屏 |
+| Render | 应用运行时与舞台：启动应用、转发 HTTP、输出 DLNA 可播放的媒体流 |
 | 现场语音入口 | 用户面前的语音设备。真实形态是灵矽硬件，目前由本地程序模拟；以设备身份接入灵矽云，收发语音、回应设备端 MCP（详见 [现场语音入口](voice-entry.md)） |
 | Portal | 与 Gateway 同进程的浏览器控制台：管理员配置平台、管理用户；用户注册、查看智能体与应用、绑定服务并语音对话 |
 
@@ -19,13 +19,15 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 
 1. **MCP**：灵矽云与控制面之间。灵矽只看见 MCP Tool，不直接接触 AgentAPI 或 Render。应用管理 Tool 见[应用管理 MCP](interfaces/app-management-mcp.md)。
 2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。产物结构、启动约定和构建提示见[应用包设计](interfaces/app-artifact.md)。
-3. **Portal HTTP API**：浏览器与控制面之间。会话 Cookie、同源 JSON 写请求；用户端 `/api/portal/*`、管理端 `/api/admin/*`，见[多租户用户 Portal 设计](interfaces/portal.md)。
+3. **Casting HTTP API**：控制面与投屏服务之间。Render 提供媒体流地址，控制面调用 Casting 完成协议控制与播放，见 [Casting 服务](../operations/casting.md)。
+
+Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之上的独立 HTTP 面，不属于上述三条平面契约，见[多租户用户 Portal 设计](interfaces/portal.md)。
 
 应用包下载、进程运行、Chromium 渲染与媒体流输出的接口约定见 [控制面与 Render 接口设计](interfaces/gateway-render.md)。
 
 现场语音入口与灵矽云之间使用灵矽自己的设备协议（WebSocket），不是 Open Anywhere 定义的契约，见 [现场语音入口](voice-entry.md)。
 
-核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容；租户按 owner 隔离。**
+核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容；租户按 owner 隔离。** 当前切换应用会重建投屏会话，复用会话是后续目标。
 
 ## 2. 目标与非目标
 
@@ -36,7 +38,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 - 构建是长任务，可以异步执行、按需查询状态和已用时间，不阻塞语音对话。
 - 同一设备与智能体可并行创建多个应用；每个应用在控制面绑定独立的 AgentAPI 构建会话，并可通过 `update-app` 在同一会话上修订产物（见 [multi-app-sessions.md](interfaces/multi-app-sessions.md)）。
 - 应用生成后可以在 Render 上稳定启动，并通过 OpenAPI 被控制面调用。
-- 应用画面通过 AirPlay 常驻在屏幕上；切换应用不重新建立投屏。
+- 应用画面通过 DLNA（MPEG-TS）投到屏幕上；当前切换应用会先停旧会话再建新会话，在会话内换源是后续目标。
 - Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
 - 控制面重启后从本地 SQLite 恢复应用和构建状态，未完成的构建继续监听，产物下载地址保持有效。持久化模型、恢复顺序与表结构见[控制面数据库设计](database.md)。
 - **多租户**：管理员引导账号配置平台；普通用户自助注册后自动获得一台虚拟 Linx 智能体；用户之间在应用、屏幕、语音与下游服务上完全隔离。
@@ -51,7 +53,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 - 邮箱验证、找回密码、修改密码、删除账号；多管理员邀请、审计表、细粒度权限。
 - 为每个 OpenAPI 操作动态注册一个 MCP Tool；MVP 使用稳定的 `get-app-operations` + `send-request`。
 - 服务端主动 TTS 推送；MVP 由灵矽在用户询问时轮询任务状态。
-- 在 macOS 上程序化发起 AirPlay 系统镜像；MVP 手动连接，浏览器或 HDMI 兜底。
+- 在 macOS 上程序化发起 AirPlay 系统镜像（AirPlay 是后续扩展）；MVP 使用 DLNA，必要时浏览器或 HDMI 兜底。
 - 把 AgentAPI 的沙箱当作应用运行时；AgentAPI 只负责构建。
 - 多副本 Gateway；一个 SQLite 只对应一个进程。
 
@@ -62,11 +64,11 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | 灵矽（Linx） | 七牛云的 AI 智能硬件平台，负责语音入口、ASR、TTS 和意图识别 |
 | 控制面（Control Plane） | 对灵矽暴露 MCP、对 AgentAPI 编排构建、对 Render 转发请求的服务 |
 | AgentAPI | 托管智能体框架，运行编码 Agent 和沙箱，产出持久化文件 |
-| Render | 现场的应用运行时，负责启动应用、提供 HTTP、维持 AirPlay |
+| Render | 现场的应用运行时，负责启动应用、提供 HTTP、输出 MPEG-TS 媒体流 |
 | Task | 一次 `create-app` 构建任务；构建结果注册为应用并使用 `app_id` 标识 |
 | App | AgentAPI 产出的、已经在 Render 上运行的应用 |
 | Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档和 `launch.json` |
-| Stage | Render 上常驻的展示页面；AirPlay 镜像的就是它 |
+| Stage | Render 上常驻的展示页面；投屏播放的就是它 |
 | 现场语音入口 | 用户面前、接入灵矽云的语音设备的统称。真实形态是灵矽硬件，目前用本地程序模拟 |
 | 灵矽硬件 | 真实的语音设备，由固件通过 OTA 和 WebSocket 接入灵矽云 |
 | 模拟硬件 | 本地程序，按同一套设备协议扮演灵矽硬件，并用 Web 控制台代替麦克风、扬声器和控制入口 |
@@ -89,10 +91,12 @@ flowchart LR
   L -->|MCP Tool| C["控制面<br/>Portal / MCP / 编排 / 注册表"]
   C -->|创建 / 查询 session| A["AgentAPI<br/>编码 Agent + 沙箱"]
   A -->|artifact| C
-  C -->|部署 / HTTP 转发| R["Render<br/>运行时 / Stage / AirPlay"]
+  C -->|部署 / HTTP 转发| R["Render<br/>运行时 / Stage / 媒体流"]
   R -->|HTTP 响应| C
   C -->|MCP Tool 结果| L
-  R -->|AirPlay| T["电视 / 大屏"]
+  C -->|source + 目标| P["Casting<br/>DLNA 控制"]
+  P -->|DLNA MPEG-TS| T["电视 / 大屏"]
+  R -.->|媒体流（电视直接拉取）| T
 ```
 
 ### 4.1 组件职责
@@ -103,7 +107,7 @@ flowchart LR
 | 灵矽云 | ASR、TTS、意图识别、选择并调用 MCP Tool | 构建应用、运行应用、投屏 |
 | 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验；Portal 注册/登录、管理 API、平台设置、按 owner 解析 Render/Casting | 写代码、运行应用、理解应用的业务语义、查看用户屏幕内容 |
 | AgentAPI | 运行编码 Agent、在沙箱中写代码和自测、持久化 artifact | 承载应用运行时、直接面对灵矽 |
-| Render | 解压 artifact、按 `launch.json` 启动、健康检查、进程保活、接收控制面 HTTP 转发、Stage 与 AirPlay | 理解应用业务、决定应用能力 |
+| Render | 解压 artifact、按 `launch.json` 启动、健康检查、进程保活、接收控制面 HTTP 转发、Stage 与媒体流 | 理解应用业务、决定应用能力 |
 | 应用 | 提供 UI 和 `/api/*` HTTP 接口、维护自己的状态 | 感知 MCP、直接面对灵矽 |
 | Portal | 注册、登录、角色与归属；用户查看智能体/应用/屏幕/服务/活动；管理员管理用户、智能体、全局应用与平台设置 | 代替灵矽做语音意图、直接操作屏幕内容 |
 
@@ -111,11 +115,11 @@ flowchart LR
 
 投屏服务是一个独立的局域网投屏端：探测设备、维护 Target 与 Endpoint、按协议建立和结束会话。它不生成、代理或转码媒体，只负责协议控制与会话生命周期；媒体流由 Render 提供，地址必须对电视可达。
 
-会话是通道，应用是内容——切换应用不重建投屏会话。第一版支持 DLNA 的 MPEG-TS 实时流，AirPlay 是后续扩展。目标状态、错误码、占用释放与边界见 [Casting 服务](../operations/casting.md)。
+当前只支持 DLNA 的 MPEG-TS 实时流，AirPlay 是后续扩展。会话是通道，应用是内容；但**当前切换应用会先停止旧会话再创建新会话**，电视会短暂黑屏，在会话内更换 source 是后续目标。目标状态、错误码、占用释放与边界见 [Casting 服务](../operations/casting.md)。
 
 ## 6. 应用管理 MCP
 
-灵矽通过控制面发现屏幕，并创建、修订、查询、启动和停止应用（`get-screens`、`create-app`、`update-app`、`get-app-status`、`start-app`、`stop-app` 等）。工具集、状态模型、通知和错误约定见[应用管理 MCP](interfaces/app-management-mcp.md)；多应用并行与会话绑定见[多应用并发与同会话更新](interfaces/multi-app-sessions.md)。
+灵矽通过控制面发现屏幕，并创建、修订、查询、启动和停止应用。工具与错误码的权威清单见[应用管理 MCP](interfaces/app-management-mcp.md#21-工具集)，本文不重复列举；多应用并行与会话绑定见[多应用并发与同会话更新](interfaces/multi-app-sessions.md)。
 
 Portal 模式下，MCP 会话必须携带 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id`，屏幕与应用均按 owner 作用域；跨 owner 的 `force` 不会接管屏幕。
 

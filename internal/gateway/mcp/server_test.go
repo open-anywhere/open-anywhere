@@ -224,12 +224,15 @@ func TestServerSessionFlow(t *testing.T) {
 		t.Fatalf("tools = %d", len(tools))
 	}
 	names := make(map[string]bool, len(tools))
-	var createTool map[string]any
+	var createTool, updateTool map[string]any
 	for _, raw := range tools {
 		tool := raw.(map[string]any)
 		names[tool["name"].(string)] = true
-		if tool["name"] == "create-app" {
+		switch tool["name"] {
+		case "create-app":
 			createTool = tool
+		case "update-app":
+			updateTool = tool
 		}
 	}
 	for _, want := range []string{"get-screens", "create-app", "update-app", "get-app-status", "get-app-operations", "start-app", "stop-app", "send-request"} {
@@ -249,6 +252,12 @@ func TestServerSessionFlow(t *testing.T) {
 	}
 	if description, _ := createTool["description"].(string); !strings.Contains(description, "player_names") || !strings.Contains(description, "不代表已准备好") {
 		t.Fatalf("create-app description = %q", description)
+	}
+	for name, tool := range map[string]map[string]any{"create-app": createTool, "update-app": updateTool} {
+		annotations, _ := tool["annotations"].(map[string]any)
+		if value, ok := annotations["idempotentHint"].(bool); !ok || value {
+			t.Fatalf("%s idempotentHint = %v, want false", name, annotations["idempotentHint"])
+		}
 	}
 
 	call(4, "tools/call", map[string]any{"name": "get-screens", "arguments": map[string]any{}})

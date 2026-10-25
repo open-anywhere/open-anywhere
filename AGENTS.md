@@ -43,19 +43,19 @@ Display, input, and compute are deliberately isolated. Each plane can be replace
 | --- | --- | --- | --- |
 | Input | On-site voice entry (Linx hardware or the local simulator) and Linx cloud | Device session and audio relay; ASR, TTS, intent recognition; calling MCP tools | Build or run apps; cast to a screen |
 | Compute | Control plane, AgentAPI, Render | MCP routing and orchestration, app registry, asynchronous builds in a sandbox, app runtime, stage capture | Understand the app's business semantics; speak the device protocol |
-| Display | Casting service and the target TV, projector, or other display | Device discovery, DLNA/AirPlay session lifecycle, playing a media stream | Know which app produced the stream |
+| Display | Casting service and the target TV, projector, or other display | Device discovery, DLNA session lifecycle, playing a media stream | Know which app produced the stream |
 
 The planes meet through three narrow contracts:
 
 1. **MCP** between Linx and the control plane. Linx sees a stable set of tools and never talks to AgentAPI or Render directly.
 2. **OpenAPI + `launch.json` + HTTP** between the control plane, Render, and apps. Apps expose HTTP and know nothing about MCP; the control plane validates and forwards requests.
-3. **Casting HTTP API** between the runtime and the display plane. The runtime supplies a media stream URL; Casting owns protocol control and playback.
+3. **Casting HTTP API** between the control plane and the casting service. Render supplies a media stream URL; the control plane asks Casting to play it.
 
 Invariants to preserve when changing code:
 
 - The MCP surface stays stable while app capabilities remain dynamic. Do not register a tool per app or per OpenAPI operation.
 - Builds are slow and asynchronous; control is fast and synchronous. Never make a voice turn wait for a build.
-- Casting is a session-level channel and an app is content inside it. Switching apps must not re-establish the casting session.
+- Casting is a session-level channel and an app is content inside it. The current implementation stops the old session and creates a new one when switching apps; switching the source inside one session is the target, not current behavior. Do not document session reuse as if it already works.
 - The screen is a display, not a runtime. Keep app logic out of the display plane and display logic out of apps.
 - Generated artifacts are untrusted input. Validate structure, launch contract, and OpenAPI before running; Render validates again.
 - State belongs to its owner: control-plane state in SQLite, app state in the app, casting state in the session.

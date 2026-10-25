@@ -1,9 +1,49 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestPortalCookieWarning(t *testing.T) {
+	exposed := Config{PortalEnabled: true, Addr: ":8090", PortalCookieSecure: false}
+	if warning := exposed.portalCookieWarning(); !strings.Contains(warning, "WARNING") || !strings.Contains(warning, "cookie_secure=false") {
+		t.Fatalf("exposed warning = %q", warning)
+	}
+	loopback := exposed
+	loopback.Addr = "127.0.0.1:8090"
+	if warning := loopback.portalCookieWarning(); warning != "" {
+		t.Fatalf("loopback warning = %q", warning)
+	}
+	secure := exposed
+	secure.PortalCookieSecure = true
+	if warning := secure.portalCookieWarning(); warning != "" {
+		t.Fatalf("secure warning = %q", warning)
+	}
+	disabled := exposed
+	disabled.PortalEnabled = false
+	if warning := disabled.portalCookieWarning(); warning != "" {
+		t.Fatalf("disabled warning = %q", warning)
+	}
+}
+
+func TestIsLoopbackListen(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1:8090": true,
+		"[::1]:8090":     true,
+		"localhost:8090": true,
+		":8090":          false,
+		"0.0.0.0:8090":   false,
+		"[::]:8090":      false,
+		"192.168.1.5:80": false,
+		"not-an-address": false,
+	} {
+		if got := isLoopbackListen(addr); got != want {
+			t.Errorf("isLoopbackListen(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
 
 func TestParseBooleanEnvironmentValues(t *testing.T) {
 	env := fullEnv()
@@ -16,8 +56,8 @@ func TestParseBooleanEnvironmentValues(t *testing.T) {
 	if !cfg.PortalEnabled {
 		t.Fatal("PORTAL_ENABLED=true was ignored")
 	}
-	if cfg.PortalCookieSecure {
-		t.Fatal("an invalid PORTAL_COOKIE_SECURE should fall back to the default")
+	if !cfg.PortalCookieSecure {
+		t.Fatal("an invalid PORTAL_COOKIE_SECURE should fall back to the secure default")
 	}
 
 	env["PORTAL_ENABLED"] = "false"
@@ -31,6 +71,33 @@ func TestParseBooleanEnvironmentValues(t *testing.T) {
 	}
 	if !cfg.PortalCookieSecure {
 		t.Fatal("PORTAL_COOKIE_SECURE=1 was ignored")
+	}
+}
+
+func TestPortalCookieSecureDefaultsToTrue(t *testing.T) {
+	cfg, err := Parse(nil, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PortalCookieSecure {
+		t.Fatal("portal cookies must be Secure by default")
+	}
+
+	path := writeConfig(t, "portal:\n  cookie_secure: false\n")
+	cfg, err = Parse([]string{"-config", path}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PortalCookieSecure {
+		t.Fatal("an explicit cookie_secure: false was ignored")
+	}
+
+	cfg, err = Parse(nil, envLookup(map[string]string{"PORTAL_COOKIE_SECURE": "false"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PortalCookieSecure {
+		t.Fatal("PORTAL_COOKIE_SECURE=false was ignored")
 	}
 }
 

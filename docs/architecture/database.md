@@ -36,7 +36,7 @@
 | --- | --- | --- | --- | --- |
 | 数据库文件 | `database.path` | `GATEWAY_DB` | `-db` | `open-anywhere.gateway.db` |
 | 产物目录 | `artifacts.dir` | `ARTIFACTS_DIR` | `-artifacts-dir` | `artifacts` |
-| 产物下载基地址 | `artifacts.base_url` | `ARTIFACT_BASE_URL` | `-artifact-base-url` | 示例为 `http://192.168.31.203:8090` |
+| 产物下载基地址 | `artifacts.base_url` | `ARTIFACT_BASE_URL` | `-artifact-base-url` | 示例为 `http://127.0.0.1:8091`（Gateway 自己的端口） |
 | Portal 数据目录 | `portal.data_dir` | `PORTAL_DATA_DIR` | `-portal-data-dir` | `portal-data` |
 | 主密钥 | — | `GATEWAY_SECRET_KEY`（base64 32 字节） | — | 否则读取 `{portal.data_dir}/secret.key` |
 
@@ -249,7 +249,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 - `BuildDuration` 是 Go `time.Duration` 的纳秒整数（JSON number），不是秒数。
 - 零值时间序列化为 `"0001-01-01T00:00:00Z"`。
 - `Artifact.DownloadURL` 内嵌下载令牌，因此**令牌在数据库里出现两次**（`artifacts.token` 与 `data` 内的 URL）。
-- `EventCursor` 每收到一个带 `id` 的事件就写入，但重启后 `builder.Resume` 只用内存 `seen` 集合从事件流头部重放去重，**没有读取 `EventCursor`**。这与 `docs/gateway-agentapi-interface.md` 3.7 的描述存在偏差。
+- `EventCursor` 是跨重启续传游标：每收到一个带 `id` 的事件就写入最近处理的事件 ID；重启后 `builder.Resume` 读取它，从事件流头部回放，到达该 ID 之后才继续处理，避免把上一轮的 `end_turn` 当成这一轮完成。它不是“只写不读”。风险在于只保存单个 ID：如果 AgentAPI 的回放窗口在两次启动之间被截断、已经找不到该 ID，游标永远无法命中，后续事件会被永久跳过。接口约定见 [控制面与 AgentAPI 接口](interfaces/gateway-agentapi.md#34-订阅事件流)。
 - 快照没有内部格式版本号。旧版本程序读取新版本写入的字段时会静默丢弃未知字段，下一次写入即丢失；**不支持直接回滚到旧二进制**。
 - 顶层字段名是 Go 标识符，重命名 `app.App` 的导出字段等同于破坏持久化格式，必须同时提供迁移。
 
@@ -272,7 +272,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 
 1. 创建数据库父目录（`db.go:57-63`）。
 2. 以 10 秒超时 `Ping`。
-3. 读取 `PRAGMA user_version`；若大于程序支持的 `schemaVersion`（当前为 3）则拒绝启动。
+3. 读取 `PRAGMA user_version`；若大于程序支持的 `schemaVersion`（当前为 4）则拒绝启动。
 4. 按版本依次执行尚未应用的迁移（v1 → v2 → v3 → v4）；每个版本在独立事务中执行，成功后在同一事务写入 `PRAGMA user_version`。新库从 0 一次执行到 4，已有 v3 库只执行 v4。
 
 写入并发控制分两层：
@@ -370,22 +370,37 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 
 - 每个版本在一个事务中执行，`PRAGMA user_version` 也在该事务内写入；任一步失败会回滚整个版本，schema 与版本号都保持原状。
 - 打开时只拒绝**比程序更新**的数据库，旧程序看到更新的版本会拒绝启动，避免写入不认识的 schema。
-- v3 使用 `ALTER TABLE` 增加列，只在 `user_version < 3` 时执行，不做 `IF NOT EXISTS` 兜底。
-- **迁移前预检**（`prepareSchemaV3`）：
+- v3 与 v4 都用 `ALTER TABLE ... ADD COLUMN` 增加列，只在对应的版本区间执行，不做 `IF NOT EXISTS` 兜底。v4 的 `ALTER TABLE portal_devices ADD COLUMN name TEXT NOT NULL DEFAULT ''` 是一次性 DDL：如果人工执行过一半再让程序跑迁移，会因列已存在而让整版回滚。手工修库前先核对 `PRAGMA user_version` 与列是否已存在。
+- **迁移前预检**（`prepareSchemaV3`，从 v2 升到 v3 时执行）：
   - 同一用户存在多台 `kind='virtual'` 设备；
   - 非空 `linx_agent_id` 被多台设备重复使用。
-  发现重复时整个 v3 迁移回滚，并给出明确错误，要求人工处理；**不会自动删除任何用户数据**。
+  发现重复时整个 v3 迁移回滚，并给出明确错误，要求人工处理；**不会自动删除任何用户数据**。已经是 v3/v4 的库不再检查这两项，v4 本身就允许多台设备。
+- **迁移验收**：迁移完成后逐项确认，任何一项不符都不要继续启动业务。
+
+```sh
+sqlite3 open-anywhere.gateway.db "PRAGMA user_version;"   # 期望 4
+sqlite3 open-anywhere.gateway.db "PRAGMA integrity_check;" # 期望 ok
+sqlite3 open-anywhere.gateway.db "SELECT COUNT(*) FROM portal_devices WHERE name IS NULL;" # 期望 0
+```
+
+迁移前可先跑预检 SQL（只读）：
+
+```sql
+SELECT user_id, COUNT(*) FROM portal_devices
+ WHERE kind='virtual' GROUP BY user_id HAVING COUNT(*) > 1;
+SELECT linx_agent_id, COUNT(*) FROM portal_devices
+ WHERE linx_agent_id <> '' GROUP BY linx_agent_id HAVING COUNT(*) > 1;
+SELECT a.app_id FROM artifacts a LEFT JOIN apps p ON p.id=a.app_id WHERE p.id IS NULL;
+```
+
 - 迁移不硬编码账号。启动时 `EnsureAdmin` 用 `portal.username` / `portal.password` 创建或提升引导账号；已有 v2 账号若与配置的引导账号同名，则被提升为管理员，其余账号保留为 `user`。设备、凭据与应用都保留。
 - 修改已有表结构时必须新增迁移版本、在事务内执行 `ALTER TABLE` 或重建表、递增 `schemaVersion`，并保留“新库拒绝启动”的保护。
 
-WAL 模式下的备份：
-
-- 备份必须使用 SQLite 在线备份（`sqlite3 db ".backup 'backup.db'"`）或先正常停进程，不能只拷贝主文件，否则可能丢失 `-wal` 中尚未 checkpoint 的数据。
-- 平台密钥与用户服务 token 是密文，备份数据库时必须同时保留 `GATEWAY_SECRET_KEY` 或 `secret.key`，否则恢复后无法解密；反过来，只备份密钥而不备份数据库也恢复不了设置。
+备份与恢复的完整步骤、四件必须同时备份的数据（数据库、`artifacts/`、`portal-data/devices/`、`GATEWAY_SECRET_KEY` 或 `portal-data/secret.key`）见[部署与备份](../operations/deploy.md)。注意它们不是原子快照：数据库用 `.backup` 得到一个时刻，产物与凭证目录是另一个时刻，恢复后允许“有行无文件”或“有文件无行”，必须跑一次孤儿对账（见第 14 节）。
 
 ## 11. 容量与性能
 
-- 应用记录上限约 10 条（加上无法裁剪的 `building` / `running` 记录）；单条 `data` 大小主要取决于 OpenAPI 文档，通常是几十 KB 到数百 KB。
+- 每个 `(device_id, agent_id)` 的应用记录上限约 10 条（加上无法裁剪的 `building` / `running` 记录），用户之间互不挤占；单条 `data` 大小主要取决于 OpenAPI 文档，通常是几十 KB 到数百 KB。
 - 产物单包上限 100 MiB，按 `app_id` 覆盖，不保留历史版本。
 - 每次构建事件（`agent.message`、`agent.thinking`、`session.error`）都会把**整条应用快照**重新序列化并写入：高频思考事件会带来明显的写放大和 WAL 增长。
 - `ListApps` / `ListArtifacts` 是启动期全表扫描，当前数据量下没有问题；`ORDER BY updated_at` 使用文本排序，而 `RFC3339Nano` 的小数位长度可变，同一秒内"无小数"与"有小数"的字符串顺序不一定等于时间顺序。该顺序只影响启动加载次序，不影响业务。
@@ -406,10 +421,10 @@ WAL 模式下的备份：
 
 以下按影响排序，均为**现状**，不是已实现行为：
 
-1. **归属列与归属规则不一致**：归属规则是"设备 + 智能体"，但表里只有 `owner_device_id` 和 `owner_session_id`，没有 `owner_agent_id`；索引也用了会话而不是智能体，且该索引无人使用。建议 v2 增加 `owner_agent_id`（从 `data` 回填），把索引改为 `(owner_device_id, owner_agent_id, state)`，或直接删除无用索引。
+1. **归属列与归属规则不一致**：归属规则是"设备 + 智能体"，但表里只有 `owner_device_id` 和 `owner_session_id`，没有 `owner_agent_id`；索引也用了会话而不是智能体，且该索引无人使用。建议在下一个 schema 版本（v5）增加 `owner_agent_id`（从 `data` 回填），把索引改为 `(owner_device_id, owner_agent_id, state)`，或直接删除无用索引。
 2. **没有外键与孤儿回收**：`artifacts.app_id` 未约束到 `apps.id`。建议增加 `REFERENCES apps(id) ON DELETE CASCADE`（文件删除仍需 Go 代码），并在启动时清理"有产物行但没有应用行"的孤儿记录和文件。
 3. **单行损坏会阻塞启动**：一条坏 JSON 或坏时间戳会让 `ListApps` / `ListArtifacts` 整体失败。建议逐行容错：记录日志、隔离坏行，并让其余应用继续恢复。
-4. **`EventCursor` 只写不读**：与接口文档 3.7 的"按游标跳过已处理事件"不一致。要么在恢复时真正使用游标/事件 ID 集合，要么从 schema 与文档中移除该字段，避免误以为去重是跨重启的。
+4. **单 ID 游标在回放窗口截断后会永久跳过事件**：`EventCursor` 只保存最近处理的一个事件 ID，恢复时依赖回放能再次出现同一个 ID。若两次启动之间 AgentAPI 截断了事件回放窗口，游标无法命中，后续事件会被永久跳过。建议保存可排序游标或有界的事件 ID 集合，并在游标未命中时告警并重新同步。接口语义见 [控制面与 AgentAPI 接口](interfaces/gateway-agentapi.md#34-订阅事件流)。
 5. **整快照高频写入**：构建过程中每个 thinking 事件都重写完整快照。建议把高频进度拆成独立小表或独立列，或按时间/事件数节流，降低 WAL 和磁盘压力。
 6. **跨表写入不是事务**：产物与应用快照、应用删除与产物删除分属不同语句。建议明确可接受的中间状态，并配合启动时的孤儿扫描；否则崩溃窗口会留下不一致。
 7. **账号删除与资源回收缺失**：本期只有停用/启用，没有删除账号入口；停用会撤销会话并尽力停止应用，但不会删除灵矽智能体、设备凭证或数据库行。需要回收时只能按“停语音 → 解绑设备 → 删除智能体 → 删除凭证 → 删除用户行”人工处理。
@@ -458,7 +473,8 @@ sqlite3 -header -column open-anywhere.gateway.db \
 sqlite3 -header -column open-anywhere.gateway.db \
   "SELECT key, is_secret, updated_at, updated_by FROM platform_settings ORDER BY key;"
 
-# 在线备份（WAL 模式下不要只拷主文件；备份必须与 secret.key/GATEWAY_SECRET_KEY 一起保存）
+# 在线备份（WAL 模式下不要只拷主文件）。
+# artifacts/、portal-data/devices/ 与主密钥必须一起备份，见 docs/operations/deploy.md
 sqlite3 open-anywhere.gateway.db ".backup 'gateway-backup.db'"
 ```
 

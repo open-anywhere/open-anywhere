@@ -22,6 +22,18 @@ func TestHTTPErrorFormatting(t *testing.T) {
 	if !IsCode(err, "PORT_IN_USE") || IsCode(errors.New("other"), "PORT_IN_USE") {
 		t.Fatal("IsCode")
 	}
+	if IsInvalidArtifact(err) {
+		t.Fatal("a port error is not an artifact error")
+	}
+	if !IsInvalidArtifact(&HTTPError{Status: http.StatusUnprocessableEntity, Code: CodeInvalidArtifact}) {
+		t.Fatal("422 INVALID_ARTIFACT was not recognized")
+	}
+	if !IsInvalidArtifact(&HTTPError{Status: http.StatusUnprocessableEntity}) {
+		t.Fatal("a 422 without a code was not recognized")
+	}
+	if IsInvalidArtifact(errors.New("other")) {
+		t.Fatal("a plain error is not an artifact error")
+	}
 }
 
 func TestNewDefaultsTimeout(t *testing.T) {

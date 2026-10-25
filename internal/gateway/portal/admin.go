@@ -36,7 +36,7 @@ func (a *API) AdminHandler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/mcp/shared", a.withAdmin(a.adminSetSharedMCP))
 	mux.HandleFunc("POST /api/admin/mcp/sync", a.withAdmin(a.adminSyncMCP))
 	mux.Handle("/api/admin/", http.NotFoundHandler())
-	return a.guard(mux)
+	return a.securityHeaders(a.guard(mux))
 }
 
 func (a *API) withAdmin(next authedHandler) http.HandlerFunc {

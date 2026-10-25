@@ -55,18 +55,23 @@ try {
     !launch.runtimeArgs.some((arg) => arg === "--port" || arg.startsWith("--port=")),
     "runtimeArgs must not fix a port"
   );
-  const entry = launch.runtimeArgs.find(
-    (arg) => arg.startsWith("app/") && fs.existsSync(path.join(root, arg))
+  const entry = launch.runtimeArgs[0];
+  check(
+    entry === "app/app.js",
+    `runtimeArgs[0] must be exactly "app/app.js", got ${JSON.stringify(entry)}`
   );
-  check(entry !== undefined, "runtimeArgs must reference an existing file under app/");
+  check(
+    fs.existsSync(path.join(root, "app/app.js")),
+    "runtimeArgs[0] must reference the archived file \"app/app.js\""
+  );
   check(
     launch.healthPath === undefined || launch.healthPath === "/health",
     "healthPath must be /health"
   );
   if (launch.readyTimeoutMs !== undefined) {
     check(
-      Number.isInteger(launch.readyTimeoutMs) && launch.readyTimeoutMs > 0 && launch.readyTimeoutMs <= 600000,
-      "readyTimeoutMs must be an integer between 1 and 600000"
+      Number.isInteger(launch.readyTimeoutMs) && launch.readyTimeoutMs > 0 && launch.readyTimeoutMs <= 60000,
+      "readyTimeoutMs must be an integer between 1 and 60000"
     );
   }
   console.log("OK: launch.json");
@@ -90,20 +95,40 @@ fi
 note "app/public has no external resources"
 
 if [ -f "$ARCHIVE" ]; then
+  limit=$((100 * 1024 * 1024))
   size=$(wc -c < "$ARCHIVE" | tr -d ' ')
-  [ "$size" -le $((100 * 1024 * 1024)) ] || fail "archive exceeds 100 MiB"
+  [ "$size" -le "$limit" ] || fail "archive exceeds 100 MiB ($size bytes)"
   tar -tzf "$ARCHIVE" >/dev/null 2>&1 || fail "archive is not a valid tar.gz"
   entries=$(tar -tzf "$ARCHIVE")
-  printf '%s\n' "$entries" | grep -Eq '^(\./)?launch\.json$' || fail "archive root is missing launch.json"
-  printf '%s\n' "$entries" | grep -Eq '^(\./)?openapi\.yaml$' || fail "archive root is missing openapi.yaml"
-  printf '%s\n' "$entries" | grep -Eq '^(\./)?app/' || fail "archive root is missing app/"
+  entry_count=$(printf '%s\n' "$entries" | grep -c . || true)
+  [ "${entry_count:-0}" -le 4096 ] || fail "archive has $entry_count entries; limit is 4096"
+  for required in launch.json openapi.yaml app/app.js app/package.json app/public/index.html; do
+    if printf '%s\n' "$entries" | grep -Fxq "$required"; then
+      continue
+    fi
+    printf '%s\n' "$entries" | grep -Fxq "./$required" \
+      || fail "archive root is missing $required"
+  done
   if printf '%s\n' "$entries" | grep -Eq '^(\./)?outputs(/|$)'; then
     fail "archive must not contain an outputs/ prefix"
   fi
   if printf '%s\n' "$entries" | grep -Eq '(^|/)\.\.(/|$)|^/'; then
     fail "archive contains absolute or parent-directory paths"
   fi
-  note "archive structure"
+
+  extract_dir=$(mktemp -d "${TMPDIR:-/tmp}/artifact-check.XXXXXX")
+  trap 'rm -rf "$extract_dir"' EXIT
+  tar -xzf "$ARCHIVE" -C "$extract_dir" || fail "archive could not be extracted"
+  expanded_total=0
+  while IFS= read -r -d '' file; do
+    file_size=$(wc -c < "$file" | tr -d ' ')
+    if [ "$file_size" -gt "$limit" ]; then
+      fail "expanded file exceeds 100 MiB: ${file#"$extract_dir"/} ($file_size bytes)"
+    fi
+    expanded_total=$((expanded_total + file_size))
+  done < <(find "$extract_dir" -type f -print0)
+  [ "$expanded_total" -le "$limit" ] || fail "expanded archive exceeds 100 MiB ($expanded_total bytes)"
+  note "archive structure (entries: $entry_count, expanded: $expanded_total bytes)"
 else
   note "archive not found; skipping archive checks ($ARCHIVE)"
 fi

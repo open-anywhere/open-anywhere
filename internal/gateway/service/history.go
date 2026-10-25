@@ -148,6 +148,9 @@ func (s *Service) startable(a app.App) (bool, string) {
 	case app.StateRunning:
 		return false, "已在屏幕上运行"
 	case app.StateError:
+		if a.Error != nil && a.Error.Code == "ARTIFACT_INVALID" {
+			return false, "产物无效，需要修订后重新构建"
+		}
 		if !retryable(a) {
 			return false, "构建失败，需要重新创建"
 		}
@@ -162,9 +165,13 @@ func (s *Service) startable(a app.App) (bool, string) {
 }
 
 // retryable reports whether an application in error was built successfully and
-// failed later, so starting it again is sensible.
+// failed later, so starting it again is sensible. An invalid artifact is not
+// retryable: the same package would fail again and must be rebuilt with
+// update-app.
 func retryable(a app.App) bool {
-	return a.State == app.StateError && a.Error != nil && a.Error.Stage != app.StageBuilding && a.OpenAPI != nil && a.Artifact.Path != ""
+	return a.State == app.StateError && a.Error != nil &&
+		a.Error.Stage != app.StageBuilding && a.Error.Code != "ARTIFACT_INVALID" &&
+		a.OpenAPI != nil && a.Artifact.Path != ""
 }
 
 func truncateRunes(text string, limit int) string {

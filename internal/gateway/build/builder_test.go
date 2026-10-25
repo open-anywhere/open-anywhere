@@ -701,6 +701,8 @@ func testArtifact(t *testing.T) []byte {
 	}{
 		{name: "app/", dir: true},
 		{name: "app/app.js", body: "console.log('quiz')"},
+		{name: "app/package.json", body: `{"name":"quiz","private":true}`},
+		{name: "app/public/index.html", body: "<html></html>"},
 		{name: "launch.json", body: `{"name":"quiz","runtimeExecutable":"node","runtimeArgs":["app/app.js"]}`},
 		{name: "openapi.yaml", body: "openapi: 3.1.0\npaths:\n  /api/roll:\n    post:\n      operationId: rollDice\n      responses:\n        \"200\":\n          description: ok\n"},
 	}

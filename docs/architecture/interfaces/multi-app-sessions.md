@@ -72,7 +72,7 @@
 
 - 一块屏幕同时只展示一个应用；`start-app` 的 `TARGET_BUSY` / `force` 语义不变。
 - 一个应用同时只绑定一块屏幕。
-- 全局历史仍约 10 个可淘汰槽位；`building` / `running` / 仍占下游资源的应用不淘汰。
+- 历史按 `(device, agent)` 分组，每组约 10 个可淘汰槽位，用户之间互不挤占；`building` / `running` / 仍占下游资源的应用不淘汰。
 
 ## 5. `update-app`：同会话修订
 

@@ -20,20 +20,22 @@
 
 | 数据 | 位置 | 说明 |
 | --- | --- | --- |
-| 数据库 | `open-anywhere.gateway.db` | 账号、设备、应用记录、平台设置 |
-| 主密钥 | `portal-data/secret.key`，或环境变量 `GATEWAY_SECRET_KEY` | 加密平台 API Key、MCP Token 和用户服务 token |
-| 应用包 | `artifacts/` | 可选。丢失后应用需要重新构建 |
-| 设备凭证 | `portal-data/devices/` | 可选。丢失后可在门户里重试开通重新生成 |
+| 数据库 | `open-anywhere.gateway.db` | 必须。账号、设备、应用记录、平台设置 |
+| 主密钥 | `portal-data/secret.key`，或环境变量 `GATEWAY_SECRET_KEY` | 必须。加密平台 API Key、MCP Token 和用户服务 token |
+| 应用包 | `artifacts/`（或 `artifacts.dir`） | 必须。丢失后已注册应用无法启动（`ARTIFACT_MISSING`），只能重新构建 |
+| 设备凭证 | `portal-data/devices/` | 必须。丢失后设备 token 无法恢复，需要在门户里重新开通或重新绑定硬件 |
 
-数据库和主密钥必须成对保存。只有数据库，没有主密钥，密文无法解密，Gateway 会拒绝启动。只有主密钥而没有数据库，设置也恢复不了。不要删除密钥或清空密文来“修复”启动失败。
+这四者必须一起备份，缺任何一项都不算可恢复的备份。数据库和主密钥尤其要成对保存：只有数据库，没有主密钥，密文无法解密，Gateway 会拒绝启动；只有主密钥而没有数据库，设置也恢复不了。不要删除密钥或清空密文来“修复”启动失败。
+
+备份不是原子快照。数据库用 SQLite `.backup` 拿到的是一个时刻的一致快照，`artifacts/` 与 `portal-data/devices/` 是随后复制的文件，三者可能相差几秒到几分钟。恢复后允许出现“数据库有行、文件缺失”或“文件在、数据库没有行”，必须按下面的对账步骤处理，不要假定备份完全一致。
 
 ## 备份
-
-数据库使用 WAL 模式，不要只复制主文件，用 SQLite 的在线备份：
 
 ```bash
 sqlite3 open-anywhere.gateway.db ".backup 'gateway-backup.db'"
 cp portal-data/secret.key secret.key.backup
+tar -czf artifacts-backup.tar.gz artifacts
+tar -czf devices-backup.tar.gz portal-data/devices
 ```
 
 使用 `GATEWAY_SECRET_KEY` 时，把这个值保存到密码管理器或部署平台的密钥库里。
@@ -44,8 +46,31 @@ cp portal-data/secret.key secret.key.backup
 
 1. 停止 Gateway。
 2. 把备份的数据库放回 `open-anywhere.gateway.db`，并删除同目录下旧的 `-wal` 和 `-shm` 文件。
-3. 恢复 `portal-data/secret.key`，或设置原来的 `GATEWAY_SECRET_KEY`。
-4. 启动 Gateway。启动时会解密校验全部密文，失败就说明密钥与数据库不是一对。
+3. 恢复 `portal-data/secret.key`（0600），或设置原来的 `GATEWAY_SECRET_KEY`。
+4. 解包产物与凭证，并收紧权限：
+
+   ```bash
+   tar -xzf artifacts-backup.tar.gz
+   tar -xzf devices-backup.tar.gz
+   chmod 700 portal-data/devices
+   chmod 600 portal-data/devices/*
+   ```
+
+5. 启动 Gateway。启动时会解密校验全部密文，失败就说明密钥与数据库不是一对。
+6. **对账。** 检查数据库与文件是否一致：
+
+   ```bash
+   # 有产物行、没有应用行（孤儿元数据）
+   sqlite3 open-anywhere.gateway.db \
+     "SELECT a.app_id FROM artifacts a LEFT JOIN apps p ON p.id=a.app_id WHERE p.id IS NULL;"
+   ```
+
+   - 数据库有应用、`artifacts/` 缺包：`start-app` 会返回 `ARTIFACT_MISSING`，用 `update-app` 或重新 `create-app` 重建。
+   - 文件存在、数据库没有对应行：文件不可见也不可下载，确认无引用后手工清理。
+   - `portal-data/devices/` 缺某个设备的凭证：该设备需要在门户里重新开通；硬件设备重新绑定后才会恢复。
+   - 行与文件都在但无法解密凭证：主密钥与数据库不是一对，回到步骤 3。
+
+恢复与对账的数据库侧背景见[控制面数据库设计](../architecture/database.md#10-schema-版本与迁移)。
 
 ## 迁移到新机器
 

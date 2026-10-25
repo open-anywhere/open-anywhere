@@ -1,6 +1,6 @@
 # 文档
 
-16 篇文档按**你要解决的问题**分三类，不按文件类型堆在一起。
+本目录共 19 个 Markdown 文件：这份索引加 18 篇正文，按**你要解决的问题**分三类，不按文件类型堆在一起。
 
 ## 我怎么找
 
@@ -34,9 +34,10 @@ docs/
 │       ├── portal.md
 │       └── multi-app-sessions.md
 ├── operations/                 怎么跑、怎么排查
-│   ├── gateway.md
-│   ├── render.md
-│   └── casting.md
+│   ├── gateway.md              控制面启动、MCP 接入与门户
+│   ├── render.md               应用运行时、媒体流与端到端验收
+│   ├── casting.md              设备发现与 DLNA 投屏会话
+│   └── deploy.md               首次配置、备份与恢复
 ├── agent-system-prompts/       构建与主持用的系统提示词
 └── assets/                     品牌与社交预览素材
 ```

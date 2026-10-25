@@ -35,20 +35,21 @@ launch.json                 # 必填，启动契约
 | --- | --- | --- |
 | `name` | 是 | 非空字符串，用于展示 |
 | `runtimeExecutable` | 是 | 固定为 `node` |
-| `runtimeArgs` | 是 | 字符串数组，必须引用归档内 `app/` 下的入口文件；不能包含 `--port` |
+| `runtimeArgs` | 是 | 字符串数组，第一个元素必须精确等于 `app/app.js`；其余元素只能是 `node` 标志，不能含 `--port` |
 | `healthPath` | 否 | 一期只能为 `/health`；省略时按 `/health` 处理 |
-| `readyTimeoutMs` | 否 | 正整数，1–600000；默认 10000 |
+| `readyTimeoutMs` | 否 | 正整数，1–60000；默认 10000 |
 
 产物校验会拒绝以下情况：
 
 - `launch.json` 出现未知字段（包括 `port`）。
 - `runtimeExecutable` 不是 `node`。
-- `runtimeArgs` 为空，或没有引用实际存在的 `app/` 内文件。
+- `runtimeArgs` 为空，或第一个元素不是 `app/app.js`（例如指向 `app/main.js`、`app/index.js`）。
 - `healthPath` 不是 `/health`。
-- `readyTimeoutMs` 非正整数或超出上限。
+- `readyTimeoutMs` 非正整数或超过 60000。
 - 归档内出现绝对路径、`..` 路径段，或 `outputs/` 目录。
-- 归档缺少 `launch.json`、`openapi.yaml`、`app/`，或 `app/package.json` 不是合法 JSON。
-- 压缩包超过 100 MiB、单文件超过 64 MiB、解压后总计超过 512 MiB。
+- 归档缺少 `launch.json`、`openapi.yaml`、`app/app.js`、`app/package.json`、`app/public/index.html`。
+- `app/package.json` 不是合法的 JSON 对象。
+- 压缩包超过 100 MiB、单文件超过 100 MiB、解压后总计超过 100 MiB，或归档条目超过 4096 个。
 
 ## 端口与进程
 
