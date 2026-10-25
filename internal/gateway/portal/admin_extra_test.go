@@ -512,8 +512,18 @@ func TestAdminRetryAgentCoversEveryState(t *testing.T) {
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("restarted: %d %s", response.StatusCode, payload)
 	}
+	// Provisioning runs asynchronously and, with no Linx platform configured in
+	// this environment, fails immediately. Wait for the background goroutine to
+	// settle before asserting the persisted state so the test does not race it.
+	deadline := time.Now().Add(time.Second)
+	for env.api.provision.Running("dev_busy") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if env.api.provision.Running("dev_busy") {
+		t.Fatal("retried provisioning did not settle")
+	}
 	stored, err := env.db.PortalDeviceByID(context.Background(), "dev_busy")
-	if err != nil || stored.State != store.PortalDeviceProvisioning {
+	if err != nil || stored.State != store.PortalDeviceError || stored.Error != deviceErrorCodePlatformNotConfigured {
 		t.Fatalf("stored=%+v err=%v", stored, err)
 	}
 }
