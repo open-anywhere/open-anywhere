@@ -21,6 +21,14 @@ The product's commercial value is genuinely novel:
 
 Because nearly every household and every business already owns at least one screen, the addressable market is very large and still growing. Agents should treat this positioning as the reason the code exists: favor capabilities that shorten the path from spoken intent to a working experience on a nearby screen.
 
+## Validation Status
+
+The core loop has been validated in personal use: four people played four different generated games in one session on a real screen, and everyone enjoyed it. Describe it, cast it, play it works end to end for a small gathering.
+
+The remaining validation targets are children and older adults. These two groups cover family learning activities and daily use by older people, and they are the age groups the product originally set out to serve.
+
+Personal-use evidence is not commercial validation. It does not yet establish willingness to pay or use outside social gatherings. Treat it as proof that the happy path is real, and keep collecting evidence for the scenarios that are still unverified.
+
 ## Architecture
 
 Display, input, and compute are deliberately isolated. Each plane can be replaced or scaled without changing the others, and no plane reaches into another's internals.
