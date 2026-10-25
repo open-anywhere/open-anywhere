@@ -36,7 +36,19 @@ Everything in this table can be verified by reading the named files; none of it 
 | Voice entry | `cmd/voiceentry` | `docs/architecture/voice-entry.md`; the live gateway E2E is opt-in (`e2e/gateway_live_test.go`) |
 | Multi-tenant portal with identity isolation | `internal/gateway/portal/` (`auth.go`, `admin.go`, `http.go`) | Go tests in the package; the React frontend (`portal/src`) has no unit tests |
 | Multi-app sessions | `internal/gateway/service/service.go` | package tests; see the switching limitation below |
-| Recorded happy path | `README.md:15-16` links the 1080p and 4K demo videos | the recording shows the chain running; it is not evidence of demand |
+| Recorded happy path | First-screen demo badges in `README.md` link to Bilibili (4K), Xiaohongshu, and the GitHub release (1080p) | the recording shows the chain running; it is not evidence of demand |
+
+## Demo Video
+
+The demo recording is published on three platforms. The first-screen badges in [`README.md`](README.md) are the canonical entry points; keep them in sync with these links:
+
+| Platform | Link | Notes |
+| --- | --- | --- |
+| Bilibili | https://www.bilibili.com/video/BV1AznU6YELm/ | 4K playback |
+| Xiaohongshu | https://xhslink.cn/o/8ql3TpfRwkE | Share link; on the web it opens the login page, then the video |
+| GitHub Releases | https://github.com/open-anywhere/open-anywhere/releases/download/v1.0.0/open-anywhere-demo-1080p.mp4 | 1080p; GitHub forces a download instead of in-browser playback |
+
+The Xiaohongshu badge reads `审核中` until the platform approves the upload; remove that label once it is approved. When the demo is re-recorded, upload it to all three platforms and update the badge links together.
 
 ## Business Plan
 
