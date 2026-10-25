@@ -142,6 +142,7 @@ function CallSession({ device }: { device: Device }) {
                 loading={reconnect.isPending}
                 onClick={() => {
                   session.stop()
+                  session.clearEntries()
                   reconnect.mutate(device.id)
                 }}
               >

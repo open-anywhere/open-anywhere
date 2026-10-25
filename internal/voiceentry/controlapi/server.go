@@ -344,7 +344,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "stream unsupported", http.StatusInternalServerError)
 		return
 	}
-	ch := make(chan voice.Event, 16)
+	ch := make(chan voice.Event, 256)
 	s.mu.Lock()
 	s.subscribers[ch] = struct{}{}
 	s.mu.Unlock()
