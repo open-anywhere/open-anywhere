@@ -16,11 +16,14 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { ApiError, api, type AgentSettings, type Voice } from '../../../api'
+import { useDeviceConnection } from '../../../hooks/useDeviceConnection'
 import { AgentMcpGroup } from './AgentMcpGroup'
 
 interface Props {
   /** The device whose agent is edited; the dialog is closed when empty. */
   deviceId?: string
+  /** A browser device can be reconnected from here; hardware has to be restarted. */
+  reconnectable?: boolean
   onClose: () => void
 }
 
@@ -57,9 +60,10 @@ function voiceLabel(voice: Voice): string {
   return voice.tier === 'pro' ? `${label} · 高级` : label
 }
 
-export function AgentSettingsModal({ deviceId, onClose }: Props) {
+export function AgentSettingsModal({ deviceId, reconnectable, onClose }: Props) {
   const [form] = Form.useForm<FormValues>()
-  const { message } = AntApp.useApp()
+  const { message, notification } = AntApp.useApp()
+  const { reconnect } = useDeviceConnection()
   const queryClient = useQueryClient()
   const open = Boolean(deviceId)
 
@@ -129,7 +133,30 @@ export function AgentSettingsModal({ deviceId, onClose }: Props) {
   const save = useMutation({
     mutationFn: (input: Partial<AgentSettings>) => api.updateAgentSettings(deviceId as string, input),
     onSuccess: () => {
-      message.success('智能体设置已保存。要让新设置生效，请重新连接智能体，硬件设备需要重启')
+      if (reconnectable) {
+        const id = deviceId as string
+        const key = `reconnect-${id}`
+        notification.success({
+          key,
+          message: '智能体设置已保存',
+          description: '重新连接后，新设置才会生效。',
+          duration: 12,
+          btn: (
+            <Button
+              type="primary"
+              size="small"
+              onClick={() => {
+                reconnect.mutate(id)
+                notification.destroy(key)
+              }}
+            >
+              现在重新连接
+            </Button>
+          ),
+        })
+      } else {
+        message.success('智能体设置已保存。硬件设备需要重启，新设置才会生效')
+      }
       queryClient.invalidateQueries({ queryKey: ['agent-settings', deviceId] })
       onClose()
     },

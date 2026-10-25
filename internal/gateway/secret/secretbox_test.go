@@ -1,6 +1,7 @@
 package secret
 
 import (
+	"runtime"
 	"bytes"
 	"encoding/base64"
 	"errors"
@@ -89,7 +90,8 @@ func TestLoadGeneratesAndReusesKeyFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key file: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows has no Unix permission bits; Go always reports 0666 there.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("key file mode = %o", info.Mode().Perm())
 	}
 	again, err := Load(dir, nil)

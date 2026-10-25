@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"runtime"
 	"context"
 	"encoding/json"
 	"io"
@@ -190,7 +191,8 @@ func TestProvisionRegistersAVirtualDeviceAndStoresACredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credential: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows has no Unix permission bits; Go always reports 0666 there.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("credential mode=%o", info.Mode().Perm())
 	}
 	credential, err := devicelinx.LoadDevice(path)
