@@ -142,4 +142,4 @@ go run ./cmd/voiceentry -serve                # 打开 http://127.0.0.1:8788/
 | --- | --- |
 | 张之阳 [@luoliwoshang](https://github.com/luoliwoshang) | 架构设计、产品设计、商业规划、视频剪辑、Render 技术实现、Cast 端技术实现 |
 | 邓军辉 [@minorcell](https://github.com/minorcell) | 架构设计、Gateway 技术、控制面业务架构、Portal 设计、质量保障 |
-| 韩鲁鹏 [@LUPENGHAN](https://github.com/LUPENGHAN) | 灵矽技术实现、架构设计、质量保障 |
+| 韩鲁鹏 [@LUPENGHAN](https://github.com/LUPENGHAN) | 灵矽技术实现、Portal 技术实现、测试环境搭建、架构设计、质量保障 |
