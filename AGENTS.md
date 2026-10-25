@@ -70,7 +70,7 @@ The evidence table above is the shipped surface. The rest of the plan is roadmap
 
 Roadmap, not shipped: mobile join and controller, template instantiation and the 3-minute fallback, credits/billing/subscriptions, merchant console, children and elderly modes, AirPlay, run box and end devices, a generation-quality evaluation set, and token/cost telemetry.
 
-Agents reviewing or extending this repository must not treat roadmap items as implemented.
+Roadmap items must not be described as implemented anywhere in this repository.
 
 Multi-app sessions are implemented, but switching apps stops the old app and creates a new Casting session (`internal/gateway/service/service.go`; `docs/architecture/overview.md` records the gap). The invariant that switching must not re-establish casting is not met; do not describe switching as seamless or zero-downtime.
 
