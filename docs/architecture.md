@@ -4,26 +4,28 @@
 
 Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成一个可运行的 Web 应用，并在身边的屏幕上通过 AirPlay 呈现和控制。
 
-系统由四个组件和一个现场语音入口构成：
+系统由四个组件、一个现场语音入口和一个多租户 Portal 构成：
 
 | 组件 | 角色 |
 | --- | --- |
 | 灵矽云（Linx） | 语音入口：ASR、TTS、意图识别、MCP Client |
-| 控制面（Control Plane） | MCP Server、任务编排、应用注册表、OpenAPI 到 HTTP 的适配 |
+| 控制面（Control Plane） | MCP Server、任务编排、应用注册表、OpenAPI 到 HTTP 的适配、多租户 Portal 与管理后台 |
 | AgentAPI | 异步应用工厂：编码 Agent + 沙箱，产出应用 artifact |
 | Render | 应用运行时与舞台：启动应用、转发 HTTP、AirPlay 投屏 |
 | 现场语音入口 | 用户面前的语音设备。真实形态是灵矽硬件，目前由本地程序模拟；以设备身份接入灵矽云，收发语音、回应设备端 MCP（详见 [现场语音入口](voice-entry.md)） |
+| Portal | 与 Gateway 同进程的浏览器控制台：管理员配置平台、管理用户；用户注册、查看智能体与应用、绑定服务并语音对话 |
 
-系统只有两条契约：
+系统有三条契约：
 
 1. **MCP**：灵矽云与控制面之间。灵矽只看见 MCP Tool，不直接接触 AgentAPI 或 Render。应用管理 Tool 见[应用管理 MCP](app-management-mcp.md)。
 2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。产物结构、启动约定和构建提示见[应用包设计](app-artifact.md)。
+3. **Portal HTTP API**：浏览器与控制面之间。会话 Cookie、同源 JSON 写请求；用户端 `/api/portal/*`、管理端 `/api/admin/*`，见[多租户用户 Portal 设计](user-portal.md)。
 
 应用包下载、进程运行、Chromium 渲染与媒体流输出的接口约定见 [控制面与 Render 接口设计](gateway-render-interface.md)。
 
 现场语音入口与灵矽云之间使用灵矽自己的设备协议（WebSocket），不是 Open Anywhere 定义的契约，见 [现场语音入口](voice-entry.md)。
 
-核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容。**
+核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容；租户按 owner 隔离。**
 
 ## 2. 目标与非目标
 
@@ -37,14 +39,21 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 - 应用画面通过 AirPlay 常驻在屏幕上；切换应用不重新建立投屏。
 - Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
 - 控制面重启后从本地 SQLite 恢复应用和构建状态，未完成的构建继续监听，产物下载地址保持有效。持久化模型、恢复顺序与表结构见[控制面数据库设计](gateway-database.md)。
+- **多租户**：管理员引导账号配置平台；普通用户自助注册后自动获得一台虚拟 Linx 智能体；用户之间在应用、屏幕、语音与下游服务上完全隔离。
+- **服务绑定**：每个用户可以选择平台托管的 Render/Casting，或绑定自己的两个公网地址；控制面按 owner 解析端点，不在租户之间复用下游服务。
 
 ### 2.2 非目标
 
-- 多租户、计费、应用市场、任意第三方应用托管。
+- 计费、配额、套餐、应用市场、任意第三方应用托管。
+- 用户自行部署 Render/Casting 的安装流程、局域网发现、穿透或连接器。
+- 文字输入式对话（灵矽没有发送文字的开放接口；本期只做语音 + 实时字幕）。
+- 管理员查看或操作屏幕内容；管理员单独停止/接管用户应用（仅在停用用户时 best-effort 停止）。
+- 邮箱验证、找回密码、修改密码、删除账号；多管理员邀请、审计表、细粒度权限。
 - 为每个 OpenAPI 操作动态注册一个 MCP Tool；MVP 使用稳定的 `get-app-operations` + `send-request`。
 - 服务端主动 TTS 推送；MVP 由灵矽在用户询问时轮询任务状态。
 - 在 macOS 上程序化发起 AirPlay 系统镜像；MVP 手动连接，浏览器或 HDMI 兜底。
 - 把 AgentAPI 的沙箱当作应用运行时；AgentAPI 只负责构建。
+- 多副本 Gateway；一个 SQLite 只对应一个进程。
 
 ## 3. 术语
 
@@ -63,6 +72,10 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 | 模拟硬件 | 本地程序，按同一套设备协议扮演灵矽硬件，并用 Web 控制台代替麦克风、扬声器和控制入口 |
 | 设备身份 | 设备在灵矽平台上的标识，由 MAC、Client-Id 和 token 组成；真实硬件由固件持有，模拟硬件由程序生成 |
 | 激活码 | 设备在 OTA 上报后获得的 6 位码，用来把设备绑定到智能体 |
+| Portal | 与 Gateway 同进程的浏览器控制台，分用户端 `/portal` 与管理端 `/admin` |
+| 虚拟智能体 | 注册时为每个用户自动创建的 Linx 智能体，对应一台 `kind=virtual` 的虚拟设备 |
+| 服务绑定 | 用户选择的 Render/Casting 来源：`managed` 使用平台默认服务，`custom` 使用自己的公网地址与可选 token |
+| 平台设置 | 管理员维护的 AgentAPI、Linx、默认 Render/Casting 与注册开关，保存在 `platform_settings` |
 | OpenAPI | 应用能力的 HTTP 契约，控制面据此校验和转发请求 |
 | launch.json | 应用启动契约，描述可执行文件和参数；端口由部署环境通过 `PORT` 注入 |
 
@@ -70,9 +83,10 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 
 ```mermaid
 flowchart LR
+  B["浏览器<br/>Portal / Admin"] -->|Cookie + JSON| C
   U["用户"] -->|语音| V["现场语音入口<br/>灵矽硬件（当前为本地模拟）"]
   V <-->|灵矽设备协议| L["灵矽云<br/>ASR / TTS / 意图"]
-  L -->|MCP Tool| C["控制面<br/>MCP Server / 编排 / 注册表"]
+  L -->|MCP Tool| C["控制面<br/>Portal / MCP / 编排 / 注册表"]
   C -->|创建 / 查询 session| A["AgentAPI<br/>编码 Agent + 沙箱"]
   A -->|artifact| C
   C -->|部署 / HTTP 转发| R["Render<br/>运行时 / Stage / AirPlay"]
@@ -87,10 +101,11 @@ flowchart LR
 | --- | --- | --- |
 | 现场语音入口 | 保持与灵矽云的设备会话、收发语音与文字、回应设备端 MCP、设备注册与重连；真实形态是灵矽硬件，当前由模拟硬件代替（另提供本地 Web 控制台） | 声纹、ASR、TTS，构建与运行应用，投屏 |
 | 灵矽云 | ASR、TTS、意图识别、选择并调用 MCP Tool | 构建应用、运行应用、投屏 |
-| 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验 | 写代码、运行应用、理解应用的业务语义 |
+| 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验；Portal 注册/登录、管理 API、平台设置、按 owner 解析 Render/Casting | 写代码、运行应用、理解应用的业务语义、查看用户屏幕内容 |
 | AgentAPI | 运行编码 Agent、在沙箱中写代码和自测、持久化 artifact | 承载应用运行时、直接面对灵矽 |
 | Render | 解压 artifact、按 `launch.json` 启动、健康检查、进程保活、接收控制面 HTTP 转发、Stage 与 AirPlay | 理解应用业务、决定应用能力 |
 | 应用 | 提供 UI 和 `/api/*` HTTP 接口、维护自己的状态 | 感知 MCP、直接面对灵矽 |
+| Portal | 注册、登录、角色与归属；用户查看智能体/应用/屏幕/服务/活动；管理员管理用户、智能体、全局应用与平台设置 | 代替灵矽做语音意图、直接操作屏幕内容 |
 
 ## 5. 投屏服务开放 API
 
@@ -210,6 +225,8 @@ DELETE /v1/projection-sessions/{session_id}
 
 灵矽通过控制面发现屏幕，并创建、修订、查询、启动和停止应用（`get-screens`、`create-app`、`update-app`、`get-app-status`、`start-app`、`stop-app` 等）。工具集、状态模型、通知和错误约定见[应用管理 MCP](app-management-mcp.md)；多应用并行与会话绑定见[多应用并发构建与同会话更新](multi-app-sessions.md)。
 
+Portal 模式下，MCP 会话必须携带 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id`，屏幕与应用均按 owner 作用域；跨 owner 的 `force` 不会接管屏幕。
+
 ## 7. 技术特色：应用操作即 API
 
 应用不是只能看的页面，而是一组可以被语言驱动的操作。页面上能做的每一件事，都必须先成为应用 OpenAPI 中的一个操作；语音侧通过读取这份操作表来理解应用能力，而不是为每个应用单独开发或注册。
@@ -245,3 +262,59 @@ DELETE /v1/projection-sessions/{session_id}
 - **结果一致。** 语音调用与页面点击走同一条路径，画面、状态和语音反馈不会出现两套事实。
 
 应用包格式与操作声明见[应用包设计](app-artifact.md)，操作发现与转发规则见[应用管理 MCP](app-management-mcp.md)。
+
+## 8. 多租户 Portal 与服务绑定
+
+```mermaid
+flowchart TB
+  B["浏览器"] --> H["Gateway HTTP<br/>/ /login /register /portal /admin"]
+  H --> PA["Portal Auth<br/>注册 / 登录 / 角色 / 会话"]
+  H --> UA["用户 API<br/>/api/portal/*"]
+  H --> AA["Admin API<br/>/api/admin/*（RBAC + 脱敏）"]
+  UA --> SV["service<br/>按 owner 解析绑定"]
+  AA --> ST["Settings Provider<br/>平台设置 + 密钥加密"]
+  UA --> ST
+  SV --> ER["Endpoint Resolver<br/>portal_devices / bindings / 默认服务"]
+  ER --> EP["Endpoint Pool<br/>按 URL+token 缓存客户端"]
+  EP --> NG["Netguard<br/>URL 策略 / 私网拦截 / 安全 Dial"]
+  EP --> R["Render"]
+  EP --> P["Casting"]
+  H --> PR["Provisioner<br/>每用户 Linx 智能体 / MCP / OTA"]
+  PR --> L["灵矽平台"]
+  ST --> SC["secret.Box<br/>AES-256-GCM"]
+  ST --> DB["SQLite<br/>portal_* / platform_settings"]
+  PR --> DB
+  ER --> DB
+```
+
+每个用户的数据关系：
+
+```text
+portal_user
+  └─ portal_device（kind=virtual，最多一台）
+       └─ Linx agent（用平台 Linx Key 自动创建）
+            └─ apps（由该 agent 通过 MCP 创建）
+portal_service_bindings（每用户一行）
+  ├─ managed → platform_settings 的默认 Render / Casting
+  └─ custom  → 用户自己的公网 Render / Casting + 可选加密 token
+```
+
+Portal 内部组件与按用户职责：
+
+| 组件 | 位置 | 按用户职责 |
+| --- | --- | --- |
+| Portal Auth | `internal/gateway/portal/auth.go` | 注册时原子创建 user + 虚拟设备；PBKDF2 密码、Cookie 会话、登录/注册限流；禁用账号立即失效会话 |
+| Admin API | `internal/gateway/portal/admin.go` | `withAdmin` 校验角色；用户列表/状态、智能体重试、全局应用、平台设置与连接测试；DTO 不含屏幕、服务地址/token、prompt 正文 |
+| Settings Provider | `internal/gateway/settings/settings.go` | 每次构建/开通读取当前 AgentAPI、Linx、默认服务与注册开关；秘密字段加解密、seed 不覆盖、`configured` 脱敏 |
+| Provisioner | `internal/gateway/portal/provision.go` | 每个用户独立创建智能体、MCP、OTA 绑定与设备 token；并发上限 4；平台未配置时设备进入 `error`，配置后可重试；重启恢复卡住的开通 |
+| Endpoint Resolver | `internal/gateway/endpoints/resolver.go` | 通过 `(MAC, AgentID)` 找到用户，再按 `managed` / `custom` 解析该用户的 Render/Casting 与 token；`ValidateOwner` 供 MCP 鉴权 |
+| Endpoint Pool | `internal/gateway/endpoints/pool.go` | 按 `(URL, token)` 缓存 Render/Casting 客户端；token 只参与哈希，不打印；缓存上限 128 |
+| Netguard | `internal/gateway/netguard/netguard.go` | 保存绑定、平台默认、连接测试与 `SendRequest` 共用出站策略；默认拒绝回环/私网/link-local/组播/CGNAT，DNS 与重定向在 dial 时复核 |
+| Service | `internal/gateway/service/` | 按 owner 锁与应用归属；屏幕 ID 按 owner 作用域；跨 owner `force` 返回 `TARGET_BUSY`；托管/自有服务只在真正访问下游时解析 |
+
+安全与运维边界：
+
+- `/api/admin/*` 全部经过角色守卫；跨用户资源统一 404。
+- 平台 API Key、用户服务 token、设备 token 与密码/会话哈希不出现在响应和日志中。
+- `services.allow_private_targets` 只用于本地调试；生产默认拒绝私网目标。
+- 主密钥来自 `GATEWAY_SECRET_KEY` 或 `{portal.data_dir}/secret.key`，必须与数据库一起备份；丢失后密文不可恢复。

@@ -6,6 +6,7 @@ addr: ":8090"
 
 agentapi:
   base_url: "https://agent.qiniuapi.com"
+  # 门户模式下可留空，由管理员在 /admin/settings 配置；其余模式必填。
   api_key: "replace-with-agentapi-key"
   agent_id: "agent_replace_me"
   # 可选：固定智能体版本。省略或设为 0 时，新建会话使用智能体的最新版本。
@@ -13,10 +14,19 @@ agentapi:
   environment_id: "env_replace_me"
 
 render:
+  # 平台默认渲染服务；门户模式下可留空，由管理员在后台配置。
   base_url: "http://127.0.0.1:8091"
 
 casting:
+  # 平台默认投屏服务；门户模式下可留空，由管理员在后台配置。
   base_url: "http://127.0.0.1:8080"
+
+services:
+  # 仅本地调试使用。设为 true 后允许用户填写 127.0.0.1、局域网等内网 Render/Casting 地址；
+  # 生产环境保持 false，否则用户可以借服务绑定探测部署所在内网。
+  # 门户模式下管理员保存的平台默认服务也受同一策略约束；本地使用上面的 127.0.0.1
+  # 默认地址调试时，需要设为 true。
+  allow_private_targets: false
 
 # 屏幕映射 JSON 文件；留空时直接使用投屏服务发现的目标。
 screens: ""
@@ -42,6 +52,43 @@ timeouts:
   http: "30s"
 
 # 可选：公网代理 Host、入口 Bearer token、声纹参数诊断。真实 token 只填 gateway.yaml。
+# 门户模式（portal.enabled=true）下 mcp_token 必填，否则任何知道设备 MAC/智能体 ID 的人都能伪造 MCP 身份。
 public_host: ""
 mcp_token: ""
 speaker_probe: false
+
+# 多租户用户门户（可选）。开启后提供 Home、注册/登录、/portal 用户控制台与 /admin 管理后台。
+# 前端需先构建：cd portal && pnpm install && pnpm build。
+# portal.username / portal.password 是管理员引导账号：启动时创建或提升为 admin，并激活账号。
+portal:
+  enabled: false
+  data_dir: "portal-data"      # 设备凭证、secret.key 与运行时数据，创建为 0700
+  web_dir: "portal/dist"       # Vite 构建产物
+  username: ""                 # 管理员引导账号，可用 PORTAL_USERNAME 覆盖
+  password: ""                 # 管理员引导密码，可用 PORTAL_PASSWORD 覆盖
+  session_ttl: "720h"
+  cookie_secure: false         # 生产 HTTPS 置为 true
+  # 仅在 registration.open 尚无值时把注册开关 seed 为 true；之后以管理后台的设置为准。
+  # 上线前应先完成租户隔离验证，再打开注册。
+  allow_registration: false
+  # 平台密钥与用户服务 token 使用 AES-256-GCM 加密。主密钥优先生成在 data_dir/secret.key（0600），
+  # 也可用环境变量 GATEWAY_SECRET_KEY（base64 32 字节）提供。密钥必须与数据库一起备份，
+  # 丢失后已保存的平台 Key 和用户 token 无法解密。
+
+# 灵矽平台管理 API。门户开启时 public_mcp_url 必填，api_key 可留空由管理员在后台配置。
+linx:
+  api_base: "https://xrobo.qiniu.com"
+  ota_url: "https://xrobo.qiniuapi.com/v1/ota/"
+  api_key: ""
+  # 灵矽云必须能访问这个 SSE 地址；局域网地址不可达，需要公网部署或隧道。
+  public_mcp_url: ""
+  # 若上方 mcp_token 非空，创建的 MCP 会使用同一个 Bearer token。
+  mcp_name: "Open Anywhere"
+  assistant_name: "小灵"
+  llm_model_id: "f3626c105383d71654a57f2bb8a973f3"
+  mem_model_id: "Memory_nomem"
+  intent_model_id: "Intent_function_call"
+  system_prompt_file: ""       # 留空使用内置提示词
+  provision_timeout: "60s"
+  token_poll_interval: "2s"
+  token_poll_attempts: 10

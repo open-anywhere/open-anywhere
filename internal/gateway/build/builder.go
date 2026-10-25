@@ -40,9 +40,21 @@ type Config struct {
 	ArtifactLimit  int64
 }
 
+// Platform is the AgentAPI deployment a build talks to. It is resolved for
+// every build so administrator changes take effect without a restart.
+type Platform struct {
+	Client        *agentapi.Client
+	AgentID       string
+	AgentVersion  int // 0 means "use the agent's latest version"
+	EnvironmentID string
+}
+
+// PlatformProvider returns the current AgentAPI configuration.
+type PlatformProvider func(ctx context.Context) (Platform, error)
+
 // Builder starts build sessions and watches them to completion.
 type Builder struct {
-	client   *agentapi.Client
+	platform PlatformProvider
 	store    *artifact.Store
 	registry *app.Registry
 	notifier app.Notifier
@@ -53,8 +65,22 @@ type Builder struct {
 	logf    func(string, ...any)
 }
 
-// New creates a builder.
+// New creates a builder for a fixed AgentAPI client. It keeps single-tenant
+// deployments and tests unchanged.
 func New(client *agentapi.Client, store *artifact.Store, registry *app.Registry, notifier app.Notifier, cfg Config) *Builder {
+	return NewWithProvider(func(context.Context) (Platform, error) {
+		return Platform{
+			Client:        client,
+			AgentID:       cfg.AgentID,
+			AgentVersion:  cfg.AgentVersion,
+			EnvironmentID: cfg.EnvironmentID,
+		}, nil
+	}, store, registry, notifier, cfg)
+}
+
+// NewWithProvider creates a builder that resolves AgentAPI credentials on
+// every build.
+func NewWithProvider(provider PlatformProvider, store *artifact.Store, registry *app.Registry, notifier app.Notifier, cfg Config) *Builder {
 	if cfg.BuildTimeout <= 0 {
 		cfg.BuildTimeout = 60 * time.Minute
 	}
@@ -65,7 +91,7 @@ func New(client *agentapi.Client, store *artifact.Store, registry *app.Registry,
 		cfg.ArtifactLimit = artifact.MaxSize
 	}
 	return &Builder{
-		client:   client,
+		platform: provider,
 		store:    store,
 		registry: registry,
 		notifier: notifier,
@@ -75,13 +101,30 @@ func New(client *agentapi.Client, store *artifact.Store, registry *app.Registry,
 	}
 }
 
+// platformFor resolves and validates the AgentAPI configuration for one build.
+func (b *Builder) platformFor(ctx context.Context) (Platform, error) {
+	if b.platform == nil {
+		return Platform{}, app.ErrPlatformNotConfigured
+	}
+	platform, err := b.platform(ctx)
+	if err != nil {
+		return Platform{}, err
+	}
+	if platform.Client == nil || platform.AgentID == "" || platform.EnvironmentID == "" {
+		return Platform{}, fmt.Errorf("%w: agent and environment are not configured", app.ErrPlatformNotConfigured)
+	}
+	return platform, nil
+}
+
 // Start creates the AgentAPI session, submits the build prompt, and begins
 // watching in the background. It returns once the task has been accepted.
 func (b *Builder) Start(ctx context.Context, value app.App) error {
-	if b.cfg.AgentID == "" || b.cfg.EnvironmentID == "" {
-		return fmt.Errorf("build: agent and environment are not configured")
+	platform, err := b.platformFor(ctx)
+	if err != nil {
+		return err
 	}
-	session, err := b.client.CreateSession(ctx, b.cfg.AgentID, b.cfg.AgentVersion, b.cfg.EnvironmentID, value.ID, map[string]string{"app_id": value.ID})
+	client := platform.Client
+	session, err := client.CreateSession(ctx, platform.AgentID, platform.AgentVersion, platform.EnvironmentID, value.ID, map[string]string{"app_id": value.ID})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -92,24 +135,24 @@ func (b *Builder) Start(ctx context.Context, value app.App) error {
 			a.BuildStartedAt = started
 			return nil
 		}); err != nil {
-			b.archive(session.ID)
+			b.archiveWith(client, session.ID)
 			return fmt.Errorf("persist build session: %w", err)
 		}
 	} else {
-		b.archive(session.ID)
+		b.archiveWith(client, session.ID)
 		return fmt.Errorf("application record disappeared before build submission")
 	}
-	if err := b.client.SubmitMessage(ctx, session.ID, BuildPrompt(value.Prompt, value.PlayerNames)); err != nil {
-		status := b.sessionStatus(session.ID)
+	if err := client.SubmitMessage(ctx, session.ID, BuildPrompt(value.Prompt, value.PlayerNames)); err != nil {
+		status := b.sessionStatusWith(client, session.ID)
 		if status == "running" || status == "rescheduling" {
 			b.logf("build %s: submit returned %v but session is %s; continuing", value.ID, err, status)
-			go b.watch(value.ID, session.ID)
+			go b.watchWith(client, value.ID, session.ID)
 			return nil
 		}
-		b.archive(session.ID)
+		b.archiveWith(client, session.ID)
 		return fmt.Errorf("submit build task: %w", err)
 	}
-	go b.watch(value.ID, session.ID)
+	go b.watchWith(client, value.ID, session.ID)
 	return nil
 }
 
@@ -120,7 +163,12 @@ func (b *Builder) Continue(ctx context.Context, value app.App) error {
 	if value.SessionID == "" {
 		return ErrSessionUnavailable
 	}
-	session, err := b.client.GetSession(ctx, value.SessionID)
+	platform, err := b.platformFor(ctx)
+	if err != nil {
+		return err
+	}
+	client := platform.Client
+	session, err := client.GetSession(ctx, value.SessionID)
 	if err != nil {
 		var apiErr *anthropic.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
@@ -138,15 +186,15 @@ func (b *Builder) Continue(ctx context.Context, value app.App) error {
 	default:
 		return ErrSessionUnavailable
 	}
-	if err := b.client.SubmitMessage(ctx, value.SessionID, UpdatePrompt(value.Prompt)); err != nil {
+	if err := client.SubmitMessage(ctx, value.SessionID, UpdatePrompt(value.Prompt)); err != nil {
 		var apiErr *anthropic.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == 409 {
 			return ErrSessionBusy
 		}
-		status := b.sessionStatus(value.SessionID)
+		status := b.sessionStatusWith(client, value.SessionID)
 		if status == "running" || status == "rescheduling" {
 			b.logf("build %s: update submit returned %v but session is %s; continuing", value.ID, err, status)
-			go b.watch(value.ID, value.SessionID)
+			go b.watchWith(client, value.ID, value.SessionID)
 			return nil
 		}
 		if status == "terminated" || status == "" {
@@ -154,7 +202,7 @@ func (b *Builder) Continue(ctx context.Context, value app.App) error {
 		}
 		return fmt.Errorf("submit update task: %w", err)
 	}
-	go b.watch(value.ID, value.SessionID)
+	go b.watchWith(client, value.ID, value.SessionID)
 	return nil
 }
 
@@ -164,20 +212,44 @@ func (b *Builder) Resume(value app.App) {
 		b.fail(value.ID, "无法恢复构建", fmt.Errorf("missing session id"))
 		return
 	}
-	go b.watch(value.ID, value.SessionID)
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		b.fail(value.ID, "无法恢复构建", err)
+		return
+	}
+	go b.watchWith(platform.Client, value.ID, value.SessionID)
 }
 
+// sessionStatus is the single-tenant compatibility helper used by tests.
 func (b *Builder) sessionStatus(sessionID string) string {
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		return ""
+	}
+	return b.sessionStatusWith(platform.Client, sessionID)
+}
+
+func (b *Builder) sessionStatusWith(client *agentapi.Client, sessionID string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	session, err := b.client.GetSession(ctx, sessionID)
+	session, err := client.GetSession(ctx, sessionID)
 	if err != nil {
 		return ""
 	}
 	return session.Status
 }
 
+// watch is the single-tenant compatibility helper used by tests.
 func (b *Builder) watch(appID, sessionID string) {
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		b.fail(appID, "无法恢复构建", err)
+		return
+	}
+	b.watchWith(platform.Client, appID, sessionID)
+}
+
+func (b *Builder) watchWith(client *agentapi.Client, appID, sessionID string) {
 	deadline := b.now().Add(b.cfg.BuildTimeout)
 	afterCursor := ""
 	if record, ok := b.registry.Get(appID); ok {
@@ -201,17 +273,17 @@ func (b *Builder) watch(appID, sessionID string) {
 	reconnects := 0
 	for {
 		if ctx.Err() != nil {
-			b.timeout(appID, sessionID)
+			b.timeoutWith(client, appID, sessionID)
 			return
 		}
-		stream := b.client.OpenEventStream(ctx, sessionID)
+		stream := client.OpenEventStream(ctx, sessionID)
 		received := false
 		for {
 			event, err := stream.Next()
 			if err != nil {
 				stream.Close()
 				if ctx.Err() != nil {
-					b.timeout(appID, sessionID)
+					b.timeoutWith(client, appID, sessionID)
 					return
 				}
 				if !errors.Is(err, io.EOF) {
@@ -276,37 +348,32 @@ func (b *Builder) watch(appID, sessionID string) {
 				if reason != "end_turn" {
 					kept := b.fail(appID, stopReasonMessage(reason), fmt.Errorf("stop_reason=%s", reason))
 					if !kept {
-						b.archive(sessionID)
+						b.archiveWith(client, sessionID)
 					}
 					return
 				}
-				b.complete(appID, sessionID)
+				b.completeWith(client, appID, sessionID)
 				return
 			case "session.status_terminated":
 				stream.Close()
 				b.fail(appID, "构建会话已终止", fmt.Errorf("session terminated"))
-				b.archive(sessionID)
+				b.archiveWith(client, sessionID)
 				return
 			}
 		}
-		// Continue / Resume / stale-retry already had a cursor. After catch-up
-		// the stream may end with the session idle and no further status_idle
-		// event to observe — collect once and settle instead of spinning.
-		// (Do not use this on a fresh Start: mid-build stream drops still need
-		// reconnect while the session may briefly report idle.)
 		if hadCursor && afterCursor == "" {
-			switch status := b.sessionStatus(sessionID); status {
+			switch status := b.sessionStatusWith(client, sessionID); status {
 			case "idle":
-				b.complete(appID, sessionID)
+				b.completeWith(client, appID, sessionID)
 				return
 			case "terminated", "archived":
 				b.fail(appID, "构建会话已终止", fmt.Errorf("session %s", status))
-				b.archive(sessionID)
+				b.archiveWith(client, sessionID)
 				return
 			}
 		}
 		if !b.sleep(ctx, reconnectDelay(reconnects)) {
-			b.timeout(appID, sessionID)
+			b.timeoutWith(client, appID, sessionID)
 			return
 		}
 		reconnects++
@@ -360,7 +427,16 @@ func (b *Builder) recordStatus(appID, message string) {
 	}
 }
 
+// complete is the single-tenant compatibility helper used by tests.
 func (b *Builder) complete(appID, sessionID string) {
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		return
+	}
+	b.completeWith(platform.Client, appID, sessionID)
+}
+
+func (b *Builder) completeWith(client *agentapi.Client, appID, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	entry, ok := b.registry.Get(appID)
@@ -369,7 +445,7 @@ func (b *Builder) complete(appID, sessionID string) {
 	}
 	snap := entry.Snapshot()
 	if snap.State != app.StateBuilding {
-		b.archive(sessionID)
+		b.archiveWith(client, sessionID)
 		return
 	}
 	hadArtifact := hasStartableArtifact(snap)
@@ -377,7 +453,7 @@ func (b *Builder) complete(appID, sessionID string) {
 	if hadArtifact {
 		opts.PreviousSHA = snap.Artifact.SHA256
 	}
-	path, size, digest, err := b.collect(ctx, sessionID, opts)
+	path, size, digest, err := b.collectWith(ctx, client, sessionID, opts)
 	if err == nil {
 		var result artifact.Result
 		result, err = artifact.Validate(path)
@@ -400,17 +476,17 @@ func (b *Builder) complete(appID, sessionID string) {
 	// already idle, the agent finished without a fresh artifact — fail (and
 	// keep the previous package on update) instead of looping forever.
 	if isStaleArtifact(err) && entry.Snapshot().State == app.StateBuilding {
-		status := b.sessionStatus(sessionID)
+		status := b.sessionStatusWith(client, sessionID)
 		if status == "running" || status == "rescheduling" {
 			b.logf("build %s: %v (session %s); resume watch for a fresher artifact", appID, err, status)
-			go b.watch(appID, sessionID)
+			go b.watchWith(client, appID, sessionID)
 			return
 		}
 		b.logf("build %s: %v (session %s); giving up without a fresher artifact", appID, err, status)
 	}
 	kept := b.fail(appID, userMessage(err), err)
 	if !kept {
-		b.archive(sessionID)
+		b.archiveWith(client, sessionID)
 	}
 }
 
@@ -526,13 +602,22 @@ func hasStartableArtifact(value app.App) bool {
 	return value.Artifact.SHA256 != "" && (value.Artifact.Path != "" || value.Artifact.DownloadURL != "")
 }
 
+// timeout is the single-tenant compatibility helper used by tests.
 func (b *Builder) timeout(appID, sessionID string) {
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		return
+	}
+	b.timeoutWith(platform.Client, appID, sessionID)
+}
+
+func (b *Builder) timeoutWith(client *agentapi.Client, appID, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	_ = b.client.Interrupt(ctx, sessionID)
+	_ = client.Interrupt(ctx, sessionID)
 	cancel()
 	deadline := time.Now().Add(b.cfg.InterruptGrace)
 	for time.Now().Before(deadline) {
-		status := b.sessionStatus(sessionID)
+		status := b.sessionStatusWith(client, sessionID)
 		if status == "idle" || status == "terminated" || status == "" {
 			break
 		}
@@ -542,14 +627,23 @@ func (b *Builder) timeout(appID, sessionID string) {
 	}
 	kept := b.fail(appID, "构建超时", context.DeadlineExceeded)
 	if !kept {
-		b.archive(sessionID)
+		b.archiveWith(client, sessionID)
 	}
 }
 
+// archive is the single-tenant compatibility helper used by tests.
 func (b *Builder) archive(sessionID string) {
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		return
+	}
+	b.archiveWith(platform.Client, sessionID)
+}
+
+func (b *Builder) archiveWith(client *agentapi.Client, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := b.client.ArchiveSession(ctx, sessionID); err != nil {
+	if err := client.ArchiveSession(ctx, sessionID); err != nil {
 		b.logf("archive session %s: %v", sessionID, err)
 	}
 }
@@ -561,7 +655,16 @@ type collectOpts struct {
 	PreviousSHA string    // reject when the downloaded digest still matches
 }
 
+// collect is the single-tenant compatibility helper used by tests.
 func (b *Builder) collect(ctx context.Context, sessionID string, opts collectOpts) (string, int64, string, error) {
+	platform, err := b.platformFor(ctx)
+	if err != nil {
+		return "", 0, "", err
+	}
+	return b.collectWith(ctx, platform.Client, sessionID, opts)
+}
+
+func (b *Builder) collectWith(ctx context.Context, client *agentapi.Client, sessionID string, opts collectOpts) (string, int64, string, error) {
 	var chosen *agentapi.File
 	var lastErr error
 	var sawStale bool
@@ -574,7 +677,7 @@ func (b *Builder) collect(ctx context.Context, sessionID string, opts collectOpt
 		if index > 0 && !b.sleep(ctx, delay) {
 			return "", 0, "", ctx.Err()
 		}
-		files, err := b.client.ListFiles(ctx, sessionID)
+		files, err := client.ListFiles(ctx, sessionID)
 		if err != nil {
 			lastErr = err
 			continue
@@ -615,7 +718,7 @@ func (b *Builder) collect(ctx context.Context, sessionID string, opts collectOpt
 	name := temp.Name()
 	hash := sha256.New()
 	downloadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	size, err := b.client.DownloadFile(downloadCtx, chosen.ID, io.MultiWriter(temp, hash), b.cfg.ArtifactLimit)
+	size, err := client.DownloadFile(downloadCtx, chosen.ID, io.MultiWriter(temp, hash), b.cfg.ArtifactLimit)
 	cancel()
 	temp.Close()
 	if err != nil {

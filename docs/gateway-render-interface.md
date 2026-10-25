@@ -66,6 +66,31 @@ launch.json
 
 工作目录是归档根目录。Render 读取启动契约并注入 `HOST`、`PORT`，不把 `app_id` 或部署端口写入包。`openapi.yaml` 描述 `/api/*` 业务操作，控制面据此发起 HTTP 调用；Render 校验产物格式，不理解业务语义。完整字段和应用要求见[应用包设计](app-artifact.md)。
 
+### 1.2 按用户绑定 Render/Casting
+
+Render 与 Casting 的接口本身不区分租户；控制面在多租户 Portal 中按应用 owner 解析要调用的服务：
+
+| 模式 | 地址来源 | token |
+| --- | --- | --- |
+| `managed`（默认） | 管理员在 `/admin/settings` 配置的平台默认 Render/Casting；尚未在后台设置时由 `gateway.yaml` seed | 平台默认 token，可选；密文保存 |
+| `custom` | 用户在自己的 Portal 服务页填写的两个公网地址 | 用户自己的 token，可选；密文保存，保存后不回显 |
+
+约定：
+
+- 一个用户最多一行 `portal_service_bindings`；`custom` 必须同时有 Render URL 与 Casting URL，否则 `SERVICE_NOT_CONFIGURED`。
+- 控制面把 token 作为 `Authorization: Bearer <token>` 附加到 Render/Casting 请求；没有 token 时不发该头。token 只参与客户端缓存键的哈希，不写日志、不进入 API 响应。
+- 客户端池按 `(URL, token)` 缓存 `render.Client` / `casting.Client`，上限 128；地址或 token 变化后旧客户端自然不再命中。
+- 平台默认地址与用户地址都在保存/测试时校验；`render.Client` 与 `casting.Client` 的 `Health(ctx)` 分别探测 `/healthz`（Render）与 Casting 健康接口，Portal 的服务测试复用同一套客户端。
+- 保存用户绑定前，如果该用户有运行中或待清理的应用，返回 `APPS_RUNNING`，要求先停止；管理员修改平台默认 Render/Casting（含 token）时，如果控制面上仍有任何用户存在活动资源，同样返回 `APPS_RUNNING`。
+- 管理员修改默认地址后，新启动的应用立即使用新值；已经在运行的应用不被迁移，因此必须先停止再修改。
+
+**URL 与内网限制。** 所有用户/管理员填写的地址都经过 netguard：
+
+- 只接受 `http` / `https`；拒绝缺少主机名、带 userinfo、带 fragment、端口非法的地址。
+- 默认拒绝回环、私网、link-local、组播、未指定地址、CGNAT（`100.64.0.0/10`）与 IPv6 ULA；保存时解析 DNS，连接时在自定义 `DialContext` 再解析并只连接允许的地址，`CheckRedirect` 同样复核，防止 DNS rebinding 与重定向绕过；环境代理被禁用。
+- 本地调试可在 `gateway.yaml` 设置 `services.allow_private_targets: true` 放行；该选项只应出现在开发环境，开启后用户可以访问部署所在内网。
+- 控制面转发应用请求前也会校验 `AppBaseURL`，避免用户 Render 返回内网地址造成 SSRF。
+
 ## 2. 启动应用
 
 ```http
@@ -292,6 +317,21 @@ Render 停止不会自动调用 Casting。控制面正常停止应用时应先�
 | 停止时资源清理失败 | `500` | `STOP_FAILED` |
 
 持续运行中的 `APP_EXITED`、`APP_UNHEALTHY`、`BROWSER_EXITED`、`STREAM_FAILED` 通过实例的 `error` 状态表达。查询成功仍返回 `200`，由响应中的实例状态说明业务失败。
+
+### 4.1 控制面侧的服务绑定错误
+
+下列错误由 Gateway 在保存/测试用户绑定、保存平台默认服务或解析 owner 端点时返回，不是 Render 的响应：
+
+| code | HTTP | 场景 |
+| --- | --- | --- |
+| `INVALID_TARGET_URL` | `400` | 地址不是绝对 HTTP(S)、缺少主机名、带 userinfo/fragment 或端口非法 |
+| `PRIVATE_TARGET_FORBIDDEN` | `400` | 地址解析到回环、私网、link-local、组播、CGNAT 等受限地址 |
+| `TARGET_UNREACHABLE` | `502` | 地址无法解析或无法连接 |
+| `SERVICE_NOT_CONFIGURED` | `409` | `managed` 缺平台默认服务，或 `custom` 缺 Render/Casting 地址 |
+| `APPS_RUNNING` | `409` | 有运行中/待清理资源时修改绑定或平台默认服务 |
+| `OWNER_NOT_FOUND` | `404` / `403` | 用户侧服务绑定请求无法识别账号（`404`）；MCP 身份校验失败映射为 `403` |
+
+服务测试成功时返回 `{"render":{"ok":true},"casting":{"ok":true},"screens":<数量>}`；失败时 `ok=false` 并带可读 `message`。测试不会返回屏幕详情或任何 token。
 
 ## 5. 页面与媒体输出
 

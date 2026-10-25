@@ -3,6 +3,7 @@ package app
 
 import (
 	"crypto/rand"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -10,6 +11,11 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/openapi"
 	"github.com/open-anywhere/open-anywhere/pkg/casting"
 )
+
+// ErrPlatformNotConfigured reports that the platform AgentAPI or Linx
+// credentials are missing. The portal surfaces it as a configuration problem
+// instead of a build failure.
+var ErrPlatformNotConfigured = errors.New("platform is not configured")
 
 // State is the application state exposed to Linx through MCP.
 type State string
@@ -117,6 +123,13 @@ func (a App) BuildingMessage() string {
 		return a.LastStatusMessage
 	}
 	return "正在构建"
+}
+
+// OccupiesScreen reports whether the application still holds its screen. It
+// stays true while runtime or projection work is pending so a screen is not
+// treated as free before cleanup has finished.
+func (a App) OccupiesScreen() bool {
+	return a.ScreenID != "" && (a.State == StateRunning || a.PendingRuntime || a.PendingProjection || a.CleanupPending || a.InstanceID != "" || a.ProjectionSessionID != "")
 }
 
 // Record wraps an application with locks. Begin/End serialize lifecycle
@@ -299,10 +312,24 @@ func (r *Registry) List() []App {
 	return apps
 }
 
-// RunningOnScreen returns the application currently running on screenID.
+// RunningOnScreen returns the application currently running on screenID,
+// whichever owner it belongs to. Ownership-aware callers use
+// RunningOnScreenFor instead.
 func (r *Registry) RunningOnScreen(screenID string) (App, bool) {
 	for _, value := range r.List() {
-		if value.ScreenID == screenID && (value.State == StateRunning || value.PendingRuntime || value.PendingProjection || value.CleanupPending || value.InstanceID != "" || value.ProjectionSessionID != "") {
+		if value.ScreenID == screenID && value.OccupiesScreen() {
+			return value, true
+		}
+	}
+	return App{}, false
+}
+
+// RunningOnScreenFor returns the owner's application currently running on
+// screenID. Screen IDs are scoped to one owner's casting service, so another
+// owner's identical ID is ignored.
+func (r *Registry) RunningOnScreenFor(owner Identity, screenID string) (App, bool) {
+	for _, value := range r.List() {
+		if value.ScreenID == screenID && value.OccupiesScreen() && value.Owner.SameOwner(owner) {
 			return value, true
 		}
 	}

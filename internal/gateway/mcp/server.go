@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -37,12 +38,20 @@ const (
 	serverInstructions = "Open Anywhere 用于让应用在身边屏幕上生成并运行。创建应用是异步任务：create-app 后先告诉用户正在制作，再用 get-app-status 查询；构建完成会发送 notifications/app_status。修改已有应用用 update-app，不要重新 create-app。可以同时创建多个应用，用返回的 app_id 区分。启动前先用 get-screens 获取明确的 screen_id。用户想再玩之前做过的应用时，先用 list-apps 找到它，不要重新创建。调用应用业务接口前，必须先用 get-app-operations 获取 operation_id、参数和请求体结构，再用 send-request。只对用户说应用和屏幕的自然名称，不要念内部标识。"
 )
 
+// OwnerValidator checks that an MCP identity maps to a registered device of an
+// active user. The portal wires the endpoints resolver here; a single-tenant
+// deployment leaves it nil.
+type OwnerValidator interface {
+	ValidateOwner(ctx context.Context, owner app.Identity) error
+}
+
 // Server owns one MCP server per SSE connection and routes Linx's POST
 // messages to the matching SDK transport.
 type Server struct {
 	tools       Apps
 	callTimeout time.Duration
 	version     string
+	validator   OwnerValidator
 
 	mu            sync.Mutex
 	sessions      map[string]*session
@@ -113,6 +122,21 @@ func (s *Server) SetTools(tools Apps) {
 	s.tools = tools
 }
 
+// SetOwnerValidator requires every MCP connection to carry the three Linx
+// identity headers and pass the validator. Once installed, missing identity is
+// rejected instead of silently treated as an anonymous single tenant.
+func (s *Server) SetOwnerValidator(validator OwnerValidator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.validator = validator
+}
+
+func (s *Server) ownerValidator() OwnerValidator {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.validator
+}
+
 // Close terminates every SSE session so HTTP shutdown can complete.
 func (s *Server) Close() {
 	s.mu.Lock()
@@ -140,7 +164,17 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		AgentID:   r.Header.Get("X-Linx-Agent-Id"),
 		SessionID: r.Header.Get("X-Linx-Session-Id"),
 	}
-	if identity.DeviceID == "" || identity.SessionID == "" {
+	validator := s.ownerValidator()
+	if validator != nil {
+		if identity.DeviceID == "" || identity.AgentID == "" || identity.SessionID == "" {
+			writeIdentityFailure(w, "MISSING_IDENTITY", http.StatusBadRequest)
+			return
+		}
+		if err := validator.ValidateOwner(r.Context(), identity); err != nil {
+			writeIdentityError(w, err)
+			return
+		}
+	} else if identity.DeviceID == "" || identity.SessionID == "" {
 		http.Error(w, "missing X-Linx-Device-Id or X-Linx-Session-Id", http.StatusBadRequest)
 		return
 	}
@@ -218,13 +252,53 @@ func (s *Server) ServeMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
 	}
+	validator := s.ownerValidator()
 	for key, want := range map[string]string{"X-Linx-Device-Id": item.identity.DeviceID, "X-Linx-Agent-Id": item.identity.AgentID, "X-Linx-Session-Id": item.identity.SessionID} {
-		if got := r.Header.Get(key); got != "" && got != want {
-			http.Error(w, "session owner mismatch", 403)
+		got := r.Header.Get(key)
+		if validator != nil {
+			// With a validator every header must be present and exact; an empty
+			// header must not bypass the check.
+			if got == "" || got != want {
+				writeIdentityFailure(w, "IDENTITY_MISMATCH", http.StatusForbidden)
+				return
+			}
+			continue
+		}
+		// Single-tenant deployments predate the agent header, so a missing
+		// value is tolerated there; a present but different value never is.
+		if got != "" && got != want {
+			http.Error(w, "session owner mismatch", http.StatusForbidden)
+			return
+		}
+	}
+	if validator != nil {
+		if err := validator.ValidateOwner(r.Context(), item.identity); err != nil {
+			writeIdentityError(w, err)
 			return
 		}
 	}
 	item.transport.ServeHTTP(w, r)
+}
+
+// writeIdentityError maps an owner-validation failure to the MCP HTTP status.
+func writeIdentityError(w http.ResponseWriter, err error) {
+	code := "IDENTITY_CHECK_FAILED"
+	status := http.StatusServiceUnavailable
+	var toolErr *service.ToolError
+	if errors.As(err, &toolErr) && toolErr.Code != "" {
+		code = toolErr.Code
+		switch code {
+		case "OWNER_NOT_FOUND", "IDENTITY_NOT_REGISTERED", "USER_DISABLED":
+			status = http.StatusForbidden
+		}
+	}
+	writeIdentityFailure(w, code, status)
+}
+
+func writeIdentityFailure(w http.ResponseWriter, code string, status int) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": code}})
 }
 
 // Notify sends notifications/app_status to matching Linx sessions.
