@@ -1,0 +1,136 @@
+# 模块规格与分工
+
+本文回答两个问题：**系统被切成哪些模块，每个模块对外的规格是什么；这些模块由谁负责。**
+
+只描述模块的职责与接口，不描述进程、端口与部署方式——那是运行视图，见[架构设计](architecture.md)。
+
+> 判断一个模块切得好不好，看它的接口能否独立于实现被讲清楚。接口是业务的抽象，也是它与使用方唯一的耦合方式。
+
+## 1. 总览
+
+| 模块 | 代码位置 | 一句话职责 | 负责人 |
+| --- | --- | --- | --- |
+| 控制面 Gateway | `cmd/gateway`、`internal/gateway` | 对灵矽暴露 MCP，编排构建，转发应用请求 | 邓军辉 |
+| 应用运行时 Render | `cmd/render`、`internal/render` | 启动应用、采集画面、输出媒体流 | 张之阳 |
+| 投屏服务 Casting | `cmd/casting`、`internal/casting` | 发现设备、维护投屏会话 | 张之阳 |
+| 现场语音入口 | `cmd/voiceentry`、`internal/voiceentry` | 以设备身份接入灵矽，收发语音 | 韩鲁鹏 |
+| Portal | `portal/`、`internal/gateway/portal` | 多租户控制台与自助开通 | 邓军辉 |
+| AgentAPI 适配 | `pkg/agentapi`、`internal/gateway/build` | 把构建抽象成会话，不暴露沙箱细节 | 邓军辉 |
+
+外部依赖（不属于本仓库，但属于系统边界）：灵矽云（ASR/TTS/意图）、AgentAPI（托管编码 Agent 与沙箱）、屏幕与 AirPlay 协议。
+
+## 2. 控制面 Gateway
+
+**职责**：系统里唯一同时理解“语音侧要什么”和“应用能做什么”的模块。它不运行应用，也不理解应用的业务语义。
+
+**对外接口**
+
+| 接口 | 使用方 | 形态 |
+| --- | --- | --- |
+| 应用管理 MCP | 灵矽云 | `get-screens`、`create-app`、`update-app`、`get-app-status`、`start-app`、`stop-app` |
+| 应用操作 MCP | 灵矽云 | `get-app-operations`、`send-request` |
+| Portal HTTP API | 浏览器 | `/api/portal/*`、`/api/admin/*` |
+| 健康检查 | 运维 | `GET /healthz` |
+
+**不变量**
+
+- MCP 工具面固定，不随应用数量增长；新应用只改变 `get-app-operations` 的返回值。
+- 一次语音回合不等待构建；构建是异步任务。
+- 跨 owner 的资源一律不可见，统一返回 404。
+
+**内部子模块**
+
+| 子模块 | 职责 | 关键接口 |
+| --- | --- | --- |
+| `mcp` | MCP Server 与工具路由 | Tool 定义与调用 |
+| `service` | 编排、归属校验、屏幕占用 | 面向 MCP 的用例方法 |
+| `build` | 构建会话生命周期 | `Create` / `Update` / `Status` |
+| `artifact` | 产物下载与二次校验 | artifact 读取 |
+| `openapi` | 解析、校验 OpenAPI，转发 HTTP | `SendRequest` |
+| `app` | 应用注册表 | 应用 CRUD |
+| `screen` | 屏幕发现与占用 | 屏幕状态迁移 |
+| `render` | Render HTTP 客户端 | 启动/停止/状态 |
+| `endpoints` | 按 owner 解析 Render/Casting | `Resolve` / `ValidateOwner` |
+| `portal` | 注册、登录、角色、开通 | `/api/*` handler |
+| `settings` | 平台设置与密钥 | 读写设置、加解密 |
+| `netguard` | 出站策略 | 安全 Dial |
+| `store` | SQLite 持久化 | 仓储接口 |
+| `linx` | 灵矽平台客户端 | 智能体/设备开通 |
+
+## 3. 应用运行时 Render
+
+**职责**：把应用产物变成一块可以投屏的画面。它是唯一接触进程、端口和媒体的模块。
+
+**对外接口**：控制面 HTTP（启动、停止、状态）；`launch.json` 启动契约；Stage 页面与 MPEG-TS 媒体流。
+
+**不变量**
+
+- 应用只暴露 HTTP，不感知 MCP，也不感知投屏。
+- 端口由运行环境通过 `PORT` 注入，应用不自行决定。
+- 进程保活与失败可预期，失败信息结构化返回。
+
+**子模块**：`artifact`（解包与校验）、`ports`（端口分配）、`service`（进程生命周期）、`media`（采集、编码、推流）、`http`（控制面接口）。
+
+## 4. 投屏服务 Casting
+
+**职责**：发现局域网设备，并按目标支持的协议建立、维持、结束投屏会话。它不生产内容。
+
+**对外接口**：`GET /v1/targets`、`POST /v1/projection-sessions`、`GET/DELETE /v1/projection-sessions/{id}`、`GET /healthz`。
+
+**不变量**
+
+- 会话是会话级通道，应用是通道里的内容；切换应用不重建会话。
+- 只负责协议控制与生命周期，不负责媒体内容。
+- 设备失联时释放占用，避免目标被永久占住。
+
+## 5. 现场语音入口
+
+**职责**：扮演一台灵矽硬件，维持设备会话，收发语音与字幕，回应设备端 MCP。
+
+**对外接口**：灵矽设备协议（WebSocket）；本地 Web 控制台。
+
+**不变量**
+
+- 不做声纹、ASR、TTS 与意图识别，这些都在灵矽云。
+- 断线后按同一身份重连，不产生重复设备。
+
+## 6. Portal
+
+**职责**：多租户控制台。管理员配置平台，用户自助注册并获得一台虚拟智能体。
+
+**对外接口**：浏览器页面与 `/api/portal/*`、`/api/admin/*`。
+
+**不变量**
+
+- 注册时原子创建 user 与虚拟设备，不出现半成品账号。
+- 管理员接口全部经过角色守卫，响应不含密钥、token 与提示词正文。
+- 服务绑定按 owner 解析，不在租户之间复用下游服务。
+
+## 7. 允许的依赖方向
+
+| 从 | 到 | 通过什么 |
+| --- | --- | --- |
+| 现场语音入口 | 灵矽云 | 设备协议 |
+| 灵矽云 | 控制面 | MCP |
+| 控制面 | AgentAPI | HTTP（构建会话） |
+| 控制面 | Render | HTTP |
+| 控制面 | Casting | HTTP |
+| Render | Casting | HTTP（媒体流投送） |
+| Portal | 控制面 | 同进程 HTTP API |
+
+禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。
+
+## 8. 全局不变量
+
+无论模块如何演进，下面几条不能被破坏：
+
+1. **MCP 面稳定，应用能力动态。** 不为每个应用注册工具。
+2. **构建慢而异步，控制快而同步。** 语音回合永不等待构建。
+3. **投屏是会话，应用是内容。** 换应用不换会话。
+4. **屏幕是显示器，不是运行时。** 应用逻辑不进显示面。
+5. **产物是不可信输入。** 结构、启动契约、OpenAPI 都要校验，Render 再校验一次。
+6. **状态属于它的所有者。** 控制面状态在 SQLite，应用状态在应用，投屏状态在会话。
+
+---
+
+分工依据 [README 团队表](../README.md#团队) 整理；若职责有调整，以团队最终确认为准。
