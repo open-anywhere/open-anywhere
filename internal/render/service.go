@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/open-anywhere/open-anywhere/pkg/canvas"
 	"github.com/open-anywhere/open-anywhere/pkg/casting"
 	api "github.com/open-anywhere/open-anywhere/pkg/render"
 )
@@ -102,16 +103,16 @@ func New(cfg Config) (*Service, error) {
 		cfg.FFmpeg = "ffmpeg"
 	}
 	if cfg.Width == 0 {
-		cfg.Width = 1280
+		cfg.Width = canvas.Width
 	}
 	if cfg.Height == 0 {
-		cfg.Height = 720
+		cfg.Height = canvas.Height
 	}
 	if cfg.FPS == 0 {
 		cfg.FPS = 10
 	}
-	if cfg.Width < 320 || cfg.Height < 180 || cfg.Width > 3840 || cfg.Height > 2160 || cfg.Width%2 != 0 || cfg.Height%2 != 0 || cfg.FPS < 1 || cfg.FPS > 30 {
-		return nil, errors.New("invalid video dimensions or FPS")
+	if cfg.Width < 320 || cfg.Height < 180 || cfg.Width > 3840 || cfg.Height > 2160 || !canvas.Is16x9(cfg.Width, cfg.Height) || cfg.Width%2 != 0 || cfg.Height%2 != 0 || cfg.FPS < 1 || cfg.FPS > 30 {
+		return nil, errors.New("invalid video dimensions or FPS: width and height must be 16:9")
 	}
 	if cfg.StartupTimeout == 0 {
 		cfg.StartupTimeout = 60 * time.Second

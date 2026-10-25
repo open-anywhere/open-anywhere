@@ -37,7 +37,7 @@ const MOVIES = [
   },
 ];
 
-const RECENT_LIMIT = 8;
+const RECENT_LIMIT = 5;
 
 const state = {
   players: [],

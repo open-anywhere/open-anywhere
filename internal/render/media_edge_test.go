@@ -1,9 +1,11 @@
 package render
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -366,5 +368,47 @@ func TestAdversarialCaptureScreenshotDevToolsError(t *testing.T) {
 	}
 	if frame != nil {
 		t.Fatalf("frame was set despite the error: %q", frame)
+	}
+}
+
+func TestLayoutOverflowIsLoggedWithoutStoppingStream(t *testing.T) {
+	hooks := fakeBrowserHooks()
+	hooks.layout = func(context.Context) (layoutMetrics, error) {
+		return layoutMetrics{Width: 1440, Height: 900, ViewportWidth: 1280, ViewportHeight: 720}, nil
+	}
+	var logs bytes.Buffer
+	cfg := mediaTestConfig(t, ffmpegStream, hooks)
+	cfg.Logger = log.New(&logs, "", 0)
+	m, err := startMedia(context.Background(), context.Background(), cfg, "http://127.0.0.1:1/", filepath.Join(t.TempDir(), "encoder.log"), newHub())
+	if err != nil {
+		t.Fatalf("start media: %v", err)
+	}
+	if err := m.close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	for _, want := range []string{"layout_overflow", "content=1440x900", "viewport=1280x720", "canvas=1280x720"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("overflow log does not contain %q: %q", want, logs.String())
+		}
+	}
+}
+
+func TestLayoutWithinViewportIsNotLogged(t *testing.T) {
+	hooks := fakeBrowserHooks()
+	hooks.layout = func(context.Context) (layoutMetrics, error) {
+		return layoutMetrics{Width: 1280, Height: 720, ViewportWidth: 1280, ViewportHeight: 720}, nil
+	}
+	var logs bytes.Buffer
+	cfg := mediaTestConfig(t, ffmpegStream, hooks)
+	cfg.Logger = log.New(&logs, "", 0)
+	m, err := startMedia(context.Background(), context.Background(), cfg, "http://127.0.0.1:1/", filepath.Join(t.TempDir(), "encoder.log"), newHub())
+	if err != nil {
+		t.Fatalf("start media: %v", err)
+	}
+	if err := m.close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if strings.Contains(logs.String(), "layout_overflow") {
+		t.Fatalf("unexpected overflow log: %q", logs.String())
 	}
 }
