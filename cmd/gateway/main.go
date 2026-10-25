@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -263,6 +264,10 @@ func serve(ctx context.Context, cfg config.Config) error {
 	result := make(chan error, 1)
 	go func() { result <- httpServer.ListenAndServe() }()
 	log.Printf("gateway listening on %s", cfg.Addr)
+	if cfg.PortalEnabled {
+		base := browseURL(cfg.Addr)
+		log.Printf("portal: %s/ (admin: %s/admin)", base, base)
+	}
 
 	return awaitShutdown(ctx, httpServer, server.Close, result)
 }
@@ -377,4 +382,17 @@ func awaitShutdown(ctx context.Context, httpServer *http.Server, closeMCP func()
 		}
 		return err
 	}
+}
+
+// browseURL turns a listen address into a URL a browser on this machine can
+// open. A wildcard or empty host is not browsable, so it becomes localhost.
+func browseURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }

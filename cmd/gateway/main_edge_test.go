@@ -388,3 +388,17 @@ func TestMCPAuthFuncReadsTheTokenPerRequestAndFailsClosed(t *testing.T) {
 		t.Fatal("a failed token lookup must deny the request")
 	}
 }
+
+func TestBrowseURLUsesLocalhostForWildcardHosts(t *testing.T) {
+	for addr, want := range map[string]string{
+		":8090":           "http://localhost:8090",
+		"0.0.0.0:8091":    "http://localhost:8091",
+		"[::]:8092":       "http://localhost:8092",
+		"192.168.1.5:80":  "http://192.168.1.5:80",
+		"not-an-address":  "http://not-an-address",
+	} {
+		if got := browseURL(addr); got != want {
+			t.Errorf("browseURL(%q) = %q, want %q", addr, got, want)
+		}
+	}
+}
