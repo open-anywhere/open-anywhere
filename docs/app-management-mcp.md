@@ -1,8 +1,10 @@
 # 应用管理 MCP
 
 > 状态：Proposal（供 PR 评审）
-> 版本：v0.2
+> 版本：v0.3
 > 日期：2026-10-25
+>
+> 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)。
 
 ## 1. 范围
 
@@ -30,7 +32,7 @@
 - 只暴露稳定、与运行时无关的业务标识（`app_id`、`screen_id`），不暴露端口、运行目录或 Render 标识。
 - `app_id` 必须属于当前设备和智能体（device + agent）。Linx 会话重连不影响归属，控制面拒绝跨设备或跨智能体访问。
 - 构建是长任务：`create-app` 立即返回，状态通过 `get-app-status` 查询，构建完成通过 MCP 通知告知。
-- 写操作按业务键幂等，不重复创建构建 session、应用进程或投屏会话。
+- 写操作按业务键幂等：同一 `app_id` 不重复创建构建 session、应用进程或投屏会话。`create-app` 每次新建应用与 session；修订走 `update-app` 复用绑定 session。
 
 ## 2. 工具与状态
 
@@ -40,6 +42,7 @@
 | --- | --- | --- | --- |
 | `get-screens` | 查询当前可用屏幕及占用情况 | 无 | `screens` 数组，见第 5 章 |
 | `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt`、可选 `player_names` | `app_id`, `state: building` |
+| `update-app` | 在已有应用的绑定会话上提交修订并重建产物 | `app_id`, `prompt` | `app_id`, `state: building` |
 | `list-apps` | 查询当前设备和智能体的历史应用 | 无 | `apps` 数组，见 3.1 |
 | `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见第 4 章 |
 | `get-app-operations` | 查询应用声明的 OpenAPI 业务操作 | `app_id` | `app_id`, `state`, `operations` |
@@ -119,7 +122,7 @@
 }
 ```
 
-同一设备和智能体已有 `building` 中的应用时，重复 `create-app` 返回现有 `app_id`，不重复创建 session，也不覆盖原构建的 `prompt` 或 `player_names`。调用方不能把该返回解释为新名单已生效。
+同一设备和智能体可以同时有多个 `building` 应用：每次 `create-app` 都分配新的 `app_id`，并创建独立的 AgentAPI 构建会话。控制面在内部把 `app_id` 与 `session_id` 一对一绑定；`session_id` 不通过 MCP 返回。已返回的 `app_id` 用 `get-app-status` 或通知跟踪；不要为同一用户意图盲目重试 `create-app`（会多出一个应用）。修改已有应用走 `update-app`，见第 3.2 节与 [multi-app-sessions.md](multi-app-sessions.md)。
 
 ### 3.1 `list-apps`
 
@@ -148,6 +151,56 @@
 - `startable` 表示现在能否直接 `start-app`；false 时 `not_startable_reason` 说明原因（构建中、运行中、构建失败、产物丢失，或上次启动还在核对/清理）。
 - 用户说“玩上次那个/之前那个”时，先 `list-apps` 让用户确认，再用 `start-app` 启动；不要重新 `create-app`。
 - `list-apps` 是历史快照，启动时仍以 `get-app-status` / `start-app` 的结果为准。
+
+### 3.2 `update-app`
+
+向已有应用绑定的 AgentAPI 会话提交补充需求，异步重建产物。新应用用 `create-app`；运行中的业务操作仍用 `send-request`。
+
+```json
+{
+  "app_id": "app_01J...",
+  "prompt": "题目改成动物主题，仍保持五题、三人依次作答"
+}
+```
+
+输入 schema：
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "app_id": {"type": "string", "minLength": 1},
+    "prompt": {"type": "string", "minLength": 1}
+  },
+  "required": ["app_id", "prompt"],
+  "additionalProperties": false
+}
+```
+
+`prompt` 是整理后的修改说明，不是原始 ASR。本期不传 `player_names`。
+
+立即返回：
+
+```json
+{
+  "app_id": "app_01J...",
+  "state": "building"
+}
+```
+
+状态与错误：
+
+| 当前状态 | 行为 |
+| --- | --- |
+| `idle` | 进入 `building`，复用绑定 session 提交 `user.message`；保留上一版产物直到新产物校验成功 |
+| `running` | 返回 `APP_RUNNING`，不改状态；先 `stop-app` 再更新 |
+| `building` | 返回 `APP_BUILDING`，不插队 |
+| `error` 且会话仍可用、或仍有可启动产物 | 允许更新；成功后 `idle` |
+| 会话缺失、已终止或已归档 | 返回 `SESSION_UNAVAILABLE`；有旧产物时仍可 `start-app`，修订需重新 `create-app` |
+
+更新失败且此前已有可启动产物时，恢复 `idle` 并保留旧产物，通过通知说明更新失败。无产物时进入 `error(stage=building)`。完成通知与 `get-app-status` 的字段约定与初次构建相同；通知文案可区分「创建完成」与「更新完成」。完整绑定与恢复规则见 [multi-app-sessions.md](multi-app-sessions.md)。
+
+建议工具 description 包含："修订已有应用。app_id 必填。prompt 为整理后的修改说明。应用 building 时不要调用；running 时先 stop-app。新应用用 create-app；答题计分等用 send-request。"
 
 ## 4. `get-app-status`
 
@@ -455,9 +508,12 @@ sequenceDiagram
 | --- | --- | --- |
 | `INVALID_PLAYER_NAMES` | `create-app` | 名称为空白、类型错误或去除首尾空白后重名 |
 | `BUILD_START_FAILED` | `create-app` | 无法启动 AgentAPI 构建 |
+| `UPDATE_START_FAILED` | `update-app` | 绑定会话存在但提交修订消息失败 |
+| `SESSION_UNAVAILABLE` | `update-app` | 绑定会话缺失、已终止、已归档或无法接收消息 |
+| `APP_RUNNING` | `update-app` | 应用仍在运行，需先 `stop-app` |
 | `MISSING_CONTEXT` | `list-apps` 等 | 缺少设备标识 |
-| `APP_BUILDING` | `start-app`, `stop-app`, `get-app-operations` | 应用仍在构建 |
-| `APP_IN_ERROR` | `start-app`, `get-app-operations` | 应用处于不可启动的 `error` |
+| `APP_BUILDING` | `start-app`, `stop-app`, `get-app-operations`, `update-app` | 应用仍在构建或修订中 |
+| `APP_IN_ERROR` | `start-app`, `get-app-operations`, `update-app` | 应用处于不可启动或不可修订的 `error` |
 | `APP_ALREADY_RUNNING` | `start-app` | 应用已在其他屏幕运行 |
 | `TARGET_BUSY` | `start-app` | 目标屏幕被其他应用或无法归属的投屏会话占用 |
 | `TARGET_UNREACHABLE` | `start-app` | 屏幕不存在、离线或无法访问 |
