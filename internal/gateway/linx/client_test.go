@@ -66,11 +66,13 @@ func TestPlatformBusinessCodesBecomeErrors(t *testing.T) {
 
 func TestEnsureMCPCreatesAndThenReusesTheSameResources(t *testing.T) {
 	var (
-		mu        sync.Mutex
-		servers   []map[string]any
-		instances []map[string]any
-		creates   int
-		attached  []string
+		mu                 sync.Mutex
+		servers            []map[string]any
+		instances          []map[string]any
+		creates            int
+		attached           []string
+		serverCreateBody   map[string]any
+		instanceCreateBody map[string]any
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -80,6 +82,7 @@ func TestEnsureMCPCreatesAndThenReusesTheSameResources(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"servers": servers}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/mcp-store/servers":
 			creates++
+			_ = json.NewDecoder(r.Body).Decode(&serverCreateBody)
 			servers = append(servers, map[string]any{
 				"id": "server_1", "name": "Open Anywhere",
 				"config_schema": map[string]any{"sse": map[string]any{"url": "https://gateway.example/sse"}},
@@ -89,6 +92,7 @@ func TestEnsureMCPCreatesAndThenReusesTheSameResources(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": instances})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/mcps":
 			creates++
+			_ = json.NewDecoder(r.Body).Decode(&instanceCreateBody)
 			instances = append(instances, map[string]any{"id": "mcp_1", "mcp_id": "server_1", "name": "Open Anywhere"})
 			_, _ = io.WriteString(w, `{"code":0,"data":{"id":"mcp_1"}}`)
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/agents/"):
@@ -109,6 +113,23 @@ func TestEnsureMCPCreatesAndThenReusesTheSameResources(t *testing.T) {
 	}
 	if creates != 2 {
 		t.Fatalf("creates=%d", creates)
+	}
+	if serverCreateBody["logo_url"] != mcpLogoURL {
+		t.Fatalf("the platform requires a logo_url, got %v", serverCreateBody["logo_url"])
+	}
+	if serverCreateBody["document_url"] != mcpDocumentURL {
+		t.Fatalf("document_url=%v", serverCreateBody["document_url"])
+	}
+	serverSchema, _ := serverCreateBody["config_schema"].(map[string]any)
+	if serverSchema["type"] != "sse" || serverSchema["transport_type"] != float64(mcpTransportStreamableHTTP) {
+		t.Fatalf("config_schema=%v", serverSchema)
+	}
+	if instanceCreateBody["logo_url"] != mcpLogoURL {
+		t.Fatalf("instance logo_url=%v", instanceCreateBody["logo_url"])
+	}
+	instanceConfig, _ := instanceCreateBody["config"].(map[string]any)
+	if instanceConfig["transport_type"] != float64(mcpTransportStreamableHTTP) {
+		t.Fatalf("instance config=%v", instanceConfig)
 	}
 	serverID, instanceID, err = client.EnsureMCP(context.Background(), spec)
 	if err != nil || serverID != "server_1" || instanceID != "mcp_1" {

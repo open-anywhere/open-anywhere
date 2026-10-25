@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -248,6 +249,9 @@ func serve(ctx context.Context, cfg config.Config) error {
 		mux.Handle("/api/admin/", portalService.API.AdminHandler())
 		mux.Handle("/", portalService.API.WebHandler())
 		mux.Handle("/voice/", portalService.API.VoiceHandler())
+		if strings.HasSuffix(strings.TrimRight(cfg.LinxPublicMCPURL, "/"), "/sse") {
+			log.Printf("warning: linx.public_mcp_url ends with /sse; new Linx MCP servers use Streamable HTTP, configure .../mcp")
+		}
 		log.Printf("portal enabled at /portal")
 	}
 

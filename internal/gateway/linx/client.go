@@ -353,24 +353,40 @@ func (c *Client) listInstances(ctx context.Context) ([]platformInstance, error) 
 	return wrapped.MCPs, nil
 }
 
+const (
+	// The Linx console always submits a logo and document URL when it creates
+	// a custom MCP server; without them the platform rejects the body with
+	// 400 invalid request body.
+	mcpLogoURL     = "https://raw.githubusercontent.com/open-anywhere/.github/main/assets/logo/open-anywhere-avatar-1024.png"
+	mcpDocumentURL = "https://github.com/open-anywhere/open-anywhere"
+	// mcpTransportStreamableHTTP matches the gateway's POST /mcp endpoint.
+	// The Linx console only offers legacy SSE when editing an existing server,
+	// so new servers must use transport_type 1.
+	mcpTransportStreamableHTTP = 1
+)
+
 func mcpServerBody(spec MCPSpec) map[string]any {
 	header := map[string]string{}
 	if spec.Token != "" {
 		header["Authorization"] = "Bearer " + spec.Token
 	}
 	return map[string]any{
-		"name":       spec.Name,
-		"is_private": true,
-		"desc":       spec.Description,
+		"name":         spec.Name,
+		"is_private":   true,
+		"logo_url":     mcpLogoURL,
+		"document_url": mcpDocumentURL,
+		"tags":         []string{},
+		"desc":         spec.Description,
+		"content":      "",
 		"config_schema": map[string]any{
-			"types": []string{"sse"},
+			"types":          []string{"sse"},
+			"type":           "sse",
+			"transport_type": mcpTransportStreamableHTTP,
 			"sse": map[string]any{
-				"type":                       0,
-				"url":                        spec.URL,
-				"shared_key":                 false,
-				"params":                     map[string]any{},
-				"header":                     header,
-				"reset_header_default_value": []string{},
+				"type":   0,
+				"url":    spec.URL,
+				"params": map[string]any{},
+				"header": header,
 			},
 		},
 	}
@@ -382,11 +398,13 @@ func mcpInstanceBody(spec MCPSpec, serverID string) map[string]any {
 		header["Authorization"] = "Bearer " + spec.Token
 	}
 	return map[string]any{
-		"mcp_id": serverID,
-		"name":   spec.Name,
-		"desc":   spec.Description,
+		"mcp_id":   serverID,
+		"name":     spec.Name,
+		"desc":     spec.Description,
+		"logo_url": mcpLogoURL,
 		"config": map[string]any{
-			"type": "sse",
+			"type":           "sse",
+			"transport_type": mcpTransportStreamableHTTP,
 			"sse": map[string]any{
 				"type":   0,
 				"url":    spec.URL,

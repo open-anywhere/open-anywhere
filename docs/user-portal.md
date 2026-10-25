@@ -345,12 +345,12 @@ services:
 # Portal 模式下 mcp_token 必填；Linx api_key 可留空，由管理后台配置
 mcp_token: "<随机 token>"
 linx:
-  public_mcp_url: "https://<gateway 公网地址>/sse"
+  public_mcp_url: "https://<gateway 公网地址>/mcp"
 ```
 
 - 先构建前端：`cd portal && pnpm install && pnpm build`；未构建时 `/` 返回 503。
 - 单文件部署：`make build-gateway-embed`（等价于 `go build -tags portalembed`）。`pnpm build` 会把 `portal/dist` 同步到 `internal/gateway/portal/webdist` 供 `go:embed` 使用，运行时把 `portal.web_embedded` 设为 `true`。未带 tag 的二进制配置该项会启动失败，避免误以为前端已内嵌。
-- 灵矽云必须能访问 `linx.public_mcp_url`；局域网地址不可达。
+- 灵矽云必须能访问 `linx.public_mcp_url`；局域网地址不可达。新建 MCP 使用 Streamable HTTP，地址应以 `/mcp` 结尾；`/sse` 是旧版 Legacy SSE 端点，仅已有服务继续使用。
 - 浏览器麦克风要求 HTTPS 或 `localhost`。
 - 单进程、单 SQLite；一个数据库只对应一个 Gateway。
 - 备份时必须同时保留数据库与 `secret.key`（或 `GATEWAY_SECRET_KEY`）；WAL 模式下数据库用 SQLite `.backup`，不能只拷贝主文件。

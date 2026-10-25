@@ -81,7 +81,8 @@ linx:
   api_base: "https://xrobo.qiniu.com"
   ota_url: "https://xrobo.qiniuapi.com/v1/ota/"
   api_key: ""
-  # 灵矽云必须能访问这个 SSE 地址；局域网地址不可达，需要公网部署或隧道。
+  # 灵矽云必须能访问这个 MCP 地址；使用 Streamable HTTP，通常以 /mcp 结尾
+  # （旧版的 /sse 仅用于已有服务，新建 MCP 时平台不再接受）。局域网地址不可达。
   public_mcp_url: ""
   # 若上方 mcp_token 非空，创建的 MCP 会使用同一个 Bearer token。
   mcp_name: "Open Anywhere"
