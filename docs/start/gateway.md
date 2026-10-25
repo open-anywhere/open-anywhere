@@ -147,7 +147,7 @@ portal:
 - 应用状态、构建进度、产物下载令牌保存在 SQLite，默认 `open-anywhere.gateway.db`。
 - 应用包保存在 `artifacts/`，通过 `GET /artifacts/{app_id}/{name}` 提供给 Render。
 - 重启后会恢复应用记录、继续监听未完成的构建，并根据当前配置修正产物下载地址。
-- 门户模式下 `portal-data/secret.key` 用于加密平台密钥和用户服务 token。**丢失后已保存的凭证无法解密，必须与数据库一起备份。**
+- 门户模式下 `portal-data/secret.key` 用于加密平台密钥和用户服务 token。**丢失后已保存的凭证无法解密，必须与数据库一起备份。** 首次配置、备份与恢复步骤见[部署与备份](deploy.md)。
 
 ## 日志与停止
 

@@ -125,6 +125,13 @@ export function AdminOverviewPage() {
                   <Button type="primary">去配置</Button>
                 </Link>
               </div>
+              <Alert
+                type="warning"
+                showIcon
+                className="panel-alert"
+                message="请备份主密钥"
+                description="平台密钥和 MCP Token 用主密钥加密保存。请把 portal-data/secret.key（或环境变量 GATEWAY_SECRET_KEY）与数据库一起备份，丢失后这些密文无法恢复。"
+              />
               <Steps
                 direction="vertical"
                 size="small"
