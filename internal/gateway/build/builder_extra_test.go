@@ -160,7 +160,7 @@ func TestCollectScenarios(t *testing.T) {
 			if test.limit > 0 {
 				builder.cfg.ArtifactLimit = test.limit
 			}
-			path, size, digest, err := builder.collect(context.Background(), "ses_1")
+			path, size, digest, err := builder.collect(context.Background(), "ses_1", collectOpts{})
 			if test.want == "" {
 				if err != nil {
 					t.Fatalf("collect: %v", err)

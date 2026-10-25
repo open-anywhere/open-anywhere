@@ -18,6 +18,11 @@ type createAppInput struct {
 	PlayerNames []string `json:"player_names,omitempty" jsonschema:"用户已确认的初始玩家名称，按加入或点名顺序填写；未知时不要编造。名称不能为空白或重复"`
 }
 
+type updateAppInput struct {
+	AppID  string `json:"app_id" jsonschema:"要修订的应用 ID，来自 create-app 或 list-apps"`
+	Prompt string `json:"prompt" jsonschema:"整理后的修改说明，描述要改的页面、交互或规则；不能为空"`
+}
+
 type appIDInput struct {
 	AppID string `json:"app_id" jsonschema:"create-app 返回的正在创建中应用 ID"`
 }
@@ -61,7 +66,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "create-app",
 		Title:       "创建应用",
-		Description: "根据用户已确认的需求创建应用，并异步启动构建。prompt 必须是整理后的需求，包含页面、交互和规则，不要把原始语音转写直接传入。多人游戏请在 player_names 中传入用户已确认的初始玩家姓名，保留顺序；未知姓名不要猜测，名单不完整且需要预置全部玩家时先询问。名单只定义初始玩家，不代表已准备好。立即返回 app_id 和 building；之后用 get-app-status 查询进度，构建完成会收到 notifications/app_status。已有构建中的应用时返回原 app_id，不会重复创建，也不会覆盖原构建的 prompt 或 player_names。",
+		Description: "根据用户已确认的需求创建应用，并异步启动构建。prompt 必须是整理后的需求，包含页面、交互和规则，不要把原始语音转写直接传入。多人游戏请在 player_names 中传入用户已确认的初始玩家姓名，保留顺序；未知姓名不要猜测，名单不完整且需要预置全部玩家时先询问。名单只定义初始玩家，不代表已准备好。立即返回 app_id 和 building；之后用 get-app-status 查询进度，构建完成会收到 notifications/app_status。同一设备可同时有多个构建中的应用：每次调用都会新建 app_id 与构建会话。已返回的 app_id 用 get-app-status 跟踪；不要为同一意图盲目重试 create-app。修改已有应用用 update-app。",
 		Annotations: mutatingAnnotations(false, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input createAppInput) (*sdk.CallToolResult, service.CreateResult, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -74,9 +79,24 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	})
 
 	sdk.AddTool(server, &sdk.Tool{
+		Name:        "update-app",
+		Title:       "修订已有应用",
+		Description: "在已有应用的绑定构建会话上提交修改说明，异步重建产物。app_id 必填。prompt 为整理后的修改说明，不是原始语音。应用 building 时不要调用；running 时先 stop-app。新应用用 create-app；答题计分等运行中操作用 send-request。立即返回 building；完成后收到 notifications/app_status。会话不可用时返回 SESSION_UNAVAILABLE，需重新 create-app。",
+		Annotations: mutatingAnnotations(false, true),
+	}, func(ctx context.Context, _ *sdk.CallToolRequest, input updateAppInput) (*sdk.CallToolResult, service.CreateResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		result, err := tools.UpdateApp(ctx, identity, input.AppID, input.Prompt)
+		if err != nil {
+			return nil, service.CreateResult{}, err
+		}
+		return nil, result, nil
+	})
+
+	sdk.AddTool(server, &sdk.Tool{
 		Name:        "get-app-status",
 		Title:       "查询应用状态",
-		Description: "查询应用的构建、空闲、运行或错误状态。create-app 之后用它轮询构建进度；收到 notifications/app_status 或用户询问时也用它确认最新状态。building 返回已用时间和最近进度；idle 表示可以启动；running 返回屏幕、启动时间和运行时长；error 返回结构化 error，不要只根据通知判断失败。",
+		Description: "查询应用的构建、空闲、运行或错误状态。create-app 或 update-app 之后用它轮询构建进度；收到 notifications/app_status 或用户询问时也用它确认最新状态。building 返回已用时间和最近进度；idle 表示可以启动；running 返回屏幕、启动时间和运行时长；error 返回结构化 error，不要只根据通知判断失败。",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input appIDInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/build"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/openapi"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/render"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
@@ -23,6 +24,11 @@ import (
 // BuildStarter starts an asynchronous build for a new application.
 type BuildStarter interface {
 	Start(ctx context.Context, value app.App) error
+}
+
+// BuildContinuer submits a follow-up build turn on an existing AgentAPI session.
+type BuildContinuer interface {
+	Continue(ctx context.Context, value app.App) error
 }
 
 // RenderClient is the subset of the Render API used by the control plane.
@@ -271,9 +277,6 @@ func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt stri
 	if err != nil {
 		return CreateResult{}, err
 	}
-	if existing, ok := s.apps.FindBuilding(owner); ok {
-		return CreateResult{AppID: existing.ID, State: existing.State}, nil
-	}
 	id := app.NewID()
 	entry := s.apps.Add(app.App{
 		ID:             id,
@@ -294,6 +297,84 @@ func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt stri
 	}
 	s.PruneHistory()
 	return CreateResult{AppID: id, State: app.StateBuilding}, nil
+}
+
+// UpdateApp submits a revision turn on the application's bound AgentAPI session.
+func (s *Service) UpdateApp(ctx context.Context, owner app.Identity, appID, prompt string) (CreateResult, error) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return CreateResult{}, &ToolError{Code: "INVALID_ARGUMENT", Message: "prompt 不能为空"}
+	}
+	record, err := s.entry(owner, appID)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	before := record.Snapshot()
+	switch before.State {
+	case app.StateBuilding:
+		return CreateResult{}, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建或修订中"}
+	case app.StateRunning:
+		return CreateResult{}, &ToolError{Code: "APP_RUNNING", Message: "应用仍在运行，请先 stop-app"}
+	case app.StateIdle:
+		// ok
+	case app.StateError:
+		if !hasStartableArtifact(before) {
+			return CreateResult{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态且无法修订"}
+		}
+	default:
+		return CreateResult{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用当前状态无法修订"}
+	}
+	if before.SessionID == "" {
+		return CreateResult{}, &ToolError{Code: "SESSION_UNAVAILABLE", Message: "构建会话不可用，请重新 create-app"}
+	}
+	continuer, ok := s.builder.(BuildContinuer)
+	if !ok {
+		return CreateResult{}, &ToolError{Code: "UPDATE_START_FAILED", Message: "无法启动修订"}
+	}
+	started := s.now()
+	if err := persistRuntime(record, func(a *app.App) {
+		a.State = app.StateBuilding
+		a.Prompt = prompt
+		a.BuildStartedAt = started
+		a.BuildFinishedAt = time.Time{}
+		a.BuildDuration = 0
+		a.Error = nil
+		a.LastAgentMessage = ""
+		a.LastProgress = ""
+		a.LastStatusMessage = ""
+	}); err != nil {
+		return CreateResult{}, err
+	}
+	if err := continuer.Continue(ctx, record.Snapshot()); err != nil {
+		_ = persistRuntime(record, func(a *app.App) {
+			a.State = before.State
+			a.Prompt = before.Prompt
+			a.BuildStartedAt = before.BuildStartedAt
+			a.BuildFinishedAt = before.BuildFinishedAt
+			a.BuildDuration = before.BuildDuration
+			a.Error = before.Error
+			a.LastAgentMessage = before.LastAgentMessage
+			a.LastProgress = before.LastProgress
+			a.LastStatusMessage = before.LastStatusMessage
+		})
+		return CreateResult{}, mapContinueError(err)
+	}
+	return CreateResult{AppID: appID, State: app.StateBuilding}, nil
+}
+
+func hasStartableArtifact(value app.App) bool {
+	return value.Artifact.SHA256 != "" && (value.Artifact.Path != "" || value.Artifact.DownloadURL != "")
+}
+
+func mapContinueError(err error) error {
+	switch {
+	case errors.Is(err, build.ErrSessionUnavailable):
+		return &ToolError{Code: "SESSION_UNAVAILABLE", Message: "构建会话不可用，请重新 create-app"}
+	case errors.Is(err, build.ErrSessionBusy):
+		return &ToolError{Code: "UPDATE_START_FAILED", Message: "构建会话正忙，稍后再试"}
+	default:
+		return &ToolError{Code: "UPDATE_START_FAILED", Message: "无法启动修订"}
+	}
 }
 
 // normalizePlayerNames trims names, rejects blanks and duplicates, and keeps

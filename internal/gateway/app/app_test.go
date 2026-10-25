@@ -11,14 +11,11 @@ func TestRegistryOwnershipAndQueries(t *testing.T) {
 	record := registry.Add(App{ID: "app_1", Owner: owner, State: StateBuilding})
 	other := registry.Add(App{ID: "app_2", Owner: Identity{DeviceID: "device", SessionID: "other"}, State: StateRunning, ScreenID: "tv"})
 
-	if existing, ok := registry.FindBuilding(owner); !ok || existing.ID != "app_1" {
-		t.Fatalf("FindBuilding = %+v, %v", existing, ok)
+	if got, ok := registry.Get("app_1"); !ok || !got.Snapshot().Owner.SameOwner(owner) {
+		t.Fatalf("app_1 owner = %+v", got)
 	}
-	if _, ok := registry.FindBuilding(Identity{DeviceID: "other-device", SessionID: "other"}); ok {
-		t.Fatal("another device should not find the building app")
-	}
-	if _, ok := registry.FindBuilding(Identity{DeviceID: "device", SessionID: "reconnected"}); !ok {
-		t.Fatal("a new session of the same device must still find its building app")
+	if !record.Snapshot().Owner.SameOwner(Identity{DeviceID: "device", SessionID: "reconnected"}) {
+		t.Fatal("same device with a new Linx session must still own the app")
 	}
 	if running, ok := registry.RunningOnScreen("tv"); !ok || running.ID != "app_2" {
 		t.Fatalf("RunningOnScreen = %+v, %v", running, ok)

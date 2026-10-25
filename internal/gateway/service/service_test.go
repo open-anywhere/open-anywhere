@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/build"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/openapi"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/render"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
@@ -42,9 +43,11 @@ paths:
 `
 
 type fakeBuilder struct {
-	mu      sync.Mutex
-	started []app.App
-	err     error
+	mu        sync.Mutex
+	started   []app.App
+	continued []app.App
+	err       error
+	contErr   error
 }
 
 func (f *fakeBuilder) Start(_ context.Context, value app.App) error {
@@ -54,16 +57,35 @@ func (f *fakeBuilder) Start(_ context.Context, value app.App) error {
 	return f.err
 }
 
+func (f *fakeBuilder) Continue(_ context.Context, value app.App) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.continued = append(f.continued, value)
+	return f.contErr
+}
+
 func (f *fakeBuilder) setError(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.err = err
 }
 
+func (f *fakeBuilder) setContinueError(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.contErr = err
+}
+
 func (f *fakeBuilder) requests() []app.App {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]app.App(nil), f.started...)
+}
+
+func (f *fakeBuilder) continueRequests() []app.App {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]app.App(nil), f.continued...)
 }
 
 type fakeRender struct {
@@ -379,23 +401,29 @@ func TestCreateApp(t *testing.T) {
 	}
 
 	again, err := env.svc.CreateApp(ctx, owner, "另一个需求", []string{"张之阳"})
-	if err != nil || again.AppID != result.AppID {
-		t.Fatalf("idempotent create = %+v, %v", again, err)
+	if err != nil || again.AppID == "" || again.AppID == result.AppID {
+		t.Fatalf("concurrent create = %+v, %v", again, err)
 	}
-	if len(env.builder.requests()) != 1 {
-		t.Fatal("duplicate build started for the same owner")
+	if len(env.builder.requests()) != 2 {
+		t.Fatalf("expected two builds, got %d", len(env.builder.requests()))
 	}
-	entry, ok := env.registry.Get(result.AppID)
+	first, ok := env.registry.Get(result.AppID)
 	if !ok {
-		t.Fatal("app was not registered")
+		t.Fatal("first app was not registered")
 	}
-	snapshot := entry.Snapshot()
-	if snapshot.Prompt != "做一个小游戏" || len(snapshot.PlayerNames) != 2 {
-		t.Fatalf("duplicate create overwrote build input: %+v", snapshot)
+	if snap := first.Snapshot(); snap.Prompt != "做一个小游戏" || len(snap.PlayerNames) != 2 {
+		t.Fatalf("first build input changed: %+v", snap)
+	}
+	second, ok := env.registry.Get(again.AppID)
+	if !ok {
+		t.Fatal("second app was not registered")
+	}
+	if snap := second.Snapshot(); snap.Prompt != "另一个需求" || len(snap.PlayerNames) != 1 || snap.PlayerNames[0] != "张之阳" {
+		t.Fatalf("second build input = %+v", snap)
 	}
 
 	other, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "other-device", SessionID: "other"}, "其他", nil)
-	if err != nil || other.AppID == result.AppID {
+	if err != nil || other.AppID == result.AppID || other.AppID == again.AppID {
 		t.Fatalf("other owner = %+v, %v", other, err)
 	}
 
@@ -403,9 +431,90 @@ func TestCreateApp(t *testing.T) {
 	if _, err := env.svc.CreateApp(ctx, app.Identity{DeviceID: "third-device", SessionID: "third"}, "失败", nil); toolCode(t, err) != "BUILD_START_FAILED" {
 		t.Fatal("builder failure should be reported")
 	}
-	if len(env.registry.List()) != 2 {
+	if len(env.registry.List()) != 3 {
 		t.Fatalf("failed app was not removed: %+v", env.registry.List())
 	}
+}
+
+func TestUpdateApp(t *testing.T) {
+	env := newTestEnv(t, nil)
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	ctx := context.Background()
+
+	if _, err := env.svc.UpdateApp(ctx, owner, "missing", "改主题"); toolCode(t, err) != "APP_NOT_FOUND" {
+		t.Fatalf("missing app error = %v", err)
+	}
+	if _, err := env.svc.UpdateApp(ctx, owner, "app_1", "  "); toolCode(t, err) != "INVALID_ARGUMENT" {
+		t.Fatal("empty prompt should be rejected")
+	}
+
+	env.registry.Add(app.App{
+		ID: "app_idle", Owner: owner, State: app.StateIdle, SessionID: "ses_1", Prompt: "原需求",
+		Artifact: app.Artifact{SHA256: "abc", Path: "artifacts/app_idle.tar.gz"},
+	})
+	result, err := env.svc.UpdateApp(ctx, owner, "app_idle", "题目改成动物主题")
+	if err != nil || result.AppID != "app_idle" || result.State != app.StateBuilding {
+		t.Fatalf("update idle = %+v, %v", result, err)
+	}
+	continued := env.builder.continueRequests()
+	if len(continued) != 1 || continued[0].Prompt != "题目改成动物主题" || continued[0].SessionID != "ses_1" {
+		t.Fatalf("continue requests = %+v", continued)
+	}
+	if snap := mustGet(t, env, "app_idle"); snap.State != app.StateBuilding || snap.Artifact.SHA256 != "abc" {
+		t.Fatalf("idle update snapshot = %+v", snap)
+	}
+
+	env.registry.Add(app.App{ID: "app_building", Owner: owner, State: app.StateBuilding, SessionID: "ses_b"})
+	if _, err := env.svc.UpdateApp(ctx, owner, "app_building", "再改"); toolCode(t, err) != "APP_BUILDING" {
+		t.Fatal("building app should reject update")
+	}
+
+	env.registry.Add(app.App{ID: "app_running", Owner: owner, State: app.StateRunning, SessionID: "ses_r", ScreenID: "tv_1"})
+	if _, err := env.svc.UpdateApp(ctx, owner, "app_running", "再改"); toolCode(t, err) != "APP_RUNNING" {
+		t.Fatal("running app should reject update")
+	}
+
+	env.registry.Add(app.App{ID: "app_err_no_art", Owner: owner, State: app.StateError, SessionID: "ses_e",
+		Error: &app.Error{Stage: app.StageBuilding, Code: "BUILD_FAILED"}})
+	if _, err := env.svc.UpdateApp(ctx, owner, "app_err_no_art", "再改"); toolCode(t, err) != "APP_IN_ERROR" {
+		t.Fatal("build error without artifact should reject update")
+	}
+
+	env.registry.Add(app.App{
+		ID: "app_err_start", Owner: owner, State: app.StateError, SessionID: "ses_ok",
+		Artifact: app.Artifact{SHA256: "def", DownloadURL: "http://example/a.tar.gz"},
+		Error:    &app.Error{Stage: app.StageStarting, Code: "START_FAILED"},
+	})
+	if _, err := env.svc.UpdateApp(ctx, owner, "app_err_start", "修一下"); err != nil {
+		t.Fatalf("start-failed app with artifact should allow update: %v", err)
+	}
+
+	env.registry.Add(app.App{ID: "app_no_session", Owner: owner, State: app.StateIdle,
+		Artifact: app.Artifact{SHA256: "ghi", Path: "x.tar.gz"}})
+	if _, err := env.svc.UpdateApp(ctx, owner, "app_no_session", "再改"); toolCode(t, err) != "SESSION_UNAVAILABLE" {
+		t.Fatal("missing session should be unavailable")
+	}
+
+	env.builder.setContinueError(build.ErrSessionBusy)
+	env.registry.Add(app.App{
+		ID: "app_busy", Owner: owner, State: app.StateIdle, SessionID: "ses_busy", Prompt: "旧",
+		Artifact: app.Artifact{SHA256: "zzz", Path: "z.tar.gz"},
+	})
+	if _, err := env.svc.UpdateApp(ctx, owner, "app_busy", "新需求"); toolCode(t, err) != "UPDATE_START_FAILED" {
+		t.Fatalf("busy session error = %v", err)
+	}
+	if snap := mustGet(t, env, "app_busy"); snap.State != app.StateIdle || snap.Prompt != "旧" {
+		t.Fatalf("failed update should roll back: %+v", snap)
+	}
+}
+
+func mustGet(t *testing.T, env *testEnv, id string) app.App {
+	t.Helper()
+	entry, ok := env.registry.Get(id)
+	if !ok {
+		t.Fatalf("missing app %s", id)
+	}
+	return entry.Snapshot()
 }
 
 func TestGetAppStatusStates(t *testing.T) {
