@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <a href="https://www.bilibili.com/video/BV1AznU6YELm/"><img src="https://img.shields.io/badge/%E8%A7%82%E7%9C%8B_Demo_%E8%A7%86%E9%A2%91-Bilibili-FB7299?style=for-the-badge&amp;logo=bilibili&amp;logoColor=white" alt="观看 Demo 视频（Bilibili）" height="36"></a>
+</p>
+
+<p align="center">
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white" alt="Go"></a>
   <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=casting&amp;label=casting" alt="casting coverage"></a>
   <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=gateway&amp;label=gateway" alt="gateway coverage"></a>
