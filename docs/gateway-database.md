@@ -1,0 +1,378 @@
+# 控制面数据库设计
+
+> 状态：按当前实现整理（以代码为准）
+> 日期：2026-10-25
+> 代码位置：`internal/gateway/store/db.go`、`internal/gateway/app/app.go`、`internal/gateway/artifact/store.go`、`internal/gateway/service/`、`cmd/gateway/main.go`
+
+## 1. 定位与边界
+
+控制面用**单文件 SQLite** 保存应用目录和产物元数据，使进程重启后应用记录、构建进度和产物下载令牌仍然可用。它不是业务数据库，也不承担多副本协调。
+
+| 数据 | 存放位置 | 是否在 SQLite |
+| --- | --- | --- |
+| 应用记录、构建进度、运行绑定 | `apps` 表（整条快照在 `data` JSON 列） | 是 |
+| 产物元数据、下载令牌 | `artifacts` 表 | 是 |
+| 产物压缩包 | `{artifacts.dir}/{app_id}.tar.gz` | 否，文件系统 |
+| 屏幕映射 | `screens` 指向的 JSON 文件 | 否 |
+| 投屏会话 | Casting 服务内存 | 否 |
+| Render 实例 | Render 服务内存 | 否 |
+| MCP 调用日志 | 进程标准日志 | 否 |
+
+因此控制面重启后能恢复的是"应用属于谁、处于什么阶段、产物在哪、下一步该做什么"，而不是下游的真实运行状态。下游状态通过 `session_id`、`instance_id`、`projection_session_id` 等已持久化标识，由 `reconcile` 只读核对后重建（见 `internal/gateway/service/reconcile.go`）。
+
+设计约束：
+
+- **单进程、单写者**。一个数据库文件只应被一个 Gateway 进程打开。
+- **嵌入式、无外部依赖**。使用 `modernc.org/sqlite`（纯 Go，无需 cgo）。
+- **只存控制面自己的事实**。应用源码、运行日志、媒体流都不入库。
+
+## 2. 文件与配置
+
+| 配置项 | YAML | 环境变量 | 命令行 | 默认值 |
+| --- | --- | --- | --- | --- |
+| 数据库文件 | `database.path` | `GATEWAY_DB` | `-db` | `open-anywhere.gateway.db` |
+| 产物目录 | `artifacts.dir` | `ARTIFACTS_DIR` | `-artifacts-dir` | `artifacts` |
+| 产物下载基地址 | `artifacts.base_url` | `ARTIFACT_BASE_URL` | `-artifact-base-url` | 示例为 `http://192.168.31.203:8090` |
+
+相对路径相对于 Gateway 进程的工作目录。打开数据库时会自动创建父目录（`store.Open`，`internal/gateway/store/db.go:57-63`）。
+
+WAL 模式会在数据库文件旁生成 `-wal` 和 `-shm` 文件；备份必须使用 SQLite 的在线备份或先正常停进程，不能只拷贝主文件。
+
+`-db :memory:` 是特殊值：使用带进程序列的共享内存库，仅适合测试，进程退出即丢失（`db.go:66-68`）。
+
+## 3. 逻辑模型
+
+```mermaid
+erDiagram
+    APPS {
+        TEXT id PK
+        TEXT owner_device_id
+        TEXT owner_session_id
+        TEXT state
+        INTEGER revision
+        TEXT data
+        TEXT updated_at
+    }
+    ARTIFACTS {
+        TEXT app_id PK
+        TEXT path
+        INTEGER size
+        TEXT sha256
+        TEXT token
+        TEXT download_url
+        TEXT stored_at
+    }
+    APPS ||--o| ARTIFACTS : "app_id 逻辑关联，无外键"
+```
+
+一个应用最多对应一个产物包；产物表以 `app_id` 为主键，重复构建会覆盖同一行和同一个文件。两表之间**没有外键约束**，删除顺序由 Go 代码保证。
+
+## 4. 表结构
+
+### 4.1 `apps`
+
+```sql
+CREATE TABLE IF NOT EXISTS apps (
+    id TEXT PRIMARY KEY,
+    owner_device_id TEXT NOT NULL,
+    owner_session_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS apps_owner_state
+    ON apps(owner_device_id, owner_session_id, state);
+```
+
+| 列 | 含义 | 说明 |
+| --- | --- | --- |
+| `id` | 应用 ID | `app_` + `crypto/rand.Text()`，同时是产物文件名的一部分 |
+| `owner_device_id` | 灵矽设备 ID | 来自 `X-Linx-Device-Id` |
+| `owner_session_id` | 创建应用时的灵矽会话 ID | **仅保留诊断信息**。归属判断已改为"设备 + 智能体"，通知也按设备 + 智能体路由（`app.Identity.SameOwner`、`mcp.Server.Notify`） |
+| `state` | `building` / `idle` / `running` / `error` | `data.State` 的冗余列，便于人工排查 |
+| `revision` | 快照修订号 | 乐观并发控制：写入时只允许 `excluded.revision >= apps.revision` |
+| `data` | 完整 `app.App` JSON 快照 | 恢复时只读取这一列，其余列不参与对象重建 |
+| `updated_at` | 最近一次成功写入的墙钟时间 | UTC、`time.RFC3339Nano`；不是应用业务时间 |
+
+索引 `apps_owner_state` 目前**没有被任何查询使用**：运行期的归属过滤在内存注册表完成，持久层只有按主键写入/删除和全表读取。索引列也没有包含 `agent_id`。
+
+### 4.2 `artifacts`
+
+```sql
+CREATE TABLE IF NOT EXISTS artifacts (
+    app_id TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    token TEXT NOT NULL,
+    download_url TEXT NOT NULL,
+    stored_at TEXT NOT NULL
+);
+```
+
+| 列 | 含义 | 说明 |
+| --- | --- | --- |
+| `app_id` | 所属应用 | 与 `apps.id` 逻辑关联，无外键 |
+| `path` | 压缩包路径 | `filepath.Join(artifacts.dir, app_id+".tar.gz")`；配置为相对路径时该列也是相对路径 |
+| `size` | 压缩字节数 | 保存时重新计算并与构建结果比对 |
+| `sha256` | 压缩包摘要 | 十六进制；保存时重新计算 |
+| `token` | 下载令牌 | `crypto/rand.Text()`，随机、无过期时间 |
+| `download_url` | 完整下载地址 | `{artifacts.base_url}/artifacts/{app_id}/artifact.tar.gz?token={token}` |
+| `stored_at` | 保存时间 | UTC、`time.RFC3339Nano` |
+
+产物元数据没有修订号保护，`SaveArtifact` 直接按 `app_id` 覆盖。当前只有构建完成和启动恢复会写入，调用方是串行的。
+
+## 5. `data` 快照格式
+
+`apps.data` 是 `app.App` 的直接 JSON 序列化。顶层字段**没有 JSON tag**，因此列名就是 Go 字段名；只有嵌套的 `Identity`、`Error`、`StreamSource` 和 `openapi.Spec` 有自定义格式。
+
+```json
+{
+  "ID": "app_abc123",
+  "Revision": 7,
+  "Owner": {
+    "device_id": "dev_1",
+    "agent_id": "agent_1",
+    "session_id": "sess_1"
+  },
+  "Prompt": "做一个五题的电影知识竞赛",
+  "PlayerNames": ["韩鲁鹏", "邓军辉"],
+  "Name": "quiz",
+  "State": "running",
+  "Error": null,
+  "LastAgentMessage": "已完成",
+  "LastProgress": "正在打包",
+  "SessionID": "ses_1",
+  "EventCursor": "evt_42",
+  "BuildStartedAt": "2026-10-25T10:00:00Z",
+  "BuildFinishedAt": "2026-10-25T10:03:00Z",
+  "BuildDuration": 180000000000,
+  "LastStatusMessage": "",
+  "Artifact": {
+    "Path": "artifacts/app_abc123.tar.gz",
+    "SHA256": "abc",
+    "Size": 1024,
+    "DownloadURL": "http://gw/artifacts/app_abc123/artifact.tar.gz?token=tok",
+    "StoredAt": "2026-10-25T10:00:00Z"
+  },
+  "OpenAPI": {
+    "operations": [
+      {"operationId": "rollDice", "method": "POST", "path": "/api/roll"}
+    ],
+    "document": {"openapi": "3.1.0", "paths": {"...": "..."}}
+  },
+  "InstanceID": "inst_1",
+  "Port": 39001,
+  "AppBaseURL": "http://127.0.0.1:39001",
+  "Source": {
+    "type": "stream",
+    "url": "http://gw/live.ts",
+    "format": "mpegts",
+    "video_codec": "h264",
+    "audio_codec": "aac"
+  },
+  "ScreenID": "tv_1",
+  "TargetID": "tv_1",
+  "EndpointID": "dlna-renderer",
+  "ProjectionSessionID": "proj_1",
+  "PendingRuntime": false,
+  "PendingProjection": false,
+  "CleanupPending": false,
+  "StartedAt": "2026-10-25T10:04:00Z",
+  "StoppedAt": "0001-01-01T00:00:00Z"
+}
+```
+
+字段按用途分组：
+
+| 分组 | 字段 | 持久化意义 |
+| --- | --- | --- |
+| 归属与输入 | `ID`、`Owner`、`Prompt`、`PlayerNames` | 历史和重启后继续构建 |
+| 构建 | `State`、`SessionID`、`EventCursor`、`BuildStartedAt`、`BuildFinishedAt`、`BuildDuration`、`LastAgentMessage`、`LastProgress`、`LastStatusMessage` | 重启后继续监听 `building` 会话 |
+| 构建产物 | `Name`、`OpenAPI`、`Artifact` | 无需重新下载即可提供 `get-app-operations` / `get-openapi`；下载地址在重启时重写 |
+| 运行绑定 | `ScreenID`、`TargetID`、`EndpointID`、`Source`、`InstanceID`、`Port`、`AppBaseURL`、`ProjectionSessionID` | 重启后核对并清理遗留资源 |
+| 运行时间 | `StartedAt`、`StoppedAt` | 状态查询 |
+| 未完成意图 | `PendingRuntime`、`PendingProjection`、`CleanupPending`、`Error` | 写前约束：先记录意图，再调用下游；崩溃后由 `reconcile` 核对 |
+
+注意事项：
+
+- `BuildDuration` 是 Go `time.Duration` 的纳秒整数（JSON number），不是秒数。
+- 零值时间序列化为 `"0001-01-01T00:00:00Z"`。
+- `Artifact.DownloadURL` 内嵌下载令牌，因此**令牌在数据库里出现两次**（`artifacts.token` 与 `data` 内的 URL）。
+- `EventCursor` 每收到一个带 `id` 的事件就写入，但重启后 `builder.Resume` 只用内存 `seen` 集合从事件流头部重放去重，**没有读取 `EventCursor`**。这与 `docs/gateway-agentapi-interface.md` 3.7 的描述存在偏差。
+- 快照没有内部格式版本号。旧版本程序读取新版本写入的字段时会静默丢弃未知字段，下一次写入即丢失；**不支持直接回滚到旧二进制**。
+- 顶层字段名是 Go 标识符，重命名 `app.App` 的导出字段等同于破坏持久化格式，必须同时提供迁移。
+
+## 6. 连接与并发
+
+`store.Open` 使用如下 DSN（`db.go:65`）：
+
+```text
+file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)
+```
+
+| 设置 | 作用 |
+| --- | --- |
+| `busy_timeout(5000)` | 锁等待最多 5 秒 |
+| `journal_mode(WAL)` | 允许外部只读工具与进程并发读，写入仍是单写者 |
+| `foreign_keys(1)` | 开启外键检查；当前 schema 没有外键，因此暂无实际效果 |
+| `SetMaxOpenConns(1)` | 进程内所有 SQL 串行化，避免 `database/sql` 多连接竞争；也意味着一个慢查询会阻塞健康检查 |
+
+打开流程：
+
+1. 创建数据库父目录（`db.go:57-63`）。
+2. 以 10 秒超时 `Ping`。
+3. 读取 `PRAGMA user_version`；若大于程序支持的 `schemaVersion`（当前为 1）则拒绝启动。
+4. 逐条执行 `CREATE TABLE/INDEX IF NOT EXISTS`，再把 `user_version` 写为 1。
+
+写入并发控制分两层：
+
+- **注册表层**：`Registry.persistMu` 串行化所有持久化调用；`Record.Update/Do` 持有记录锁并递增 `Revision`。
+- **SQL 层**：`SaveApp` 的 `ON CONFLICT ... WHERE excluded.revision >= apps.revision` 保证较旧的快照不能覆盖较新的快照。较早开始但较晚到达的写入会被忽略。
+
+`Record.Update` 与 `Record.Do` 的持久化语义不同：
+
+| 方法 | 顺序 | 失败处理 | 使用场景 |
+| --- | --- | --- | --- |
+| `Update` | 先改内存并 `Revision++`，再持久化 | 只记日志，内存继续生效 | 构建进度、部分失败标记等可自愈状态 |
+| `Do` | 先复制快照、修改、持久化成功后才提交内存 | 返回错误，内存不变 | 创建、启动、停止、清理等持久化边界 |
+
+`Registry.Add` 先放入内存再持久化，且忽略 `persist` 错误；`Service.CreateApp` 紧接着用一次空的 `Do` 强制落盘，落盘失败会删除记录并返回 `PERSISTENCE_FAILED`，因此不会带着未持久化的应用去调用 AgentAPI。
+
+所有 CRUD 调用使用不带 `context` 的 `Exec/Query`，没有逐语句超时；最坏阻塞时间由 `busy_timeout` 兜底为约 5 秒。启动阶段的 `Ping`、版本读取和建表使用 10 秒超时上下文。
+
+## 7. 读写路径
+
+### 7.1 启动恢复
+
+`cmd/gateway/main.go:51-124` 的顺序：
+
+1. `store.Open`：打开数据库并确保 schema。
+2. `registry.SetPersister(database)`：后续每次状态变更自动落盘。
+3. `artifact.NewStore`：读取全部 `artifacts` 行；对每个 `app_id` 重新按当前 `artifacts.dir` 和 `artifacts.base_url` 计算 `path` / `download_url` 并写回。令牌保持不变。
+4. `database.ListApps`：读取全部 `data` 并反序列化为 `app.App`。
+5. 对每个同时存在产物行的应用，用步骤 3 计算的路径和地址覆盖 `App.Artifact`，`Revision++` 后 `SaveApp`。
+6. `registry.Load`：只加载，不写回；`Revision` 为 0 时补为 1。
+7. `RecoverRuntime`：把 `PendingRuntime` / `PendingProjection`，以及 `idle` 但仍有实例或投屏绑定的应用标为 `error` + `CleanupPending` + `RECOVERY_PENDING`，等待 `reconcile` 只读核对。
+8. `PruneHistory`：按全局上限清理历史。
+9. 对 `State == building` 的应用调用 `builder.Resume`；缺少 `SessionID` 的直接置为构建失败。
+10. `RunMonitor` 周期核对运行状态并完成遗留清理。
+
+启动阶段任何一条 `data` 无法解析、`stored_at` 无法解析，都会让整个 `ListApps/ListArtifacts` 返回错误并导致进程启动失败；单行损坏没有隔离。
+
+### 7.2 生命周期写入点
+
+| 场景 | 主要字段 | 持久化方法 |
+| --- | --- | --- |
+| 创建应用 | `ID`、`Owner`、`Prompt`、`PlayerNames`、`State=building`、`BuildStartedAt` | `Add` + 空 `Do` |
+| 创建 AgentAPI 会话 | `SessionID`、`BuildStartedAt` | `Do`（失败则归档会话） |
+| 构建进度 | `EventCursor`、`LastAgentMessage`、`LastProgress`、`LastStatusMessage` | `Update` |
+| 构建成功 | `State=idle`、`Name`、`OpenAPI`、`Artifact`、`BuildFinishedAt`、`BuildDuration` | `Do` |
+| 构建失败 | `State=error`、`BuildFinishedAt`、`Error` | `Update` |
+| 启动：占屏 | `ScreenID`、`TargetID`、`CleanupPending=true` | `Do` |
+| 启动：Render | `Port`、`PendingRuntime=true` → `InstanceID`、`AppBaseURL` | `Do` |
+| 启动：投屏 | `EndpointID`、`Source`、`PendingProjection=true` → `ProjectionSessionID` | `Do` |
+| 启动成功 | `State=running`、下游全部绑定、`StartedAt` | `Do` |
+| 停止 | 先停投屏，再停 Render，最后清空绑定、`State=idle`、`StoppedAt` | `Do` |
+| 清理遗留资源 | 逐步清空 `ProjectionSessionID` / `InstanceID` / 标记，最后清 `CleanupPending` | `Do` |
+| 历史裁剪 | 删除 `apps` 行、产物文件、`artifacts` 行 | `DeleteApp` + `Remove` |
+
+`PendingRuntime` / `PendingProjection` / `CleanupPending` 是**写前意图标记**：先落盘"我要调用下游"，再发起网络请求。这样进程在任意位置崩溃，重启后都能从已持久化的标识判断是否存在遗留资源，而不会重复创建。
+
+## 8. 产物生命周期
+
+1. 构建完成，从 AgentAPI 下载并校验压缩包（上限 100 MiB）。
+2. `artifact.Store.SaveFile` 复制到 `{app_id}.tar.gz.tmp`，重新计算大小和 SHA-256，与构建结果不一致则删除临时文件。
+3. `os.Rename` 原子替换为 `{app_id}.tar.gz`。
+4. 生成新令牌和下载地址，`SaveArtifact` 写元数据；**每次保存都会换令牌，旧下载地址立即失效**。
+5. 应用快照通过 `Do` 记录 `Artifact.Path/SHA256/Size/DownloadURL/StoredAt`。
+6. 下载接口 `GET /artifacts/{app_id}/{name}?token=...` 只校验路径中的 `app_id`、固定文件名 `artifact.tar.gz` 和常量时间比较的令牌，不要求 MCP 鉴权。
+7. 删除时先删 `apps` 行（`Registry.Remove`），再删文件和 `artifacts` 行（`Store.Remove`）。
+
+启动时只扫描数据库中的产物行，不扫描产物目录：
+
+- 行存在但文件丢失：`Store.Has` 返回 false，`start-app` 返回 `ARTIFACT_MISSING`。
+- 文件存在但行丢失：文件不可见、不可下载，也不会被清理。
+- 删除应用后、删除产物前崩溃：留下无主产物行和文件，后续启动不会回收。
+- 构建产物已写入、应用快照落盘失败：留下产物行；应用仍为 `building`，恢复后重新构建会覆盖同一行。
+
+## 9. 历史保留
+
+`HistoryLimit = 10`，由 `Service.PruneHistory` 执行：
+
+- 只保留最新的 10 个应用，**按全局排序，不按设备或智能体分组**。
+- 只在创建应用后和进程启动时触发。
+- `building`、`running`，以及仍持有 Render 实例、投屏会话、清理标记的应用永不删除。
+- 删除一个应用会同时删除其产物文件和元数据。
+- 启动或运行时的任何一次裁剪都不做"删除后校验"，因此不是跨表事务。
+
+## 10. Schema 版本与迁移
+
+- 当前 `schemaVersion = 1`，保存在 SQLite `PRAGMA user_version`。
+- 打开时只拒绝**比程序更新**的数据库；更旧的版本（0）直接建表并写成 1。
+- 建表语句全部是 `CREATE ... IF NOT EXISTS`，`schema` 列表没有按版本分组的迁移步骤。
+- 修改已有表结构（例如新增 `owner_agent_id`）时，`IF NOT EXISTS` 不会生效，必须：
+  1. 增加有序迁移步骤，按 `user_version` 逐级执行，并在事务内完成；
+  2. 对已有数据库执行 `ALTER TABLE ... ADD COLUMN`（或重建表）；
+  3. 递增 `schemaVersion`；
+  4. 保留"新库拒绝启动"的保护，避免旧程序写入不认识的 schema。
+
+## 11. 容量与性能
+
+- 应用记录上限约 10 条（加上无法裁剪的 `building` / `running` 记录）；单条 `data` 大小主要取决于 OpenAPI 文档，通常是几十 KB 到数百 KB。
+- 产物单包上限 100 MiB，按 `app_id` 覆盖，不保留历史版本。
+- 每次构建事件（`agent.message`、`agent.thinking`、`session.error`）都会把**整条应用快照**重新序列化并写入：高频思考事件会带来明显的写放大和 WAL 增长。
+- `ListApps` / `ListArtifacts` 是启动期全表扫描，当前数据量下没有问题；`ORDER BY updated_at` 使用文本排序，而 `RFC3339Nano` 的小数位长度可变，同一秒内"无小数"与"有小数"的字符串顺序不一定等于时间顺序。该顺序只影响启动加载次序，不影响业务。
+- 单连接串行化意味着一次锁等待会阻塞后续所有 SQL，也会拖慢 MCP 调用中的持久化步骤。`/healthz` 的 `Ping` 自带 2 秒超时，锁等待超过 2 秒时会直接返回 503。
+
+## 12. 安全
+
+- 数据库保存用户提示词、玩家姓名、设备 ID、智能体 ID、会话 ID、运行端口和产物下载令牌，属于需要按敏感数据对待的本地文件。
+- 数据库文件权限由进程 umask 决定，代码没有显式收紧；产物目录以 `0755` 创建，压缩包以 `0644` 写入。多用户主机上建议把数据库与产物目录放到仅服务账户可读的位置。
+- 下载令牌无过期时间；只有重新构建才会换令牌，重启不会更换。产物下载接口不经过 MCP Bearer 鉴权，令牌本身就是能力凭证。
+- 数据库没有加密，也没有字段级脱敏；日志里会打印应用 ID、会话短 ID 和工具调用摘要。
+
+## 13. 当前实现的缺口与建议
+
+以下按影响排序，均为**现状**，不是已实现行为：
+
+1. **归属列与归属规则不一致**：归属规则是"设备 + 智能体"，但表里只有 `owner_device_id` 和 `owner_session_id`，没有 `owner_agent_id`；索引也用了会话而不是智能体，且该索引无人使用。建议 v2 增加 `owner_agent_id`（从 `data` 回填），把索引改为 `(owner_device_id, owner_agent_id, state)`，或直接删除无用索引。
+2. **没有外键与孤儿回收**：`artifacts.app_id` 未约束到 `apps.id`。建议增加 `REFERENCES apps(id) ON DELETE CASCADE`（文件删除仍需 Go 代码），并在启动时清理"有产物行但没有应用行"的孤儿记录和文件。
+3. **单行损坏会阻塞启动**：一条坏 JSON 或坏时间戳会让 `ListApps` / `ListArtifacts` 整体失败。建议逐行容错：记录日志、隔离坏行，并让其余应用继续恢复。
+4. **`EventCursor` 只写不读**：与接口文档 3.7 的"按游标跳过已处理事件"不一致。要么在恢复时真正使用游标/事件 ID 集合，要么从 schema 与文档中移除该字段，避免误以为去重是跨重启的。
+5. **整快照高频写入**：构建过程中每个 thinking 事件都重写完整快照。建议把高频进度拆成独立小表或独立列，或按时间/事件数节流，降低 WAL 和磁盘压力。
+6. **跨表写入不是事务**：产物与应用快照、应用删除与产物删除分属不同语句。建议明确可接受的中间状态，并配合启动时的孤儿扫描；否则崩溃窗口会留下不一致。
+7. **历史上限是全局的**：一台设备产生 10 个应用后，其他设备的旧应用也可能被裁掉。如果产品语义是"每个设备 + 智能体保留 10 个"，需要把裁剪改成按所有者分组，并相应索引归属列。
+8. **缺少逐语句超时**：建议 CRUD 使用带超时的 `ExecContext/QueryContext`，避免锁等待把 `/healthz` 和 MCP 响应一起拖住。
+9. **不支持多副本**：`Revision` 只能防止同一数据库内的旧快照覆盖新快照，无法协调两个 Gateway 同时管理同一批应用。部署文档应明确"一个数据库一个进程"。
+
+## 14. 排查命令
+
+```sh
+# schema 与版本
+sqlite3 open-anywhere.gateway.db ".schema"
+sqlite3 open-anywhere.gateway.db "PRAGMA user_version;"
+
+# 应用概览
+sqlite3 -header -column open-anywhere.gateway.db \
+  "SELECT id, owner_device_id, owner_session_id, state, revision, updated_at FROM apps ORDER BY updated_at DESC;"
+
+# 某个应用的关键字段
+sqlite3 open-anywhere.gateway.db \
+  "SELECT json_extract(data,'$.Owner.agent_id'), json_extract(data,'$.State'),
+          json_extract(data,'$.Artifact.Path'), json_extract(data,'$.InstanceID'),
+          json_extract(data,'$.ProjectionSessionID')
+     FROM apps WHERE id='app_xxx';"
+
+# 产物元数据
+sqlite3 -header -column open-anywhere.gateway.db \
+  "SELECT app_id, size, sha256, stored_at FROM artifacts ORDER BY stored_at DESC;"
+
+# 无主产物（有产物行、无应用行）
+sqlite3 open-anywhere.gateway.db \
+  "SELECT a.app_id FROM artifacts a LEFT JOIN apps p ON p.id=a.app_id WHERE p.id IS NULL;"
+
+# 在线备份（WAL 模式下不要只拷主文件）
+sqlite3 open-anywhere.gateway.db ".backup 'gateway-backup.db'"
+```
