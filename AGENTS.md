@@ -21,11 +21,30 @@ The product's commercial value is genuinely novel:
 
 Because nearly every household and every business already owns at least one screen, the addressable market is very large and still growing. Agents should treat this positioning as the reason the code exists: favor capabilities that shorten the path from spoken intent to a working experience on a nearby screen.
 
+## What Is Implemented, and Where to Check It
+
+Everything in this table can be verified by reading the named files; none of it requires running the stack.
+
+| Capability | Code | Tests and supporting evidence |
+| --- | --- | --- |
+| Stable MCP surface — 8 tools | `internal/gateway/mcp/tools.go` (8 tool definitions), `server.go` | `tools_edge_test.go`, `server_owner_test.go`, `server_test.go` |
+| Compatibility helper — `list-apps` | `internal/gateway/mcp/compatibility.go` | `compatibility_test.go`; not part of the stable surface |
+| Asynchronous build through AgentAPI | `internal/gateway/build/builder.go` | `builder_test.go`, `builder_extra_test.go`; build duration is recorded (`builder.go:513`); a failed update keeps the previous artifact |
+| Artifact and OpenAPI validation | `internal/gateway/artifact/validate.go`, `internal/gateway/openapi/spec.go` | package tests; Render validates the artifact again before running |
+| Render runtime and stage capture | `cmd/render`, `internal/render` | `e2e/render_test.go` drives real Node, Chromium and FFmpeg |
+| DLNA casting | `cmd/casting`, `internal/casting/service.go`, `internal/casting/dlna` | `service_test.go`, `http_test.go`, `casting_adversarial_test.go` |
+| Voice entry | `cmd/voiceentry` | `docs/voice-entry.md`; the live gateway E2E is opt-in (`e2e/gateway_live_test.go`) |
+| Multi-tenant portal with identity isolation | `internal/gateway/portal/` (`auth.go`, `admin.go`, `http.go`) | Go tests in the package; the React frontend (`portal/src`) has no unit tests |
+| Multi-app sessions | `internal/gateway/service/service.go` | package tests; see the switching limitation below |
+| Recorded happy path | `README.md:15-16` links the 1080p and 4K demo videos | the recording shows the chain running; it is not evidence of demand |
+
 ## Business Plan
 
 [`docs/business-plan.md`](docs/business-plan.md) is the single source of truth for commercial strategy, pricing, packaging, unit economics, three-year targets, and validation status. When another document disagrees with it on those topics, the business plan wins.
 
 [`docs/business-strategy.md`](docs/business-strategy.md) is market background and historical reasoning. Its chapter 6 pricing (new app 2 credits / edit 1 credit, 68/166/288 CNY per month, 20/12/5 run hours) is superseded by chapter 5 of the business plan and must not be cited as current.
+
+Reading the plan: §5.3 is the only price source; §7.1–§7.4 are models whose assumptions are labeled and dated for calibration; §12.1 separates what has been validated from what has not.
 
 Current commercial facts, stated once so agents do not restate a different version:
 
@@ -41,19 +60,19 @@ When a change affects pricing, packaging, target users, or validation metrics, u
 
 ## Commercial Status
 
-The happy path is proven on real hardware: in October 2026, four participants played four generated games in one session on a real screen, including generation, casting, multi-app switching, and voice participation. Three of the four participants were team members. Treat this as a technical happy-path test; independent market validation is the current work, not a past result.
+**Verified on real hardware.** In October 2026, four participants played four generated applications in one session on a real screen. The session covered the full chain — spoken request, generation, cast to the screen, multi-participant play, and switching applications. Participants were three team members and one family member; a recording is linked from the README.
 
-The company is in its validation stage. The next evidence to collect, in order: external households (children and older adults), willingness to pay, merchant repeat use, and measured generation cost and latency. Until those records exist, no document may claim paid demand, retention, or merchant repeat purchase.
+**Not yet verified.** External households (children and older adults), payment, retention, merchant repeat use, and measured generation cost and latency. The company is in its validation stage. The first-week loop in `docs/business-plan.md` §0.4 — 6–9 sessions, 30+ participants, at least 3 real payments with receipts — is the active operating target. The payment ledger in §4.3 is empty. This is a technical happy-path test, not market validation; until ledger entries exist, demand is a hypothesis and the plan labels it as such.
 
 ## Current Implementation Boundary
 
-Shipped and verifiable in this repository: the stable MCP surface (8 tools), asynchronous build through AgentAPI, artifact and OpenAPI validation, the Render runtime with stage capture, DLNA casting, the voice entry, the multi-tenant portal, and multi-app sessions.
+The evidence table above is the shipped surface. The rest of the plan is roadmap; `docs/business-plan.md` §0.7 marks the same boundary.
 
-Multi-app sessions are implemented, but switching apps currently stops the old app and creates a new Casting session. The invariant that switching must not re-establish casting is not yet met; do not describe switching as seamless or zero-downtime.
+Roadmap, not shipped: mobile join and controller, template instantiation and the 3-minute fallback, credits/billing/subscriptions, merchant console, children and elderly modes, AirPlay, run box and end devices, a generation-quality evaluation set, and token/cost telemetry.
 
-Roadmap, not shipped: mobile join and controller, template instantiation and 3-minute fallback, credits/billing/subscriptions, merchant console, children and elderly modes, AirPlay, run box and end devices, a generation-quality evaluation set, and token/cost telemetry.
+Agents reviewing or extending this repository must not treat roadmap items as implemented.
 
-Agents reviewing or extending this repository must not treat roadmap items as implemented. The business plan marks the same boundary in §0.7.
+Multi-app sessions are implemented, but switching apps stops the old app and creates a new Casting session (`internal/gateway/service/service.go`; `docs/architecture.md` records the gap). The invariant that switching must not re-establish casting is not met; do not describe switching as seamless or zero-downtime.
 
 ## Evidence Rules for Commercial Claims
 
