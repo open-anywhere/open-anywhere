@@ -15,13 +15,32 @@ internal/casting/dlna/        SSDP 发现、设备描述解析及 SOAP 控制
 
 ## 启动
 
-```sh
-go run ./cmd/casting -addr :8080 -interface en0
+```bash
+go run ./cmd/casting \
+  -addr 0.0.0.0:8080 \
+  -interface en0
 ```
 
-`-interface` 是本机局域网网卡名称，macOS Wi-Fi 常见为 `en0`，Linux 可能是 `eth0` 或 `wlan0`。省略时使用系统默认路由；启用 VPN 时建议显式指定。启动即扫描，之后默认每 30 秒重新扫描，可通过 `-scan-interval` 修改。每次扫描后还会顺带检查本服务记录的会话，见下文“设备失联与占用释放”。
+`-interface` 是连接电视的局域网网卡：macOS Wi-Fi 通常为 `en0`，Linux 常见为 `eth0` 或 `wlan0`。省略时使用系统默认路由，启用 VPN 时建议显式指定。不确定网卡名称时：
 
-`-unreachable-grace` 控制设备连续不可达多久后释放屏幕占用，默认 30 秒；传负值关闭自动释放。设备最后一次确认状态为 `playing` 时使用两倍宽限期（默认 60 秒）。
+```bash
+# macOS
+networksetup -listallhardwareports
+
+# Linux
+ip -br addr
+```
+
+`-addr` 是 HTTP API 的监听地址。`0.0.0.0:8080` 允许局域网其他设备访问，只在本机测试时可以用 `:8080`。启动后立即执行一次 SSDP 扫描，之后默认每 30 秒重扫，日志中出现下面这行表示 API 已就绪：
+
+```text
+casting API listening on [::]:8080
+```
+
+| 参数 | 作用 |
+| --- | --- |
+| `-scan-interval` | 扫描与后台检查间隔，默认 `30s` |
+| `-unreachable-grace` | 设备连续不可达多久后释放占用，默认 `30s`；负值关闭自动释放 |
 
 设备 ID 来自 UPnP UDN，与 DHCP 地址无关。设备按 SSDP `max-age` 过期后标记 `offline`，再次发现时更新地址并恢复在线。已有会话在每次访问设备前都会重新解析地址，因此电视换 IP 后仍能继续控制。
 
@@ -123,6 +142,13 @@ Session 的 `error.code`：
 - 状态在查询 Session 时刷新，并由每次设备扫描后的后台 sweep 兜底；没有后台推送、数据库或自动重连。
 - 自动释放依赖连续失败判断，是一种保守估计。设备最后一次确认 `playing` 时默认等待 60 秒，因此电视立即断电到占用释放之间会有一段时间。
 - 仅在可信局域网使用，当前没有用户鉴权。
+
+## 常见问题
+
+- **API 能访问但发现不到电视**：检查 `-interface` 是否连接电视所在网络；关闭 VPN；确认路由器允许 SSDP 组播（AP 隔离会阻断）。
+- **电视无法播放**：在电视所在网络中的设备上访问 `source.url`，确认 Render 的 `-public-url` 使用局域网地址，再用 `ffprobe` 检查 H.264/AAC 媒体流。
+- **会话一直是 `starting`**：电视尚未回报 `PLAYING`，检查是否支持 MPEG-TS/H.264/AAC，以及媒体地址是否可达。
+- **占用没有立即释放**：Casting 会等待连续不可达的宽限期；最后一次确认 `playing` 时宽限期翻倍。
 
 ## 测试
 

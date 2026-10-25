@@ -1,6 +1,6 @@
 # 应用管理 MCP
 
-> 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)；多租户 Portal 的角色、注册与服务绑定见 [user-portal.md](user-portal.md)。
+> 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)；多租户 Portal 的角色、注册与服务绑定见 [user-portal.md](portal.md)。
 
 ## 1. 范围
 
@@ -8,7 +8,7 @@
 
 - 灵矽只看见 MCP Tool，不直接接触 AgentAPI、Render 或投屏服务。
 - 应用运行后的能力调用仍走 OpenAPI / HTTP 契约，不在本文展开。
-- 控制面与 Render 的接口见[控制面与 Render 接口设计](gateway-render-interface.md)，应用产物见[应用包设计](app-artifact.md)，系统整体架构与投屏服务的 Target/Endpoint 见[architecture.md](architecture.md)。
+- 控制面与 Render 的接口见[控制面与 Render 接口设计](gateway-render.md)，应用产物见[应用包设计](app-artifact.md)，系统整体架构与投屏服务的 Target/Endpoint 见[architecture.md](../overview.md)。
 
 ### 1.1 角色与调用方向
 

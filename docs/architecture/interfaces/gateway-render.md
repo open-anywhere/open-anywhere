@@ -1,10 +1,10 @@
 # 控制面与 Render 接口设计
 
-> 运行方法与实现边界见 [Render 运行说明](render-runtime.md)。
+> 运行方法与实现边界见 [Render 运行说明](../../operations/render.md)。
 
 Render 接收控制面分配的应用 ID、应用包下载地址和运行端口，下载并启动 Node.js 应用，用 Chromium 持续渲染页面，再将画面编码为可通过 HTTP 拉取的实时媒体流。控制面将该流交给独立的 Casting 服务播放。
 
-应用包结构、`launch.json` 和构建要求见[应用包设计](app-artifact.md)；投屏控制接口见 [Casting 服务](casting.md)。本文定义 Render 的职责、接口及运行生命周期。
+应用包结构、`launch.json` 和构建要求见[应用包设计](app-artifact.md)；投屏控制接口见 [Casting 服务](../../operations/casting.md)。本文定义 Render 的职责、接口及运行生命周期。
 
 ## 1. 职责与边界
 
@@ -358,4 +358,4 @@ Chromium 负责运行页面，捕获编码组件负责把画面转换为 MPEG-TS
 9. 查询空闲后被其他程序抢先绑定，启动仍返回端口冲突，控制面可另选端口重试。
 10. 启动、状态查询、停止及应用端口占用结果携带同一个 `app_id`；同一应用在相同或不同端口、包地址及 Render 节点上的并发启动，全局最多接受一个。旧实例停止并清理后才允许再次启动，并使用新 `instance_id`。
 
-OpenAPI 完整校验、跨节点单实例协调和电视播放等边界见 [Render 运行说明](render-runtime.md)。
+OpenAPI 完整校验、跨节点单实例协调和电视播放等边界见 [Render 运行说明](../../operations/render.md)。
