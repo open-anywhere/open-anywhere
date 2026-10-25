@@ -40,11 +40,21 @@ Gartner 在 2025 年 3 月预计，全球生成式 AI 支出将达到 **6440 亿
 - **已付费用户同样价格敏感**（56% 买不起全部想要的，54% 认为定价不合理）。这是做 68 元入口档和 1000 元买断盒子的直接依据。
 - **一次性买断比长期订阅更容易被接受。** 设备支出占据总盘子的八成，也印证了这一点。
 
-### 1.4 陪伴机器人小而高毛利，增长确定
+### 1.4 AI 玩具正在起量，但硬件本身在快速降价
 
-QYResearch 口径：2025 年全球 AI 情感陪伴机器人硬件市场约 **2.56 亿美元**，2024 年出货约 45 万台、均价约 450 美元、毛利率 30–45%，2025–2031 年复合增速约 25.8%。
+中国口径（工信部等）：AI 玩具市场 2024 年约 **246 亿元**，2025 年约 **290 亿元**（同比 +17.9%），2026 年预计 342 亿元，2030 年有望突破千亿元。
 
-这不是红海。更重要的是：450 美元的行业均价里，很大一部分花在“自带屏幕和算力”上；我们的玩具不需要自带屏幕，屏幕来自现场电视，硬件成本可以显著更低。同样的功能，我们有机会用更低的价格进入。
+线上零售（魔镜洞察）：2025 年销售额约 **7.4 亿元、同比 +427.4%**，销量约 160 万件、同比 +864.2%，渗透率从 0.2% 升到 4.3%。
+
+全球口径差异较大：QYResearch 的“Smart AI Toys” 2025 年约 136.6 亿美元；恒州诚思的“AI 互动玩具”约 198.8 亿元、3436 万台、均价约 80 美元、毛利率约 42%。
+
+最值得注意的一条是价格：**线上均价从 2025 年初的 1000 元以上，降到约 340 元。**
+
+这意味着：
+
+- 市场在快速起量，AI 玩具已经不是概念，是正在发生的消费。
+- 硬件正在迅速商品化。单纯卖硬件，价格会被持续压低，**利润必须来自硬件之外的应用能力**——这正是百变积分与运行服务的位置。
+- 反过来说，我们本来就不打算靠硬件赚大钱，因此可以把玩具定价压到有竞争力的位置，用它换装机量和付费转化。
 
 ### 1.5 数据来源
 
@@ -57,7 +67,11 @@ QYResearch 口径：2025 年全球 AI 情感陪伴机器人硬件市场约 **2.5
 - [CNET/YouGov：消费者不愿为 AI 额外付费](https://www.emarketer.com/content/consumers-unwilling-pay-ai-features-1)
 - [Bango：AI 订阅者调查](https://bango.com/its-not-a-bubble-over-three-quarters-say-their-ai-subscriptions-are-now-essential-to-everyday-life/)
 - [中国职场人 AI 付费意愿](https://www.c114.net.cn/industry/33613.html)
-- [QYResearch：全球 AI 情感陪伴机器人市场](https://www.qyresearch.com/reports/5489893/ai-emotional-companion-robot)
+- [数读 2025：AI 玩具市场规模与融资](https://m.36kr.com/p/3638459100089733)
+- [魔镜洞察：2025 年中国 AI 玩具线上市场增长](https://moojing-global.com/news-research/china-ai-toys-market-growth-2025)
+- [QYResearch：全球 Smart AI Toys 市场](https://www.qyresearch.com/reports/4003846/smart-ai-toys)
+- [恒州诚思：全球 AI 互动玩具行业调研](https://www.yhresearch.cn/reports/3105604/ai-interactive-toys)
+- [CBNData：AI 玩具狂飙，风口还是裸泳？](https://m.cbndata.com/information/295541)
 
 ## 2. 摘要
 
