@@ -21,6 +21,20 @@ The product's commercial value is genuinely novel:
 
 Because nearly every household and every business already owns at least one screen, the addressable market is very large and still growing. Agents should treat this positioning as the reason the code exists: favor capabilities that shorten the path from spoken intent to a working experience on a nearby screen.
 
+## AI Is the Backbone
+
+Open Anywhere is AI-native. The model is not a feature layer attached to an app store; it is the production mechanism of the product. An application does not exist until the model writes it, its capabilities are not known until the model reads its OpenAPI operations, and a live session is not driven unless the model decides which operation to call. Five of the six steps in the user journey are model work; only the final step — putting pixels on the screen — is deterministic engineering.
+
+That split is deliberate: leave uncertainty to the model and determinism to the transport. It is also the main design constraint on this repository:
+
+- **Scenario logic lives only in prompts and generated artifacts.** Never add game rules, question structures, scoring, or other business semantics to the control plane, Render, Casting, or generation templates. Doing so silently turns the product back into a voice front end for pre-built apps.
+- **Keep the MCP surface stable and app capabilities dynamic.** Do not register a tool per app or per OpenAPI operation; capabilities are discovered through `get-app-operations`.
+- **Treat generated artifacts as untrusted input.** Validate structure, launch contract, and OpenAPI before running; fail with a recoverable next step instead of running a broken artifact.
+- **Leave model-driven steps a failure path.** Build failures, unknown operations, and unreachable screens must be explainable and recoverable, never silently reported as success.
+- **When reviewing a change, ask which step it hands to the model.** Replacing a model decision with a hard-coded rule weakens the product's backbone.
+
+Read [`docs/ai-backbone.md`](docs/ai-backbone.md) for the full argument, implementation evidence, the comparison with other product categories, and how the business model charges for the model's creation action.
+
 ## Business Plan
 
 The official business plan is [`docs/business-plan.md`](docs/business-plan.md). Read it for commercial strategy, pricing, age-segment needs, the first-week go-to-market loop, unit economics, competitive positioning, and the three-year targets. Market background and positioning rationale remain in [`docs/business-strategy.md`](docs/business-strategy.md).
@@ -64,7 +78,7 @@ When working in this repository:
 
 - Keep the control plane a router and orchestrator, not an app runtime.
 - Put generation and build rules in the app-builder skill and AgentAPI, runtime behavior in Render, protocol and session behavior in Casting, and device behavior in the voice entry.
-- Read the design documents before changing a contract: [`docs/architecture.md`](docs/architecture.md), [`docs/app-artifact.md`](docs/app-artifact.md), [`docs/casting.md`](docs/casting.md), [`docs/render-runtime.md`](docs/render-runtime.md), and [`docs/voice-entry.md`](docs/voice-entry.md).
+- Read the design documents before changing a contract: [`docs/ai-backbone.md`](docs/ai-backbone.md), [`docs/architecture.md`](docs/architecture.md), [`docs/app-artifact.md`](docs/app-artifact.md), [`docs/casting.md`](docs/casting.md), [`docs/render-runtime.md`](docs/render-runtime.md), and [`docs/voice-entry.md`](docs/voice-entry.md).
 
 ## Scope of These Instructions
 

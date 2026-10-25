@@ -304,4 +304,4 @@ Gartner 在 2025 年 3 月预计，全球生成式 AI 支出将达到 **6440 亿
 - 端侧盒子的硬件配置与两档价格是按当前负载估算的，需要以实际 BOM 和模型实测为准。
 - 不改变当前架构的非目标：当前版本仍是单租户、无计费的演示系统，商业能力的引入需要另立设计并修订架构文档。
 
-相关文档：[产品设计](product.md)、[系统架构](architecture.md)、[Render 运行时](render-runtime.md)。
+相关文档：[产品设计](product.md)、[系统架构](architecture.md)、[Render 运行时](render-runtime.md)、[AI 是整个产品的主干](ai-backbone.md)。
