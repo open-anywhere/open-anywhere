@@ -18,11 +18,14 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/artifact"
 )
 
-const schemaVersion = 1
+// schemaVersion is the newest schema this binary understands. A database that
+// reports a newer version is refused so an older binary cannot corrupt it.
+const schemaVersion = 3
 
 var memorySequence atomic.Uint64
 
-var schema = []string{
+// schemaV1 introduced the application and artifact tables.
+var schemaV1 = []string{
 	`CREATE TABLE IF NOT EXISTS apps (
 		id TEXT PRIMARY KEY,
 		owner_device_id TEXT NOT NULL,
@@ -44,12 +47,135 @@ var schema = []string{
 	)`,
 }
 
+// schemaV2 introduced the portal account, session, device and setting tables.
+var schemaV2 = []string{
+	`CREATE TABLE IF NOT EXISTS portal_users (
+		id TEXT PRIMARY KEY,
+		username TEXT NOT NULL UNIQUE,
+		password_hash TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS portal_sessions (
+		token_hash TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		expires_at TEXT NOT NULL,
+		last_seen_at TEXT NOT NULL,
+		user_agent TEXT NOT NULL DEFAULT '',
+		FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS portal_sessions_user ON portal_sessions(user_id)`,
+	`CREATE TABLE IF NOT EXISTS portal_devices (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		mac TEXT NOT NULL UNIQUE,
+		client_id TEXT NOT NULL,
+		linx_agent_id TEXT NOT NULL DEFAULT '',
+		agent_name TEXT NOT NULL DEFAULT '',
+		state TEXT NOT NULL,
+		step TEXT NOT NULL DEFAULT '',
+		error TEXT NOT NULL DEFAULT '',
+		credential_path TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		registered_at TEXT,
+		FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS portal_devices_user ON portal_devices(user_id, created_at)`,
+	`CREATE TABLE IF NOT EXISTS portal_settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`,
+}
+
+// schemaV3 adds roles and account status, per-user service bindings and
+// platform-level settings. It deliberately does not touch the apps table: app
+// ownership stays the (owner_device_id, owner_session_id) pair plus the agent
+// ID inside the JSON payload.
+var schemaV3 = []string{
+	`ALTER TABLE portal_users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'
+		CHECK (role IN ('admin','user'))`,
+	`ALTER TABLE portal_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'
+		CHECK (status IN ('active','disabled'))`,
+	`ALTER TABLE portal_users ADD COLUMN last_login_at TEXT`,
+	`CREATE INDEX IF NOT EXISTS portal_users_role ON portal_users(role, status)`,
+	`CREATE INDEX IF NOT EXISTS portal_sessions_expires ON portal_sessions(expires_at)`,
+	// One virtual agent per account. A legacy database that somehow holds two
+	// is rejected by prepareSchemaV3 instead of being silently cleaned up.
+	`CREATE UNIQUE INDEX IF NOT EXISTS portal_devices_one_virtual
+		ON portal_devices(user_id) WHERE kind = 'virtual'`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS portal_devices_agent
+		ON portal_devices(linx_agent_id) WHERE linx_agent_id <> ''`,
+	`CREATE INDEX IF NOT EXISTS portal_devices_mac_agent ON portal_devices(mac, linx_agent_id)`,
+	`CREATE TABLE IF NOT EXISTS portal_service_bindings (
+		user_id           TEXT PRIMARY KEY,
+		mode              TEXT NOT NULL DEFAULT 'managed'
+			CHECK (mode IN ('managed','custom')),
+		render_url        TEXT NOT NULL DEFAULT '',
+		casting_url       TEXT NOT NULL DEFAULT '',
+		render_token_enc  TEXT NOT NULL DEFAULT '',
+		casting_token_enc TEXT NOT NULL DEFAULT '',
+		created_at        TEXT NOT NULL,
+		updated_at        TEXT NOT NULL,
+		FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+	)`,
+	`CREATE TABLE IF NOT EXISTS platform_settings (
+		key        TEXT PRIMARY KEY,
+		value      TEXT NOT NULL,
+		is_secret  INTEGER NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL,
+		updated_by TEXT NOT NULL DEFAULT ''
+	)`,
+}
+
+type migration struct {
+	version    int
+	statements []string
+	// prepare runs before the migration statements and may reject a database
+	// whose data cannot satisfy the new constraints.
+	prepare func(ctx context.Context, tx *sql.Tx) error
+}
+
+var migrations = []migration{
+	{version: 1, statements: schemaV1},
+	{version: 2, statements: schemaV2},
+	{version: 3, statements: schemaV3, prepare: prepareSchemaV3},
+}
+
+// prepareSchemaV3 refuses duplicate virtual devices and duplicate Linx agent
+// IDs. Deleting either would destroy a user's records, so the operator has to
+// resolve them by hand.
+func prepareSchemaV3(ctx context.Context, tx *sql.Tx) error {
+	var userID string
+	err := tx.QueryRowContext(ctx, `SELECT user_id FROM portal_devices
+		WHERE kind = 'virtual' GROUP BY user_id HAVING COUNT(*) > 1 LIMIT 1`).Scan(&userID)
+	if err == nil {
+		return fmt.Errorf("portal user %q owns more than one virtual device; resolve the duplicates before upgrading", userID)
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	var agentID string
+	err = tx.QueryRowContext(ctx, `SELECT linx_agent_id FROM portal_devices
+		WHERE linx_agent_id <> '' GROUP BY linx_agent_id HAVING COUNT(*) > 1 LIMIT 1`).Scan(&agentID)
+	if err == nil {
+		return fmt.Errorf("Linx agent %q is bound to more than one device; resolve the duplicates before upgrading", agentID)
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	return nil
+}
+
 // DB is the SQLite-backed control-plane store.
 type DB struct {
 	sql *sql.DB
 }
 
-// Open creates or opens the database and applies the schema.
+// Open creates or opens the database and applies outstanding migrations.
 func Open(path string) (*DB, error) {
 	if path == "" {
 		return nil, fmt.Errorf("store: database path is required")
@@ -77,26 +203,60 @@ func Open(path string) (*DB, error) {
 		database.Close()
 		return nil, fmt.Errorf("store: ping database: %w", err)
 	}
-	var version int
-	if err := database.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+	db := &DB{sql: database}
+	if err := db.migrate(ctx); err != nil {
 		database.Close()
-		return nil, fmt.Errorf("store: read schema version: %w", err)
+		return nil, err
+	}
+	return db, nil
+}
+
+func (d *DB) migrate(ctx context.Context) error {
+	var version int
+	if err := d.sql.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("store: read schema version: %w", err)
 	}
 	if version > schemaVersion {
-		database.Close()
-		return nil, fmt.Errorf("store: database schema version %d is newer than %d", version, schemaVersion)
+		return fmt.Errorf("store: database schema version %d is newer than %d", version, schemaVersion)
 	}
-	for _, statement := range schema {
-		if _, err := database.ExecContext(ctx, statement); err != nil {
-			database.Close()
-			return nil, fmt.Errorf("store: apply schema: %w", err)
+	for _, step := range migrations {
+		if step.version <= version {
+			continue
+		}
+		if err := d.applyMigration(ctx, step); err != nil {
+			return err
+		}
+		version = step.version
+	}
+	return nil
+}
+
+// applyMigration runs one version in a transaction. PRAGMA user_version is
+// written inside it, so a failed migration leaves both the schema and the
+// recorded version untouched.
+func (d *DB) applyMigration(ctx context.Context, step migration) error {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin schema v%d: %w", step.version, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if step.prepare != nil {
+		if err := step.prepare(ctx, tx); err != nil {
+			return fmt.Errorf("store: schema v%d precheck: %w", step.version, err)
 		}
 	}
-	if _, err := database.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
-		database.Close()
-		return nil, fmt.Errorf("store: set schema version: %w", err)
+	for _, statement := range step.statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("store: apply schema v%d: %w", step.version, err)
+		}
 	}
-	return &DB{sql: database}, nil
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", step.version)); err != nil {
+		return fmt.Errorf("store: set schema version %d: %w", step.version, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit schema v%d: %w", step.version, err)
+	}
+	return nil
 }
 
 // Close closes the database.

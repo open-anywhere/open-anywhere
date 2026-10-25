@@ -1,6 +1,6 @@
 # 应用管理 MCP
 
-> 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)。
+> 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)；多租户 Portal 的角色、注册与服务绑定见 [user-portal.md](user-portal.md)。
 
 ## 1. 范围
 
@@ -15,10 +15,11 @@
 | 组件 | 本文中的职责 | 调用方 |
 | --- | --- | --- |
 | 灵矽云（Linx） | 理解用户意图、选择并调用 MCP Tool、组织播报话术 | 用户 |
-| 控制面（gateway） | MCP Server、工具路由、应用注册表、构建与启动编排、屏幕映射 | 灵矽 |
+| 控制面（gateway） | MCP Server、工具路由、应用注册表、构建与启动编排、屏幕映射、按 owner 解析 Render/Casting | 灵矽 |
 | AgentAPI | 异步构建应用 artifact | 控制面 |
 | Render | 启动应用、提供应用 HTTP 与媒体流 | 控制面 |
 | 投屏服务 | 把媒体流投放到物理屏幕 | 控制面 |
+| Portal | 管理员引导账号、用户注册、为每个用户创建虚拟智能体并绑定服务 | 浏览器 |
 
 灵矽是唯一的 MCP 调用方。`app_id` 在 `create-app` 时分配，`get-app-status`、`start-app` 和 `stop-app` 都用它定位应用。AgentAPI 的 session id、Render 的 `instance_id`、应用端口、Casting 的 `endpoint_id` 和投屏会话 id 只在控制面内部使用，不通过 MCP 返回。
 
@@ -29,6 +30,25 @@
 - `app_id` 必须属于当前设备和智能体（device + agent）。Linx 会话重连不影响归属，控制面拒绝跨设备或跨智能体访问。
 - 构建是长任务：`create-app` 立即返回，状态通过 `get-app-status` 查询，构建完成通过 MCP 通知告知。
 - 写操作按业务键幂等：同一 `app_id` 不重复创建构建 session、应用进程或投屏会话。`create-app` 每次新建应用与 session；修订走 `update-app` 复用绑定 session。
+- 屏幕与应用都按 owner 作用域：同一 `screen_id` 在两个用户的 Casting 上是两块互不相关的屏幕。
+
+### 1.3 身份与租户隔离（Portal 模式）
+
+Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE 会话一致：
+
+| 头 | 含义 |
+| --- | --- |
+| `X-Linx-Device-Id` | 虚拟设备的 MAC，对应 `portal_devices.mac` |
+| `X-Linx-Agent-Id` | Linx 智能体 ID，对应 `portal_devices.linx_agent_id` |
+| `X-Linx-Session-Id` | 本次 MCP 会话 ID |
+
+校验规则：
+
+- `GET /sse`：缺少任一头返回 `400 MISSING_IDENTITY`；设备不存在、未完成开通或用户被停用返回 403（`OWNER_NOT_FOUND` / `IDENTITY_NOT_REGISTERED` / `USER_DISABLED`），不建立会话。
+- `POST /mcp/message`：每次请求都要求三头齐全且与 SSE 会话精确一致；缺失或不一致返回 `403 IDENTITY_MISMATCH`。随后再次查库校验设备与用户状态，不只依赖建连时的检查。
+- `mcp_token` 在 Portal 模式下必填；未配置时 Gateway 拒绝启动。MCP 端点仍由该 Bearer token 保护。
+- 单租户部署（`portal.enabled=false`）不注入 owner 校验器，兼容旧的 `X-Linx-Device-Id` / `X-Linx-Session-Id` 行为。
+- 设备必须在 `registered` 状态才能调用工具；一个用户最多一台虚拟设备，一个 `linx_agent_id` 只能属于一台设备。
 
 ## 2. 工具与状态
 
@@ -281,7 +301,7 @@
 {}
 ```
 
-控制面返回当前部署可访问的物理屏幕。屏幕不按设备或会话过滤；`screen_id` 是灵矽侧使用的物理屏幕标识，而非 Endpoint 或 Render 标识。控制面将 `screen_id` 映射到投屏服务的 `target_id`，再选择该目标支持的 Endpoint；灵矽通过 `screen_id` 指定启动屏幕，`get-app-status(app_id)` 在结果中返回该标识。控制面负责将投屏服务的发现结果、Render 可达性和当前应用占用情况汇总为屏幕列表。
+控制面返回调用者自己的服务绑定范围内的屏幕。屏幕按 owner 作用域：`managed` 用户使用平台默认 Casting（部署配置的 `screens` catalog 可作为别名），`custom` 用户使用自己的 Casting；另一个用户即使使用相同的 `screen_id`，也是另一块屏幕。`screen_id` 是灵矽侧使用的屏幕标识，而非 Endpoint 或 Render 标识。控制面将 `screen_id` 映射到该用户投屏服务的 `target_id`，再选择该目标支持的 Endpoint；灵矽通过 `screen_id` 指定启动屏幕，`get-app-status(app_id)` 在结果中返回该标识。控制面把当前 owner 的 Casting 发现结果、可用的屏幕别名与当前应用占用情况汇总为屏幕列表。
 
 ```json
 {
@@ -319,11 +339,12 @@
 
 - `status` 是这块屏幕现在能做什么，取值：
   - `free`：可以直接 `start-app`。
-  - `showing_app`：本控制面的应用正在展示，`current_app` 给出是哪一个；换应用要先征得用户同意，再用 `force=true` 替换。
-  - `external`：屏幕被无法归属的投屏会话占用；不要选择，`force=true` 也不能接管。Casting 只知道自己管理的会话，电视被其他来源直接投屏时可能无法检测。
+  - `showing_app`：调用者自己的应用正在展示，`current_app` 给出是哪一个；换应用要先征得用户同意，再用 `force=true` 替换。
+  - `external`：屏幕被无法归属的投屏会话占用（含共享 Casting 上其他租户的会话）；不要选择，`force=true` 也不能接管。Casting 只知道自己管理的会话，电视被其他来源直接投屏时可能无法检测。
   - `unavailable`：当前不能接收画面（离线、不可达或没有支持的协议）；不要选择。
-- `current_app` 只在 `showing_app` 时非 `null`，表示占用这块屏幕的本控制面应用。
-- 没有发现任何可用目标时允许返回空数组。
+- `current_app` 只在 `showing_app` 时非 `null`，且只可能是当前 owner 自己的应用。
+- `get-screens` 不返回其他用户的屏幕或应用；跨用户的应用在 `get-app-status` / `start-app` 中统一表现为 `APP_NOT_FOUND`。
+- 没有发现任何可用目标时允许返回空数组；用户没有可用智能体或未绑定服务时返回 `SERVICE_NOT_CONFIGURED`。
 - 返回结构化字段，不生成描述屏幕列表的顶层 `message`；由灵矽组织话术。`start-app` 的成功响应也不额外生成顶层 `message`，既有构建进度、通知和错误的消息字段保留原约定。
 - 用户明确指定屏幕时，灵矽匹配其 `screen_id`；未指定时可沿用当前会话的选择，或在只有一块 `free` 屏幕时直接选择；无法唯一确定时询问用户。调用 `start-app` 时始终传入明确的 `screen_id`。
 - MVP 中一个应用同时绑定一个屏幕，一个屏幕同时展示一个应用。列表是查询时快照，启动时控制面仍需重新校验可达性与占用，避免并发冲突。
@@ -340,7 +361,7 @@
 }
 ```
 
-`screen_id` 必填，来自 `get-screens` 返回的屏幕列表。控制面选择能够访问目标屏幕的 Render 和兼容的 Endpoint，启动应用、准备页面和媒体流，再建立或复用投屏会话。只有应用健康检查通过且投屏服务报告 `playing` 后，才返回 `running`：
+`screen_id` 必填，来自 `get-screens` 返回的屏幕列表。控制面使用当前 owner 绑定的 Render/Casting（平台默认或用户自有服务），启动应用、准备页面和媒体流，再选择目标屏幕兼容的 Endpoint 建立或复用投屏会话。只有应用健康检查通过且投屏服务报告 `playing` 后，才返回 `running`：
 
 ```json
 {
@@ -357,7 +378,14 @@
 
 应用端口、Render 的 `instance_id`、Casting 的 `endpoint_id` 和投屏会话 id 只在控制面内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。
 
-可以从 `idle` 启动，也可以从“构建成功但启动失败”的 `error` 重试；`start-app` 会先清理上次失败遗留的资源，成功后回到 `running`。已经在同一屏幕上 `running` 时幂等返回当前状态；若指定不同屏幕，返回 `APP_ALREADY_RUNNING`，由调用方先停止再启动。`building` 时返回 `APP_BUILDING`；构建失败、没有可启动产物的 `error` 返回 `APP_IN_ERROR`。目标屏幕被其他应用占用时返回 `TARGET_BUSY`，不自动替换；只有用户明确要求替换时才传 `force=true`，控制面先停止该屏幕上自己知道的应用并返回 `replaced_app_id`。若屏幕为 `external`（被无法归属的投屏会话占用），`force` 也不能接管，返回 `TARGET_BUSY`。
+可以从 `idle` 启动，也可以从“构建成功但启动失败”的 `error` 重试；`start-app` 会先清理上次失败遗留的资源，成功后回到 `running`。已经在同一屏幕上 `running` 时幂等返回当前状态；若指定不同屏幕，返回 `APP_ALREADY_RUNNING`，由调用方先停止再启动。`building` 时返回 `APP_BUILDING`；构建失败、没有可启动产物的 `error` 返回 `APP_IN_ERROR`。
+
+屏幕占用按 owner 判定：
+
+- 目标屏幕被**调用者自己的**另一个应用占用时，默认返回 `TARGET_BUSY`，不自动替换；只有用户明确要求替换时才传 `force=true`，控制面先停止自己的那个应用并返回 `replaced_app_id`。
+- 目标屏幕被**其他 owner** 的应用占用时，即使 `force=true` 也返回 `TARGET_BUSY`。`force` 不能跨租户停止应用；`screen_id` 只在当前 owner 的 Casting 内有意义。
+- 共享 Casting 上存在无法归属的活动投屏会话（`target.ActiveSessionID` 非空且无法对上当前 owner 的应用）时返回 `TARGET_BUSY`，`force` 同样不能接管。
+- 目标屏幕不存在、离线或无法访问时返回 `TARGET_UNREACHABLE`；应用不属于当前 owner 时返回 `APP_NOT_FOUND`。
 
 启动流程有时限，由控制面配置超时。连接过程中请求等待最终结果，不返回 `running + connecting`；超时或失败时进入 `error`，工具返回 `isError: true`。同一应用的并发启动请求不得重复创建进程或投屏会话。输入或占用校验不通过时拒绝操作，不改变已有应用状态。
 
@@ -529,3 +557,16 @@ sequenceDiagram
 | `INVALID_ARGUMENT` | 所有工具 | 参数为空、类型错误或无法序列化 |
 
 `CLEANUP_PENDING` 是临时状态：屏幕和资源还在核对或清理，稍后用同一 `app_id` 重试即可，不要重新 `create-app`。`APP_NOT_FOUND` 同时覆盖“不存在”和“不属于当前设备和智能体”，控制面不区分两者，避免泄露其他设备的应用是否存在。
+
+Portal 模式下，身份校验失败发生在建立 SSE 或 POST 消息之前，不属于工具错误：
+
+| HTTP | `code` | 场景 |
+| --- | --- | --- |
+| `400` | `MISSING_IDENTITY` | `/sse` 缺少任一 `X-Linx-*` 头 |
+| `401` | — | 配置了 `mcp_token` 但 Bearer token 缺失或错误 |
+| `403` | `IDENTITY_MISMATCH` | `/mcp/message` 的头缺失或与 SSE 会话不一致 |
+| `403` | `OWNER_NOT_FOUND` | 设备不存在，或 `(MAC, AgentID)` 无法匹配 |
+| `403` | `IDENTITY_NOT_REGISTERED` | 设备存在但尚未完成开通（`state != registered`） |
+| `403` | `USER_DISABLED` | 设备所属账号已被停用 |
+
+身份通过后，工具层仍按 owner 校验应用与屏幕；跨 owner 的应用返回 `APP_NOT_FOUND`，跨 owner 的 `force` 返回 `TARGET_BUSY`。

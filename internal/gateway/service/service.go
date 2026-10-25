@@ -15,6 +15,8 @@ import (
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/build"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/httpapi"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/netguard"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/openapi"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/render"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
@@ -90,6 +92,9 @@ type ScreenView struct {
 	Name       string       `json:"name"`
 	Status     ScreenStatus `json:"status"`
 	CurrentApp *AppRef      `json:"current_app"`
+	// Online is used by the portal's screen list. get-screens does not expose
+	// it, so the MCP JSON stays unchanged.
+	Online bool `json:"-"`
 }
 
 // AppRef identifies an application occupying a screen.
@@ -145,12 +150,134 @@ type OperationResult struct {
 	Body   any `json:"body,omitempty"`
 }
 
+// Binding resolves the Render and Casting services for one owner. A user may
+// use the platform defaults (Managed) or their own public services.
+type Binding struct {
+	RenderURL    string
+	RenderToken  string
+	CastingURL   string
+	CastingToken string
+	Managed      bool
+	// Screens maps friendly screen IDs to casting target IDs. It is set only
+	// when the platform casting service is used (managed or single tenant).
+	Screens *screen.Catalog
+}
+
+// BindingSource resolves an owner's service binding.
+type BindingSource interface {
+	BindingFor(ctx context.Context, owner app.Identity) (Binding, error)
+}
+
+// Clients builds clients for a binding. Implementations may cache by address
+// and token; tokens never appear in logs.
+type Clients interface {
+	Render(binding Binding) RenderClient
+	Casting(binding Binding) CastingClient
+}
+
+// StaticBindings returns the same binding for every owner. It keeps
+// single-tenant deployments and tests working unchanged.
+type StaticBindings struct {
+	Binding Binding
+}
+
+// BindingFor implements BindingSource.
+func (s StaticBindings) BindingFor(context.Context, app.Identity) (Binding, error) {
+	return s.Binding, nil
+}
+
+// legacyClients resolves the fixed single-tenant clients on every access so
+// replacing them (as tests do) takes effect for owner-aware paths too.
+type legacyClients struct {
+	service *Service
+}
+
+func (c legacyClients) Render(Binding) RenderClient   { return c.service.render }
+func (c legacyClients) Casting(Binding) CastingClient { return c.service.casting }
+
+// runtime is the resolved downstream configuration for one owner.
+type runtime struct {
+	binding Binding
+	render  RenderClient
+	casting CastingClient
+	screens *screen.Catalog
+}
+
+// keyedMutex serializes lifecycle work per owner instead of globally, so one
+// user's slow Render or Casting service cannot block another user.
+type keyedMutex struct {
+	mu    sync.Mutex
+	locks map[string]*keyedLock
+}
+
+type keyedLock struct {
+	key  string
+	mu   sync.Mutex
+	refs int
+}
+
+func newKeyedMutex() *keyedMutex { return &keyedMutex{locks: make(map[string]*keyedLock)} }
+
+func (k *keyedMutex) ref(key string) *keyedLock {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	lock := k.locks[key]
+	if lock == nil {
+		lock = &keyedLock{key: key}
+		k.locks[key] = lock
+	}
+	lock.refs++
+	return lock
+}
+
+func (k *keyedMutex) drop(lock *keyedLock) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	lock.refs--
+	if lock.refs == 0 {
+		delete(k.locks, lock.key)
+	}
+}
+
+// Lock blocks until the owner's lock is held and returns its release.
+func (k *keyedMutex) Lock(key string) func() {
+	lock := k.ref(key)
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		k.drop(lock)
+	}
+}
+
+// TryLock acquires the owner's lock without blocking. It returns false when
+// another operation for the same owner is in flight.
+func (k *keyedMutex) TryLock(key string) (func(), bool) {
+	lock := k.ref(key)
+	if !lock.mu.TryLock() {
+		k.drop(lock)
+		return nil, false
+	}
+	return func() {
+		lock.mu.Unlock()
+		k.drop(lock)
+	}, true
+}
+
+func ownerKey(owner app.Identity) string {
+	return owner.DeviceID + "\x00" + owner.AgentID
+}
+
 // Service coordinates applications, builds, Render and casting.
 type Service struct {
-	lifecycle sync.Mutex
-	createMu  sync.Mutex
+	lifecycle *keyedMutex
+	createMu  *keyedMutex
+	pruneMu   sync.Mutex
 	apps      *app.Registry
 	builder   BuildStarter
+	bindings  BindingSource
+	clients   Clients
+	// render, casting and screens serve the single-tenant constructor and the
+	// compatibility helpers below; the owner-aware paths use runtimeFor.
 	render    RenderClient
 	casting   CastingClient
 	screens   *screen.Catalog
@@ -158,13 +285,26 @@ type Service struct {
 	artifacts ArtifactStore
 	cfg       Config
 
-	http *http.Client
-	now  func() time.Time
-	logf func(string, ...any)
+	http        *http.Client
+	validateURL func(context.Context, string) error
+	now         func() time.Time
+	logf        func(string, ...any)
 }
 
-// New creates the application service.
+// New creates the application service for a single-tenant deployment.
 func New(registry *app.Registry, builder BuildStarter, renderClient RenderClient, castingClient CastingClient, screens *screen.Catalog, notifier app.Notifier, cfg Config) *Service {
+	binding := Binding{Managed: true, Screens: screens}
+	service := NewWithBindings(registry, builder, StaticBindings{Binding: binding}, nil, notifier, cfg)
+	service.render = renderClient
+	service.casting = castingClient
+	service.screens = screens
+	service.clients = legacyClients{service: service}
+	return service
+}
+
+// NewWithBindings creates the application service for a multi-tenant
+// deployment. Every downstream access resolves the owner's binding first.
+func NewWithBindings(registry *app.Registry, builder BuildStarter, bindings BindingSource, clients Clients, notifier app.Notifier, cfg Config) *Service {
 	if cfg.StartTimeout <= 0 {
 		cfg.StartTimeout = 60 * time.Second
 	}
@@ -184,23 +324,70 @@ func New(registry *app.Registry, builder BuildStarter, renderClient RenderClient
 		cfg.PortMax = 39999
 	}
 	return &Service{
-		apps:     registry,
-		builder:  builder,
-		render:   renderClient,
-		casting:  castingClient,
-		screens:  screens,
-		notifier: notifier,
-		cfg:      cfg,
-		http:     &http.Client{Timeout: cfg.OperationsTimeout},
-		now:      func() time.Time { return time.Now().UTC() },
-		logf:     log.Printf,
+		lifecycle: newKeyedMutex(),
+		createMu:  newKeyedMutex(),
+		apps:      registry,
+		builder:   builder,
+		bindings:  bindings,
+		clients:   clients,
+		notifier:  notifier,
+		cfg:       cfg,
+		http:      &http.Client{Timeout: cfg.OperationsTimeout},
+		now:       func() time.Time { return time.Now().UTC() },
+		logf:      log.Printf,
 	}
 }
 
-// GetScreens aggregates configured screens, casting discovery and current
-// application occupancy.
-func (s *Service) GetScreens(ctx context.Context, _ app.Identity) ([]ScreenView, error) {
-	targets, err := s.casting.ListTargets(ctx)
+// SetURLValidator installs the outbound address policy used before forwarding
+// a request to an application.
+func (s *Service) SetURLValidator(validate func(context.Context, string) error) {
+	s.validateURL = validate
+}
+
+// SetHTTPClient replaces the HTTP client used for application requests.
+func (s *Service) SetHTTPClient(client *http.Client) {
+	if client != nil {
+		s.http = client
+	}
+}
+
+// runtimeFor resolves the owner's binding and the clients that talk to it.
+func (s *Service) runtimeFor(ctx context.Context, owner app.Identity) (runtime, error) {
+	if s.bindings == nil || s.clients == nil {
+		return runtime{}, &ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "尚未配置屏幕服务"}
+	}
+	binding, err := s.bindings.BindingFor(ctx, owner)
+	if err != nil {
+		return runtime{}, err
+	}
+	return runtime{
+		binding: binding,
+		render:  s.clients.Render(binding),
+		casting: s.clients.Casting(binding),
+		screens: binding.Screens,
+	}, nil
+}
+
+// staticRuntime returns the single-tenant runtime kept for compatibility
+// helpers. It is nil when the service was built for multiple tenants.
+func (s *Service) staticRuntime() (runtime, bool) {
+	if s.render == nil || s.casting == nil {
+		return runtime{}, false
+	}
+	return runtime{binding: Binding{Managed: true, Screens: s.screens}, render: s.render, casting: s.casting, screens: s.screens}, true
+}
+
+// screenEntry is a discovered screen plus what discovery knows about it.
+type screenEntry struct {
+	view        ScreenView
+	deliverable bool
+	busy        bool
+}
+
+// discoverScreens lists configured or discovered screens. Online is recorded
+// for the portal but is never serialized by get-screens.
+func (s *Service) discoverScreens(ctx context.Context, rt runtime) ([]screenEntry, error) {
+	targets, err := rt.casting.ListTargets(ctx)
 	if err != nil {
 		return nil, &ToolError{Code: "SCREEN_DISCOVERY_FAILED", Message: "无法获取屏幕列表"}
 	}
@@ -208,52 +395,108 @@ func (s *Service) GetScreens(ctx context.Context, _ app.Identity) ([]ScreenView,
 	for _, target := range targets {
 		byID[target.ID] = target
 	}
-	configured := s.screens.List()
-	type screenEntry struct {
-		view        ScreenView
-		deliverable bool
-		busy        bool
+	var configured []screen.Screen
+	if rt.screens != nil {
+		configured = rt.screens.List()
 	}
 	entries := make([]screenEntry, 0, len(targets))
 	if len(configured) == 0 {
 		for _, target := range targets {
+			online := target.State == casting.TargetOnline
 			_, compatible := screen.DiscoverableEndpoint(target)
 			entries = append(entries, screenEntry{
-				view:        ScreenView{ScreenID: target.ID, Name: target.Name},
-				deliverable: target.State == casting.TargetOnline && compatible,
+				view:        ScreenView{ScreenID: target.ID, Name: target.Name, Online: online},
+				deliverable: online && compatible,
 				busy:        target.ActiveSessionID != "",
 			})
 		}
-	} else {
-		for _, item := range configured {
-			target, found := byID[item.TargetID]
-			var deliverable, busy bool
-			if found {
-				busy = target.ActiveSessionID != ""
-				if target.State == casting.TargetOnline {
-					_, deliverable = screen.DiscoverableEndpoint(target)
-				}
+		return entries, nil
+	}
+	for _, item := range configured {
+		target, found := byID[item.TargetID]
+		var online, deliverable, busy bool
+		if found {
+			online = target.State == casting.TargetOnline
+			busy = target.ActiveSessionID != ""
+			if online {
+				_, deliverable = screen.DiscoverableEndpoint(target)
 			}
-			entries = append(entries, screenEntry{
-				view:        ScreenView{ScreenID: item.ID, Name: item.Name},
-				deliverable: deliverable,
-				busy:        busy,
-			})
+		}
+		entries = append(entries, screenEntry{
+			view:        ScreenView{ScreenID: item.ID, Name: item.Name, Online: online},
+			deliverable: deliverable,
+			busy:        busy,
+		})
+	}
+	return entries, nil
+}
+
+// screenKey identifies a screen inside one owner's casting service. Screen IDs
+// are only unique per service, so the owner is part of the key.
+type screenKey struct {
+	deviceID string
+	agentID  string
+	screenID string
+}
+
+// occupiedScreens maps an owned screen to the application still holding it,
+// limited to the given owners. A screen ID is only meaningful inside one
+// owner's casting service, so another owner's identical ID must not collide.
+func occupiedScreens(owners []app.Identity, values []app.App) map[screenKey]app.App {
+	occupied := make(map[screenKey]app.App)
+	for _, value := range values {
+		if value.OccupiesScreen() && ownedByAny(value.Owner, owners) {
+			key := screenKey{deviceID: value.Owner.DeviceID, agentID: value.Owner.AgentID, screenID: value.ScreenID}
+			occupied[key] = value
 		}
 	}
-	running := make(map[string]app.App)
-	for _, value := range s.apps.List() {
-		if value.ScreenID != "" && (value.State == app.StateRunning || value.PendingRuntime || value.PendingProjection || value.CleanupPending || value.InstanceID != "" || value.ProjectionSessionID != "") {
-			running[value.ScreenID] = value
+	return occupied
+}
+
+// occupiedBy returns the application among owners that holds screenID. The
+// portal resolves one casting binding per user, so several of that user's
+// agents share the same screen ID space.
+func occupiedBy(occupied map[screenKey]app.App, owners []app.Identity, screenID string) (app.App, bool) {
+	for _, owner := range owners {
+		if value, ok := occupied[screenKey{deviceID: owner.DeviceID, agentID: owner.AgentID, screenID: screenID}]; ok {
+			return value, true
 		}
 	}
+	return app.App{}, false
+}
+
+// ownedByAny reports whether owner is one of owners.
+func ownedByAny(owner app.Identity, owners []app.Identity) bool {
+	for _, candidate := range owners {
+		if owner.SameOwner(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetScreens aggregates configured screens, casting discovery and current
+// application occupancy. Only the caller's own applications are identified;
+// another owner's application makes the screen external.
+func (s *Service) GetScreens(ctx context.Context, owner app.Identity) ([]ScreenView, error) {
+	rt, err := s.runtimeFor(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := s.discoverScreens(ctx, rt)
+	if err != nil {
+		return nil, err
+	}
+	owners := []app.Identity{owner}
+	occupied := occupiedScreens(owners, s.apps.List())
 	views := make([]ScreenView, len(entries))
 	for index, item := range entries {
 		views[index] = item.view
-		switch ours, occupied := running[item.view.ScreenID]; {
+		ours, taken := occupiedBy(occupied, owners, item.view.ScreenID)
+		switch {
 		case !item.deliverable:
 			views[index].Status = ScreenUnavailable
-		case occupied:
+		case taken:
 			views[index].Status = ScreenShowingApp
 			views[index].CurrentApp = &AppRef{AppID: ours.ID, Name: ours.Name}
 		case item.busy:
@@ -265,10 +508,65 @@ func (s *Service) GetScreens(ctx context.Context, _ app.Identity) ([]ScreenView,
 	return views, nil
 }
 
+// GetScreensFor is the portal-facing view. Only applications owned by owners
+// are identified. A screen occupied by a session the portal cannot account for
+// is external; occupancy recorded for another owner is not consulted because
+// two tenants may use the same screen ID on different casting services.
+func (s *Service) GetScreensFor(ctx context.Context, owners []app.Identity) ([]ScreenView, error) {
+	if len(owners) == 0 {
+		return nil, &ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "还没有可用的智能体，无法发现屏幕"}
+	}
+	rt, err := s.runtimeFor(ctx, owners[0])
+	if err != nil {
+		return nil, err
+	}
+	entries, err := s.discoverScreens(ctx, rt)
+	if err != nil {
+		return nil, err
+	}
+	mine := occupiedScreens(owners, s.apps.List())
+	views := make([]ScreenView, len(entries))
+	for index, item := range entries {
+		views[index] = item.view
+		own, ownOccupied := occupiedBy(mine, owners, item.view.ScreenID)
+		switch {
+		case ownOccupied:
+			if item.deliverable {
+				views[index].Status = ScreenShowingApp
+			} else {
+				views[index].Status = ScreenUnavailable
+			}
+			views[index].CurrentApp = &AppRef{AppID: own.ID, Name: own.Name}
+		case !item.deliverable:
+			views[index].Status = ScreenUnavailable
+		case item.busy:
+			views[index].Status = ScreenExternal
+		default:
+			views[index].Status = ScreenFree
+		}
+	}
+	return views, nil
+}
+
+// StopAppOnScreen stops the application that owns screenID. It reads the
+// in-memory registry, so a casting discovery failure cannot block release.
+func (s *Service) StopAppOnScreen(ctx context.Context, owners []app.Identity, screenID string) (StatusView, error) {
+	screenID = strings.TrimSpace(screenID)
+	if screenID == "" || len(owners) == 0 {
+		return StatusView{}, &ToolError{Code: "SCREEN_APP_NOT_FOUND", Message: "屏幕上没有属于你的应用"}
+	}
+	for _, value := range s.apps.List() {
+		if value.ScreenID == screenID && value.OccupiesScreen() && ownedByAny(value.Owner, owners) {
+			return s.StopApp(ctx, value.Owner, value.ID)
+		}
+	}
+	return StatusView{}, &ToolError{Code: "SCREEN_APP_NOT_FOUND", Message: "屏幕上没有属于你的应用"}
+}
+
 // CreateApp registers an application and starts its build.
 func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt string, playerNames []string) (CreateResult, error) {
-	s.createMu.Lock()
-	defer s.createMu.Unlock()
+	unlock := s.createMu.Lock(ownerKey(owner))
+	defer unlock()
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return CreateResult{}, &ToolError{Code: "INVALID_ARGUMENT", Message: "prompt 不能为空"}
@@ -293,6 +591,9 @@ func (s *Service) CreateApp(ctx context.Context, owner app.Identity, prompt stri
 	if err := s.builder.Start(ctx, entry.Snapshot()); err != nil {
 		s.apps.Remove(id)
 		s.logf("create-app %s: %v", id, err)
+		if errors.Is(err, app.ErrPlatformNotConfigured) {
+			return CreateResult{}, &ToolError{Code: "PLATFORM_NOT_CONFIGURED", Message: "平台尚未完成配置，请联系管理员"}
+		}
 		return CreateResult{}, &ToolError{Code: "BUILD_START_FAILED", Message: "无法启动构建"}
 	}
 	s.PruneHistory()
@@ -445,8 +746,8 @@ func (s *Service) GetAppOperations(ctx context.Context, owner app.Identity, appI
 // A screen holds one application at a time: without force an occupied screen is
 // refused with TARGET_BUSY; with force the application on it is stopped first.
 func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, screenID string, force bool) (StatusView, error) {
-	s.lifecycle.Lock()
-	defer s.lifecycle.Unlock()
+	unlock := s.lifecycle.Lock(ownerKey(owner))
+	defer unlock()
 	if strings.TrimSpace(screenID) == "" {
 		return StatusView{}, &ToolError{Code: "INVALID_ARGUMENT", Message: "screen_id 不能为空"}
 	}
@@ -463,7 +764,15 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	switch value.State {
 	case app.StateRunning:
 		if value.ScreenID == screenID {
-			if err := s.verifyRunning(ctx, value); err != nil {
+			// The app already holds the screen. If the binding is temporarily
+			// unavailable, report the recorded state instead of failing an
+			// idempotent start request.
+			rt, err := s.runtimeFor(ctx, value.Owner)
+			if err != nil {
+				s.logf("service: verify running app %s without binding: %v", value.ID, err)
+				return s.statusView(value), nil
+			}
+			if err := s.verifyRunningWith(ctx, rt, value); err != nil {
 				return StatusView{}, err
 			}
 			return s.statusView(value), nil
@@ -488,7 +797,11 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	if s.artifacts != nil && !s.artifacts.Has(value.ID) {
 		return StatusView{}, &ToolError{Code: "ARTIFACT_MISSING", Message: "应用包已丢失，请重新创建应用"}
 	}
-	target, err := s.target(ctx, screenID)
+	rt, err := s.runtimeFor(ctx, owner)
+	if err != nil {
+		return StatusView{}, err
+	}
+	target, err := s.targetWith(ctx, rt, screenID)
 	if err != nil {
 		return StatusView{}, err
 	}
@@ -511,7 +824,7 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 			a.Error = &app.Error{Stage: app.StageStarting, Code: failure.Code, Message: failure.Message}
 			a.CleanupPending = true
 		})
-		_ = s.reconcile(ctx, entry)
+		_ = s.reconcileWith(ctx, rt, entry)
 		s.notifyError(entry.Snapshot(), screenID)
 		return StatusView{}, failure.toolError()
 	}
@@ -527,7 +840,7 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	// A casting session nobody in the control plane can account for cannot be
 	// stopped through force either. Refuse before starting a Render instance.
 	if target.ActiveSessionID != "" {
-		other, busy := s.apps.RunningOnScreen(screenID)
+		other, busy := s.apps.RunningOnScreenFor(owner, screenID)
 		known := busy && other.ProjectionSessionID == target.ActiveSessionID
 		switch {
 		case known && other.ID != appID:
@@ -538,7 +851,7 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 			return StatusView{}, &ToolError{Code: "TARGET_BUSY", Message: "屏幕被其他投屏会话占用，无法接管，请换一块屏幕"}
 		}
 	}
-	replaced, err := s.claimScreen(ctx, screenID, appID, force)
+	replaced, err := s.claimScreen(ctx, owner, screenID, appID, force)
 	if err != nil {
 		return StatusView{}, err
 	}
@@ -550,7 +863,7 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 		return StatusView{}, err
 	}
 	value = entry.Snapshot()
-	binding, failure := s.startRuntime(ctx, value, target)
+	binding, failure := s.startRuntime(ctx, rt, value, target)
 	if failure != nil {
 		return failStart(failure)
 	}
@@ -584,14 +897,15 @@ func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, scree
 	return view, nil
 }
 
-// claimScreen makes screenID free for appID. Another application on it is
-// refused with TARGET_BUSY unless force is set, in which case it is stopped
-// through its own owner (projection first, then the Render instance). The
-// screen is only claimed once it is really free; a failed stop is returned so
-// nothing is projected over an application that is still running.
-func (s *Service) claimScreen(ctx context.Context, screenID, appID string, force bool) (replaced string, err error) {
+// claimScreen makes screenID free for appID. A screen ID only identifies a
+// target inside one owner's casting service, so only the owner's own
+// applications are considered. Another application of the same owner is
+// refused with TARGET_BUSY unless force is set. A screen another tenant is
+// using on a shared casting service has an active session, which StartApp
+// rejects before reaching this point.
+func (s *Service) claimScreen(ctx context.Context, owner app.Identity, screenID, appID string, force bool) (replaced string, err error) {
 	for attempts := 0; attempts < 4; attempts++ {
-		other, busy := s.apps.RunningOnScreen(screenID)
+		other, busy := s.apps.RunningOnScreenFor(owner, screenID)
 		if !busy || other.ID == appID {
 			return replaced, nil
 		}
@@ -638,15 +952,19 @@ func (s *Service) StopApp(ctx context.Context, owner app.Identity, appID string)
 	case app.StateBuilding:
 		return StatusView{}, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
 	}
+	rt, err := s.runtimeFor(ctx, owner)
+	if err != nil {
+		return StatusView{}, err
+	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if value.ProjectionSessionID != "" {
-		if stopped, err := s.casting.StopSession(cleanupCtx, value.ProjectionSessionID); (err != nil && !casting.IsStatus(err, http.StatusNotFound)) || (err == nil && stopped.State != casting.SessionStopped) {
+		if stopped, err := rt.casting.StopSession(cleanupCtx, value.ProjectionSessionID); (err != nil && !casting.IsStatus(err, http.StatusNotFound)) || (err == nil && stopped.State != casting.SessionStopped) {
 			return StatusView{}, &ToolError{Code: "STOP_FAILED", Message: "停止投屏失败"}
 		}
 	}
 	if value.InstanceID != "" {
-		if stopped, err := s.render.Delete(cleanupCtx, value.InstanceID); (err != nil && !render.IsStatus(err, http.StatusNotFound)) || (err == nil && stopped.State != render.StateStopped) {
+		if stopped, err := rt.render.Delete(cleanupCtx, value.InstanceID); (err != nil && !render.IsStatus(err, http.StatusNotFound)) || (err == nil && stopped.State != render.StateStopped) {
 			return StatusView{}, &ToolError{Code: "STOP_FAILED", Message: "停止应用失败"}
 		}
 	}
@@ -683,7 +1001,11 @@ func (s *Service) SendRequest(ctx context.Context, owner app.Identity, appID, op
 	if !value.Owner.SameOwner(owner) {
 		return OperationResult{}, &ToolError{Code: "APP_NOT_FOUND", Message: "应用归属已改变"}
 	}
-	if err = s.verifyRunning(ctx, value); err != nil {
+	rt, err := s.runtimeFor(ctx, owner)
+	if err != nil {
+		return OperationResult{}, err
+	}
+	if err = s.verifyRunningWith(ctx, rt, value); err != nil {
 		return OperationResult{}, err
 	}
 	if value.State != app.StateRunning || value.AppBaseURL == "" {
@@ -692,9 +1014,46 @@ func (s *Service) SendRequest(ctx context.Context, owner app.Identity, appID, op
 	if _, ok := value.OpenAPI.Lookup(operationID); !ok {
 		return OperationResult{}, &ToolError{Code: "OPERATION_NOT_FOUND", Message: "应用没有该操作"}
 	}
+	// AppBaseURL comes from the owner's Render service. It must not become a
+	// way to reach the deployment network even when Render reports a private
+	// address.
+	if s.validateURL != nil {
+		if err := s.validateURL(ctx, value.AppBaseURL); err != nil {
+			code := netguard.CodeOf(err)
+			if code == "" {
+				code = "INVALID_TARGET_URL"
+			}
+			return OperationResult{}, &ToolError{Code: code, Message: "应用地址不可访问"}
+		}
+	}
 	out, err := value.OpenAPI.Execute(ctx, value.AppBaseURL, operationID, parameters, body, s.http)
 	if err != nil {
-		return OperationResult{}, &ToolError{Code: "INVALID_ARGUMENT", Message: err.Error()}
+		// The executor deliberately drops transport details for callers. Map
+		// the stable failure classes to the public error codes without echoing
+		// dial errors or internal addresses.
+		code := netguard.CodeOf(err)
+		message := "应用请求失败"
+		if code == "" {
+			var unsupported *json.UnsupportedTypeError
+			var unsupportedValue *json.UnsupportedValueError
+			var apiErr *httpapi.Error
+			switch {
+			case errors.As(err, &unsupported), errors.As(err, &unsupportedValue):
+				code, message = "INVALID_ARGUMENT", "应用请求参数无效"
+			case errors.As(err, &apiErr):
+				switch apiErr.Code {
+				case "TIMEOUT", "UPSTREAM_ERROR", "INVALID_RESPONSE", "RESPONSE_TOO_LARGE", "OPENAPI_UNAVAILABLE":
+					code = "TARGET_UNREACHABLE"
+				case "TARGET_NOT_ALLOWED":
+					code = "INVALID_TARGET_URL"
+				default:
+					code, message = "INVALID_ARGUMENT", "应用请求参数无效"
+				}
+			default:
+				code = "TARGET_UNREACHABLE"
+			}
+		}
+		return OperationResult{}, &ToolError{Code: code, Message: message}
 	}
 	return OperationResult{Status: out.Status, Body: out.Data}, nil
 }
@@ -716,9 +1075,14 @@ func (s *Service) RunMonitor(ctx context.Context) {
 func (s *Service) checkRunning(ctx context.Context) {
 	for _, value := range s.apps.List() {
 		if value.State == app.StateError && (value.CleanupPending || value.PendingRuntime || value.PendingProjection || value.InstanceID != "" || value.ProjectionSessionID != "") {
+			rt, err := s.runtimeFor(ctx, value.Owner)
+			if err != nil {
+				s.logf("monitor %s: resolve services: %v", value.ID, err)
+				continue
+			}
 			if record, ok := s.apps.Get(value.ID); ok {
 				record.Begin()
-				_ = s.reconcile(ctx, record)
+				_ = s.reconcileWith(ctx, rt, record)
 				record.End()
 			}
 			continue
@@ -726,9 +1090,14 @@ func (s *Service) checkRunning(ctx context.Context) {
 		if value.State != app.StateRunning {
 			continue
 		}
+		rt, err := s.runtimeFor(ctx, value.Owner)
+		if err != nil {
+			s.logf("monitor %s: resolve services: %v", value.ID, err)
+			continue
+		}
 		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		if value.InstanceID != "" {
-			instance, err := s.render.Get(checkCtx, value.InstanceID)
+			instance, err := rt.render.Get(checkCtx, value.InstanceID)
 			switch {
 			case err == nil && (instance.State == render.StateError || instance.State == render.StateStopped || instance.State == render.StateStopping):
 				code, message := "APP_EXITED", "应用进程已退出"
@@ -750,7 +1119,7 @@ func (s *Service) checkRunning(ctx context.Context) {
 			}
 		}
 		if value.ProjectionSessionID != "" {
-			session, err := s.casting.GetSession(checkCtx, value.ProjectionSessionID)
+			session, err := rt.casting.GetSession(checkCtx, value.ProjectionSessionID)
 			if err == nil && (session.State == casting.SessionStopped || session.State == casting.SessionFailed) {
 				cancel()
 				s.runtimeFailure(value, "PROJECTION_DISCONNECTED", "投屏已断开")
@@ -818,7 +1187,7 @@ func (f *startFailure) toolError() error {
 	return &ToolError{Code: f.Code, Message: f.Message}
 }
 
-func (s *Service) startRuntime(ctx context.Context, value app.App, target casting.Target) (startBinding, *startFailure) {
+func (s *Service) startRuntime(ctx context.Context, rt runtime, value app.App, target casting.Target) (startBinding, *startFailure) {
 	persistFailure := func(err error) (startBinding, *startFailure) {
 		return startBinding{}, &startFailure{Code: "PERSISTENCE_FAILED", Message: "无法保存运行状态，停止后续操作", Cause: err}
 	}
@@ -835,14 +1204,14 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 	var port int
 	var createErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		port, createErr = s.choosePort(startCtx, excluded)
+		port, createErr = s.choosePortWith(startCtx, rt, excluded)
 		if createErr != nil {
 			break
 		}
 		if err := s.updateRuntime(value.ID, func(a *app.App) { a.Port = port; a.PendingRuntime = true }); err != nil {
 			return persistFailure(err)
 		}
-		instance, createErr = s.render.Create(startCtx, render.CreateRequest{
+		instance, createErr = rt.render.Create(startCtx, render.CreateRequest{
 			AppID:       value.ID,
 			ArtifactURL: value.Artifact.DownloadURL,
 			Port:        port,
@@ -900,7 +1269,7 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 	if err := s.updateRuntime(value.ID, func(a *app.App) { a.EndpointID = endpoint.ID; a.Source = source; a.PendingProjection = true }); err != nil {
 		return persistFailure(err)
 	}
-	session, err := s.casting.CreateSession(startCtx, casting.CreateSessionRequest{
+	session, err := rt.casting.CreateSession(startCtx, casting.CreateSessionRequest{
 		TargetID:   target.ID,
 		EndpointID: endpoint.ID,
 		Source:     source,
@@ -927,7 +1296,7 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 	if err := s.updateRuntime(value.ID, func(a *app.App) { a.ProjectionSessionID = session.ID; a.PendingProjection = false }); err != nil {
 		return persistFailure(err)
 	}
-	if err := s.waitPlaying(startCtx, session.ID); err != nil {
+	if err := s.waitPlayingWith(startCtx, rt.casting, session.ID); err != nil {
 		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "PROJECTION_TIMEOUT", Message: "投屏超时", Cause: err}
 	}
@@ -935,9 +1304,16 @@ func (s *Service) startRuntime(ctx context.Context, value app.App, target castin
 }
 
 func (s *Service) waitPlaying(ctx context.Context, sessionID string) error {
+	if s.casting == nil {
+		return &ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "尚未配置屏幕服务"}
+	}
+	return s.waitPlayingWith(ctx, s.casting, sessionID)
+}
+
+func (s *Service) waitPlayingWith(ctx context.Context, castingClient CastingClient, sessionID string) error {
 	deadline := time.Now().Add(s.cfg.ProjectionTimeout)
 	for {
-		session, err := s.casting.GetSession(ctx, sessionID)
+		session, err := castingClient.GetSession(ctx, sessionID)
 		if err != nil {
 			return err
 		}
@@ -961,7 +1337,14 @@ func (s *Service) waitPlaying(ctx context.Context, sessionID string) error {
 }
 
 func (s *Service) choosePort(ctx context.Context, excluded map[int]bool) (int, error) {
-	ports, err := s.render.ListPorts(ctx)
+	if s.render == nil {
+		return 0, &ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "尚未配置渲染服务"}
+	}
+	return s.choosePortWith(ctx, runtime{render: s.render}, excluded)
+}
+
+func (s *Service) choosePortWith(ctx context.Context, rt runtime, excluded map[int]bool) (int, error) {
+	ports, err := rt.render.ListPorts(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -975,7 +1358,7 @@ func (s *Service) choosePort(ctx context.Context, excluded map[int]bool) (int, e
 		if used[port] || excluded[port] {
 			continue
 		}
-		info, err := s.render.GetPort(ctx, port)
+		info, err := rt.render.GetPort(ctx, port)
 		if err != nil {
 			return 0, err
 		}
@@ -998,13 +1381,23 @@ func (s *Service) cleanupRuntime(instanceID, sessionID string) {
 }
 
 func (s *Service) target(ctx context.Context, screenID string) (casting.Target, error) {
-	targetID := screenID
-	if configured, ok := s.screens.Get(screenID); ok {
-		targetID = configured.TargetID
-	} else if !s.screens.Empty() {
-		return casting.Target{}, &ToolError{Code: "TARGET_UNREACHABLE", Message: "未知的屏幕"}
+	rt, ok := s.staticRuntime()
+	if !ok {
+		return casting.Target{}, &ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "尚未配置屏幕服务"}
 	}
-	target, err := s.casting.GetTarget(ctx, targetID)
+	return s.targetWith(ctx, rt, screenID)
+}
+
+func (s *Service) targetWith(ctx context.Context, rt runtime, screenID string) (casting.Target, error) {
+	targetID := screenID
+	if rt.screens != nil {
+		if configured, ok := rt.screens.Get(screenID); ok {
+			targetID = configured.TargetID
+		} else if !rt.screens.Empty() {
+			return casting.Target{}, &ToolError{Code: "TARGET_UNREACHABLE", Message: "未知的屏幕"}
+		}
+	}
+	target, err := rt.casting.GetTarget(ctx, targetID)
 	if err != nil {
 		if casting.IsStatus(err, http.StatusNotFound) {
 			return casting.Target{}, &ToolError{Code: "TARGET_UNREACHABLE", Message: "目标屏幕不可达"}
@@ -1120,11 +1513,19 @@ func (s *Service) GetOpenAPI(ctx context.Context, owner app.Identity, id string)
 }
 
 func (s *Service) verifyRunning(ctx context.Context, a app.App) error {
+	rt, err := s.runtimeFor(ctx, a.Owner)
+	if err != nil {
+		return err
+	}
+	return s.verifyRunningWith(ctx, rt, a)
+}
+
+func (s *Service) verifyRunningWith(ctx context.Context, rt runtime, a app.App) error {
 	if a.State != app.StateRunning {
 		return nil
 	}
 	if a.InstanceID != "" {
-		r, err := s.render.Get(ctx, a.InstanceID)
+		r, err := rt.render.Get(ctx, a.InstanceID)
 		if err != nil {
 			return &ToolError{Code: "RUNTIME_UNAVAILABLE", Message: "无法确认应用状态"}
 		}
@@ -1133,7 +1534,7 @@ func (s *Service) verifyRunning(ctx context.Context, a app.App) error {
 		}
 	}
 	if a.ProjectionSessionID != "" {
-		p, err := s.casting.GetSession(ctx, a.ProjectionSessionID)
+		p, err := rt.casting.GetSession(ctx, a.ProjectionSessionID)
 		if err != nil {
 			return &ToolError{Code: "PROJECTION_UNAVAILABLE", Message: "无法确认投屏状态"}
 		}

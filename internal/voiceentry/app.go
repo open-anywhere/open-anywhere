@@ -42,6 +42,9 @@ type Config struct {
 	// Listen is the control API address. Listener, when set, is used instead.
 	Listen   string
 	Listener net.Listener
+	// NoListen keeps the control API off the network. The embedding process
+	// mounts Handler at its own route instead.
+	NoListen bool
 
 	// One-shot actions; the first non-empty one wins.
 	Text     string
@@ -148,6 +151,25 @@ func (a *App) status() controlapi.Status {
 	return st
 }
 
+// Handler returns the web control API, or nil when the client is not serving.
+// The caller is responsible for authentication and ownership checks before
+// mounting it: sameOriginOnly only protects against other web origins.
+func (a *App) Handler() http.Handler {
+	if a.api == nil {
+		return nil
+	}
+	return a.api.Handler()
+}
+
+// Register advances device registration in-process. It is the same operation
+// as POST /device/register on the control API; Run must already be active.
+func (a *App) Register(ctx context.Context, in register.Request) (register.Result, error) {
+	return a.reg.Register(ctx, in)
+}
+
+// Status reports the current session state without exposing credentials.
+func (a *App) Status() controlapi.Status { return a.status() }
+
 // Run connects, serves and processes events until ctx is cancelled, the
 // one-shot reply arrives, or an unrecoverable error occurs. A cancelled
 // resident run returns nil.
@@ -181,11 +203,13 @@ func (a *App) Run(ctx context.Context) error {
 		a.setupWebAudio()
 		a.api.SetRegistration(a.reg.Register)
 		a.api.SetConnectionControl(func() error { return a.command(false) }, func() error { return a.command(true) })
-		shutdown, err := a.serveHTTP()
-		if err != nil {
-			return err
+		if !a.cfg.NoListen {
+			shutdown, err := a.serveHTTP()
+			if err != nil {
+				return err
+			}
+			defer shutdown()
 		}
-		defer shutdown()
 	}
 	stop, err := a.startOneShot()
 	if err != nil {

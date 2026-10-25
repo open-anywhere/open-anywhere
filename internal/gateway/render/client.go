@@ -89,15 +89,38 @@ func IsCode(err error, code string) bool {
 // Client calls the Render HTTP API.
 type Client struct {
 	baseURL string
+	token   string
 	http    *http.Client
 }
 
+// Option adjusts a Render client.
+type Option func(*Client)
+
+// WithToken sends a bearer token on every request.
+func WithToken(token string) Option {
+	return func(c *Client) { c.token = token }
+}
+
+// WithHTTPClient replaces the HTTP client, for example with the policy-aware
+// client shared by all Render services.
+func WithHTTPClient(client *http.Client) Option {
+	return func(c *Client) {
+		if client != nil {
+			c.http = client
+		}
+	}
+}
+
 // New creates a Render client.
-func New(baseURL string, timeout time.Duration) *Client {
+func New(baseURL string, timeout time.Duration, options ...Option) *Client {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return &Client{baseURL: strings.TrimRight(baseURL, "/"), http: &http.Client{Timeout: timeout}}
+	client := &Client{baseURL: strings.TrimRight(baseURL, "/"), http: &http.Client{Timeout: timeout}}
+	for _, option := range options {
+		option(client)
+	}
+	return client
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
@@ -115,6 +138,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		request.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	response, err := c.http.Do(request)
 	if err != nil {

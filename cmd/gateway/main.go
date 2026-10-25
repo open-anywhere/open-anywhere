@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,10 +21,15 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/artifact"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/build"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/config"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/endpoints"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/mcp"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/netguard"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/portal"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/render"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/secret"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/settings"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/store"
 	"github.com/open-anywhere/open-anywhere/pkg/agentapi"
 	"github.com/open-anywhere/open-anywhere/pkg/casting"
@@ -58,6 +65,53 @@ func serve(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 	defer database.Close()
+
+	// Portal mode reads upstream credentials from platform settings so an
+	// administrator can configure or rotate them without a restart.
+	var (
+		guard      *netguard.Guard
+		platform   *settings.Provider
+		resolver   *endpoints.Resolver
+		clientPool *endpoints.Pool
+	)
+	if cfg.PortalEnabled {
+		// Refuse to generate a fresh key when the database already holds
+		// ciphertext: the new key could never open it and would replace the
+		// operator's only pointer to the original.
+		if !secret.Available(cfg.PortalDataDir, os.Getenv) {
+			encrypted, err := database.HasEncryptedSecrets(ctx)
+			if err != nil {
+				return err
+			}
+			if encrypted {
+				return fmt.Errorf("stored credentials are encrypted but no master key is configured; "+
+					"restore %s/%s or set %s to the original key",
+					cfg.PortalDataDir, secret.KeyFile, secret.EnvKey)
+			}
+		}
+		box, err := secret.Load(cfg.PortalDataDir, os.Getenv)
+		if err != nil {
+			return err
+		}
+		guard = netguard.New(cfg.AllowPrivateTargets)
+		platform = settings.New(database, box)
+		platform.SetURLValidatorContext(guard.CheckURL)
+		if err := seedPlatformSettings(ctx, platform, cfg); err != nil {
+			return err
+		}
+		// Fail at startup, not on the first request, when stored ciphertext
+		// cannot be opened with the configured master key. Silently generating
+		// a new key would make the administrator's credentials unusable.
+		if _, err := platform.Snapshot(ctx); err != nil {
+			return credentialError(cfg, "platform settings", err)
+		}
+		resolver = endpoints.NewResolver(database, platform, box, guard, catalog)
+		if err := resolver.ValidateSecrets(ctx); err != nil {
+			return credentialError(cfg, "service bindings", err)
+		}
+		clientPool = endpoints.NewPool(guard, cfg.HTTPTimeout, cfg.StartTimeout+cfg.HTTPTimeout)
+	}
+
 	registry := app.NewRegistry()
 	registry.SetPersister(database)
 	artifactStore, err := artifact.NewStore(cfg.ArtifactsDir, cfg.ArtifactBaseURL, database)
@@ -83,29 +137,59 @@ func serve(ctx context.Context, cfg config.Config) error {
 	}
 	registry.Load(persisted)
 
-	agentapiClient := agentapi.New(cfg.AgentAPIURL, cfg.AgentAPIKey, cfg.HTTPTimeout)
-	// A start request may legitimately use the whole startup budget, so the
-	// client's per-request deadline must not cut it short at the ordinary
-	// HTTP timeout (30s by default) while Render is still starting the app.
-	renderClient := render.New(cfg.RenderURL, cfg.StartTimeout+cfg.HTTPTimeout)
-	castingClient := casting.NewClient(cfg.CastingURL, cfg.HTTPTimeout)
-
 	server := mcp.New(nil, cfg.CallTimeout)
-	builder := build.New(agentapiClient, artifactStore, registry, server, build.Config{
-		AgentID:       cfg.AgentID,
-		AgentVersion:  cfg.AgentVersion,
-		EnvironmentID: cfg.EnvironmentID,
-		BuildTimeout:  cfg.BuildTimeout,
-		ArtifactLimit: artifact.MaxSize,
-	})
-	apps := service.New(registry, builder, renderClient, castingClient, catalog, server, service.Config{
+	var builder *build.Builder
+	if cfg.PortalEnabled {
+		builder = build.NewWithProvider(func(ctx context.Context) (build.Platform, error) {
+			snapshot, err := platform.Snapshot(ctx)
+			if err != nil {
+				return build.Platform{}, err
+			}
+			if !snapshot.AgentAPI.Ready() {
+				return build.Platform{}, app.ErrPlatformNotConfigured
+			}
+			return build.Platform{
+				Client:        agentapi.New(snapshot.AgentAPI.BaseURL, snapshot.AgentAPI.APIKey, cfg.HTTPTimeout),
+				AgentID:       snapshot.AgentAPI.AgentID,
+				AgentVersion:  snapshot.AgentAPI.AgentVersion,
+				EnvironmentID: snapshot.AgentAPI.EnvironmentID,
+			}, nil
+		}, artifactStore, registry, server, build.Config{
+			BuildTimeout:  cfg.BuildTimeout,
+			ArtifactLimit: artifact.MaxSize,
+		})
+	} else {
+		agentapiClient := agentapi.New(cfg.AgentAPIURL, cfg.AgentAPIKey, cfg.HTTPTimeout)
+		builder = build.New(agentapiClient, artifactStore, registry, server, build.Config{
+			AgentID:       cfg.AgentID,
+			AgentVersion:  cfg.AgentVersion,
+			EnvironmentID: cfg.EnvironmentID,
+			BuildTimeout:  cfg.BuildTimeout,
+			ArtifactLimit: artifact.MaxSize,
+		})
+	}
+	serviceConfig := service.Config{
 		StartTimeout:      cfg.StartTimeout,
 		ProjectionTimeout: cfg.ProjectionTimeout,
 		OperationsTimeout: cfg.HTTPTimeout,
 		MonitorInterval:   cfg.MonitorInterval,
 		PortMin:           cfg.PortMin,
 		PortMax:           cfg.PortMax,
-	})
+	}
+	var apps *service.Service
+	if cfg.PortalEnabled {
+		apps = service.NewWithBindings(registry, builder, resolver, clientPool, server, serviceConfig)
+		apps.SetURLValidator(guard.CheckURL)
+		apps.SetHTTPClient(guard.Client(cfg.HTTPTimeout))
+		server.SetOwnerValidator(resolver)
+	} else {
+		// A start request may legitimately use the whole startup budget, so the
+		// client's per-request deadline must not cut it short at the ordinary
+		// HTTP timeout (30s by default) while Render is still starting the app.
+		renderClient := render.New(cfg.RenderURL, cfg.StartTimeout+cfg.HTTPTimeout)
+		castingClient := casting.NewClient(cfg.CastingURL, cfg.HTTPTimeout)
+		apps = service.New(registry, builder, renderClient, castingClient, catalog, server, serviceConfig)
+	}
 	apps.SetArtifactStore(artifactStore)
 	if err := apps.RecoverRuntime(); err != nil {
 		return err
@@ -132,6 +216,45 @@ func serve(ctx context.Context, cfg config.Config) error {
 	mux.HandleFunc("GET /artifacts/{app_id}/{name}", artifactStore.ServeDownload)
 	mux.HandleFunc("GET /healthz", healthHandler(database))
 
+	if cfg.PortalEnabled {
+		portalService, err := portal.NewService(ctx, portal.BuildConfig{
+			DataDir:           cfg.PortalDataDir,
+			WebDir:            cfg.PortalWebDir,
+			WebEmbedded:       cfg.PortalWebEmbedded,
+			Username:          cfg.PortalUsername,
+			Password:          cfg.PortalPassword,
+			SessionTTL:        cfg.PortalSessionTTL,
+			CookieSecure:      cfg.PortalCookieSecure,
+			LinxPublicMCPURL:  cfg.LinxPublicMCPURL,
+			LinxMCPName:       cfg.LinxMCPName,
+			LinxAssistantName: cfg.LinxAssistantName,
+			LinxLLMModelID:    cfg.LinxLLMModelID,
+			LinxMemModelID:    cfg.LinxMemModelID,
+			LinxIntentModelID: cfg.LinxIntentModelID,
+			SystemPrompt:      cfg.LinxSystemPromptFile,
+			MCPToken:          cfg.MCPToken,
+			ProvisionTimeout:  cfg.LinxProvisionTimeout,
+			TokenPollInterval: cfg.LinxTokenPollInterval,
+			TokenPollAttempts: cfg.LinxTokenPollAttempts,
+		}, database, apps, platform, resolver, clientPool)
+		if err != nil {
+			return err
+		}
+		defer portalService.Voice.StopAll()
+		if err := portalService.Provision.Recover(ctx); err != nil {
+			return err
+		}
+		portalService.Auth.CleanupExpiredSessions(ctx)
+		mux.Handle("/api/portal/", portalService.API.Handler())
+		mux.Handle("/api/admin/", portalService.API.AdminHandler())
+		mux.Handle("/", portalService.API.WebHandler())
+		mux.Handle("/voice/", portalService.API.VoiceHandler())
+		if strings.HasSuffix(strings.TrimRight(cfg.LinxPublicMCPURL, "/"), "/sse") {
+			log.Printf("warning: linx.public_mcp_url ends with /sse; new Linx MCP servers use Streamable HTTP, configure .../mcp")
+		}
+		log.Printf("portal enabled at /portal")
+	}
+
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           mcpAuth(cfg.MCPToken, mux),
@@ -143,6 +266,41 @@ func serve(ctx context.Context, cfg config.Config) error {
 	log.Printf("gateway listening on %s", cfg.Addr)
 
 	return awaitShutdown(ctx, httpServer, server.Close, result)
+}
+
+// credentialError turns a master-key mismatch into an actionable startup
+// failure. Other storage errors are reported as they are.
+func credentialError(cfg config.Config, area string, err error) error {
+	if errors.Is(err, secret.ErrDecrypt) {
+		return fmt.Errorf("%s cannot be decrypted with the configured master key; "+
+			"restore %s/%s or set %s to the original key: %w",
+			area, cfg.PortalDataDir, secret.KeyFile, secret.EnvKey, err)
+	}
+	return fmt.Errorf("%s: %w", area, err)
+}
+
+// seedPlatformSettings copies deployment values into platform settings that an
+// administrator has not filled in yet. Existing values are never overwritten,
+// so edits made in the admin UI survive restarts and config changes.
+func seedPlatformSettings(ctx context.Context, provider *settings.Provider, cfg config.Config) error {
+	seeds := []settings.Seed{
+		{Key: settings.KeyAgentAPIBaseURL, Value: cfg.AgentAPIURL},
+		{Key: settings.KeyAgentAPIKey, Value: cfg.AgentAPIKey},
+		{Key: settings.KeyAgentAPIAgentID, Value: cfg.AgentID},
+		{Key: settings.KeyAgentAPIEnvironmentID, Value: cfg.EnvironmentID},
+		{Key: settings.KeyLinxAPIBase, Value: cfg.LinxAPIBase},
+		{Key: settings.KeyLinxOTAURL, Value: cfg.LinxOTAURL},
+		{Key: settings.KeyLinxAPIKey, Value: cfg.LinxAPIKey},
+		{Key: settings.KeyDefaultRenderURL, Value: cfg.RenderURL},
+		{Key: settings.KeyDefaultCastingURL, Value: cfg.CastingURL},
+	}
+	if cfg.AgentVersion > 0 {
+		seeds = append(seeds, settings.Seed{Key: settings.KeyAgentAPIAgentVersion, Value: strconv.Itoa(cfg.AgentVersion)})
+	}
+	if cfg.PortalAllowRegistration {
+		seeds = append(seeds, settings.Seed{Key: settings.KeyRegistrationOpen, Value: "true"})
+	}
+	return provider.Seed(ctx, seeds)
 }
 
 // healthHandler reports readiness, including database availability.

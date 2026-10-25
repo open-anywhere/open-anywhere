@@ -276,9 +276,9 @@ func TestPruneHistorySkipsWhileAStartIsInProgress(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		env.registry.Add(builtApp(t, fmt.Sprintf("app_%02d", i), i, app.StateIdle))
 	}
-	env.svc.lifecycle.Lock()
+	unlock := env.svc.lifecycle.Lock(ownerKey(ownerOld))
 	env.svc.PruneHistory()
-	env.svc.lifecycle.Unlock()
+	unlock()
 	if got := len(env.registry.List()); got != 12 {
 		t.Fatalf("%d apps left, the prune should have waited", got)
 	}
@@ -368,5 +368,117 @@ func TestAFailedStartIsKeptWhileAnotherSessionHoldsTheScreen(t *testing.T) {
 	}
 	if len(env.render.deletedIDs()) != 0 || len(env.casting.stoppedIDs()) != 0 {
 		t.Fatal("something was stopped without proof that it is ours")
+	}
+}
+
+func appForOwner(t *testing.T, owner app.Identity, id string, minutes int) app.App {
+	t.Helper()
+	started := baseTime.Add(time.Duration(minutes) * time.Minute)
+	return app.App{
+		ID:              id,
+		Owner:           owner,
+		Name:            "name-" + id,
+		State:           app.StateIdle,
+		OpenAPI:         mustSpec(t),
+		BuildStartedAt:  started,
+		BuildFinishedAt: started.Add(time.Minute),
+		BuildDuration:   time.Minute,
+		Artifact:        app.Artifact{Path: "artifacts/" + id + ".tar.gz"},
+	}
+}
+
+func TestPruneHistoryGroupsByDeviceAndAgent(t *testing.T) {
+	env := newTestEnv(t, nil)
+	env.svc.SetArtifactStore(&fakeArtifacts{})
+	ownerA := app.Identity{DeviceID: "device-a", AgentID: "agent-a"}
+	ownerB := app.Identity{DeviceID: "device-b", AgentID: "agent-b"}
+	for i := 0; i < 12; i++ {
+		env.registry.Add(appForOwner(t, ownerA, fmt.Sprintf("a_%02d", i), i))
+		env.registry.Add(appForOwner(t, ownerB, fmt.Sprintf("b_%02d", i), i))
+	}
+
+	env.svc.PruneHistory()
+
+	left := map[string]int{}
+	for _, value := range env.registry.List() {
+		left[value.Owner.DeviceID]++
+	}
+	if left["device-a"] != 10 || left["device-b"] != 10 {
+		t.Fatalf("left per owner=%v", left)
+	}
+	for _, id := range []string{"a_00", "a_01", "b_00", "b_01"} {
+		if _, ok := env.registry.Get(id); ok {
+			t.Errorf("%s should have been pruned", id)
+		}
+	}
+	for _, id := range []string{"a_11", "b_11"} {
+		if _, ok := env.registry.Get(id); !ok {
+			t.Errorf("%s is among the newest ten but was removed", id)
+		}
+	}
+}
+
+func TestDeleteAppRemovesAnIdleApplicationAndItsPackage(t *testing.T) {
+	env := newTestEnv(t, nil)
+	artifacts := &fakeArtifacts{}
+	env.svc.SetArtifactStore(artifacts)
+	env.registry.Add(builtApp(t, "app_idle", 0, app.StateIdle))
+
+	if err := env.svc.DeleteApp(context.Background(), ownerFresh, "app_idle"); err != nil {
+		t.Fatalf("DeleteApp: %v", err)
+	}
+	if _, ok := env.registry.Get("app_idle"); ok {
+		t.Fatal("the application was not removed")
+	}
+	if got := artifacts.removedIDs(); len(got) != 1 || got[0] != "app_idle" {
+		t.Fatalf("removed packages=%v", got)
+	}
+	if err := env.svc.DeleteApp(context.Background(), ownerFresh, "app_idle"); toolCode(t, err) != "APP_NOT_FOUND" {
+		t.Fatalf("second delete err=%v", err)
+	}
+}
+
+func TestDeleteAppRefusesLiveApplicationsAndForeignOwners(t *testing.T) {
+	env := newTestEnv(t, nil)
+	env.svc.SetArtifactStore(&fakeArtifacts{})
+	running := builtApp(t, "app_running", 0, app.StateRunning)
+	building := app.App{ID: "app_building", Owner: ownerOld, State: app.StateBuilding, BuildStartedAt: baseTime}
+	holding := builtApp(t, "app_holding", 1, app.StateError)
+	holding.CleanupPending = true
+	for _, value := range []app.App{running, building, holding} {
+		env.registry.Add(value)
+	}
+
+	for _, id := range []string{"app_running", "app_building", "app_holding"} {
+		if err := env.svc.DeleteApp(context.Background(), ownerFresh, id); toolCode(t, err) != "APP_BUSY" {
+			t.Errorf("%s err=%v", id, err)
+		}
+		if _, ok := env.registry.Get(id); !ok {
+			t.Errorf("%s was removed", id)
+		}
+	}
+	stranger := app.Identity{DeviceID: "other-device", AgentID: "agent", SessionID: "s"}
+	if err := env.svc.DeleteApp(context.Background(), stranger, "app_running"); toolCode(t, err) != "APP_NOT_FOUND" {
+		t.Fatalf("stranger err=%v", err)
+	}
+}
+
+func TestSummarizeIncludesLifecycleTimestamps(t *testing.T) {
+	env := newTestEnv(t, nil)
+	value := runningApp(ownerFresh)
+	value.BuildStartedAt = baseTime
+	value.BuildFinishedAt = baseTime.Add(time.Minute)
+	value.BuildDuration = time.Minute
+	value.StartedAt = baseTime.Add(2 * time.Minute)
+	value.StoppedAt = baseTime.Add(3 * time.Minute)
+	sum := env.svc.summarize(value)
+	if sum.BuildStartedAt == nil || !sum.BuildStartedAt.Equal(value.BuildStartedAt) {
+		t.Fatalf("build_started_at = %v", sum.BuildStartedAt)
+	}
+	if sum.StartedAt == nil || !sum.StartedAt.Equal(value.StartedAt) {
+		t.Fatalf("started_at = %v", sum.StartedAt)
+	}
+	if sum.StoppedAt == nil || !sum.StoppedAt.Equal(value.StoppedAt) {
+		t.Fatalf("stopped_at = %v", sum.StoppedAt)
 	}
 }
