@@ -35,6 +35,11 @@ func (f *fakeAgentPlatform) handler() http.Handler {
 			_, _ = w.Write([]byte(`{"code":0,"data":{"voices":[
 				{"id":"voice_a","name":"小雅","demo":"https://example.com/a.mp3","tags":{"gender":"female","age":"young","styles":["温柔"]}},
 				{"id":"voice_b","name":"阿伟","tags":{"gender":"male"}}]}}`))
+		case r.URL.Path == "/v1/agents/agent_1/chat-history":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"records":[
+				{"chat_type":2,"content":"好的","audio_url":"https://x/secret.wav","device_id":"AA:BB","created_at":"2026-10-25T23:24:10+08:00"},
+				{"chat_type":3,"content":"tool","created_at":"2026-10-25T23:24:09+08:00"},
+				{"chat_type":1,"content":"你好","audio_url":"https://x/in.wav","created_at":"2026-10-25T23:24:08+08:00"}]}}`))
 		case r.URL.Path == "/v1/mcps":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"mcps":[
 				{"id":"mcp_ours","mcp_id":"srv_1","name":"Open-anywhere","desc":"应用管理","is_private":true,"config":{"sse":{"header":{"Authorization":"Bearer secret-token"}}}},

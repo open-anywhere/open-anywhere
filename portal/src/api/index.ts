@@ -63,6 +63,13 @@ export interface AgentOption {
   comment?: string
 }
 
+/** One saved chat line of an agent. */
+export interface ChatLine {
+  role: 'user' | 'agent'
+  text: string
+  at: string
+}
+
 /** One MCP service on the Linx platform account. */
 export interface McpService {
   id: string
@@ -467,6 +474,8 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(input),
     }),
+  getChatHistory: (deviceId: string, limit = 30) =>
+    request<{ records: ChatLine[] }>(`/devices/${encodeURIComponent(deviceId)}/chat-history?limit=${limit}`),
   getDeviceMcps: (deviceId: string) =>
     request<{ required: McpService | null; available: McpService[] }>(
       `/devices/${encodeURIComponent(deviceId)}/mcps`,

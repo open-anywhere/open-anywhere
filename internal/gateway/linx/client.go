@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -572,6 +573,30 @@ func (c *Client) AgentMCPs(ctx context.Context, agentID string) ([]string, error
 		ids = append(ids, item.ID)
 	}
 	return ids, nil
+}
+
+// ChatRecord is one saved chat line. ChatType is 1 for what the user said
+// and 2 for the agent's reply.
+type ChatRecord struct {
+	ChatType  int    `json:"chat_type"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ChatHistory returns the most recent saved chat lines of an agent, newest
+// first. Audio links and device identifiers are not decoded.
+func (c *Client) ChatHistory(ctx context.Context, agentID string, limit int) ([]ChatRecord, error) {
+	if strings.TrimSpace(agentID) == "" {
+		return nil, errors.New("linx: agent id is required")
+	}
+	var data struct {
+		Records []ChatRecord `json:"records"`
+	}
+	path := "/v1/agents/" + url.PathEscape(agentID) + "/chat-history?limit=" + strconv.Itoa(limit)
+	if err := c.do(ctx, http.MethodGet, path, nil, &data); err != nil {
+		return nil, err
+	}
+	return data.Records, nil
 }
 
 func (c *Client) listServers(ctx context.Context) ([]platformServer, error) {

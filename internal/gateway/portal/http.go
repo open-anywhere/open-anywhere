@@ -90,6 +90,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/portal/devices/{id}/agent", a.withUser(a.getDeviceAgent))
 	mux.HandleFunc("PUT /api/portal/devices/{id}/agent", a.withUser(a.updateDeviceAgent))
 	mux.HandleFunc("GET /api/portal/devices/{id}/mcps", a.withUser(a.getDeviceMCPs))
+	mux.HandleFunc("GET /api/portal/devices/{id}/chat-history", a.withUser(a.getChatHistory))
 	mux.HandleFunc("PUT /api/portal/devices/{id}/mcps", a.withUser(a.setDeviceMCPs))
 	mux.HandleFunc("GET /api/portal/agent-options", a.withUser(a.listAgentOptions))
 	mux.HandleFunc("POST /api/portal/devices/{id}/retry", a.withUser(a.retryDevice))
