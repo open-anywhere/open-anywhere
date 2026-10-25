@@ -41,7 +41,11 @@ func TestLoadRequiresAKeySource(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	// A regular file cannot contain the key file, so reading fails with a real
-	// I/O error rather than being treated as a missing key.
+	// I/O error rather than being treated as a missing key. Windows reports a
+	// missing path here instead, so this part only holds on Unix.
+	if runtime.GOOS == "windows" {
+		return
+	}
 	dir := filepath.Join(t.TempDir(), "data")
 	if err := os.WriteFile(dir, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)

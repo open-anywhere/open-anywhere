@@ -11,7 +11,7 @@ import (
 
 // portalDeviceView keeps the device rows readable while one expression makes a
 // single query fail. Callers rename the table first and then create the view.
-const portalDeviceView = `SELECT id, user_id, kind, mac, client_id, linx_agent_id, agent_name, state, step,
+const portalDeviceView = `SELECT id, user_id, kind, mac, client_id, linx_agent_id, agent_name, name, state, step,
 	%s AS error, credential_path, created_at, updated_at, registered_at
 	FROM portal_devices_base`
 

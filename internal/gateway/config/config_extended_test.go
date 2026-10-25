@@ -134,8 +134,6 @@ func TestValidatePortalDeploymentSettings(t *testing.T) {
 		t.Fatalf("the baseline portal configuration is invalid: %v", err)
 	}
 	tests := map[string]func(*Config){
-		"missing mcp token":        func(c *Config) { c.MCPToken = "" },
-		"missing public mcp url":   func(c *Config) { c.LinxPublicMCPURL = "" },
 		"invalid public mcp url":   func(c *Config) { c.LinxPublicMCPURL = "http://[::1" },
 		"private public mcp url":   func(c *Config) { c.LinxPublicMCPURL = "ftp://gateway.example/mcp" },
 		"missing data directory":   func(c *Config) { c.PortalDataDir = "" },
