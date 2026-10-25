@@ -248,3 +248,14 @@ sequenceDiagram
 | `internal/gateway/mcp` | 注册 `update-app` 与工具描述 |
 
 实现前以本文与同步修订后的 MCP / AgentAPI 文档为准；产品话术见 [product.md](product.md) 中「需要重新构建的能力」分支。
+
+## 11. 验证状态
+
+| 项 | 状态 |
+| --- | --- |
+| P1 并发 `create-app`（去掉 `FindBuilding`） | 单测覆盖：同 owner 两次 create 得到两个 `app_id` |
+| P2 Builder `Continue` + 保留旧产物失败回退 | 单测覆盖：`Continue` 成功更新通知「APP 更新完成」；busy/terminated；`fail` 保留旧包回 `idle` |
+| P3 MCP `update-app` + Service 状态机 | 单测覆盖：idle/building/running/error/无会话/rollback |
+| 验收场景 1–7 | 由上述单测覆盖 |
+| 验收场景 8（长 idle 后真实沙箱恢复） | **未在真实 AgentAPI 上冒烟**；部署后需手工验证 |
+| SQLite schema | 未改；绑定仍为 `apps.data.SessionID` |

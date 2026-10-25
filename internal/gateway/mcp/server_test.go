@@ -61,6 +61,17 @@ func (f *fakeApps) CreateApp(_ context.Context, owner app.Identity, prompt strin
 	return f.create, f.err
 }
 
+func (f *fakeApps) UpdateApp(_ context.Context, owner app.Identity, appID, prompt string) (service.CreateResult, error) {
+	f.record(owner)
+	f.mu.Lock()
+	f.prompt = prompt
+	f.mu.Unlock()
+	if f.create.AppID == "" {
+		return service.CreateResult{AppID: appID, State: app.StateBuilding}, f.err
+	}
+	return f.create, f.err
+}
+
 func (f *fakeApps) GetAppStatus(_ context.Context, owner app.Identity, _ string) (service.StatusView, error) {
 	f.record(owner)
 	return f.status, f.err
@@ -209,7 +220,7 @@ func TestServerSessionFlow(t *testing.T) {
 
 	call(3, "tools/list", nil)
 	tools, _ := resultOf(t, readResponse())["tools"].([]any)
-	if len(tools) != 7 {
+	if len(tools) != 8 {
 		t.Fatalf("tools = %d", len(tools))
 	}
 	names := make(map[string]bool, len(tools))
@@ -221,7 +232,7 @@ func TestServerSessionFlow(t *testing.T) {
 			createTool = tool
 		}
 	}
-	for _, want := range []string{"get-screens", "create-app", "get-app-status", "get-app-operations", "start-app", "stop-app", "send-request"} {
+	for _, want := range []string{"get-screens", "create-app", "update-app", "get-app-status", "get-app-operations", "start-app", "stop-app", "send-request"} {
 		if !names[want] {
 			t.Fatalf("missing tool %q in %+v", want, names)
 		}

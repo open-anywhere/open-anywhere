@@ -270,6 +270,89 @@ func TestResumeWithoutSessionFails(t *testing.T) {
 	}
 }
 
+func TestBuilderContinueUpdates(t *testing.T) {
+	archive := testArtifact(t)
+	rec := &recorder{}
+	server := newAgentServer(t, "complete", archive, rec)
+	defer server.Close()
+	notifier := &fakeNotifier{}
+	builder, registry, _ := newTestBuilder(t, server.URL, notifier)
+
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	entry := registry.Add(app.App{
+		ID: "app_1", Owner: owner, Prompt: "题目改成动物主题", State: app.StateBuilding,
+		SessionID: "ses_1", BuildStartedAt: time.Now().UTC(),
+		Name: "quiz", Artifact: app.Artifact{SHA256: "old", Path: "old.tar.gz", DownloadURL: "http://old"},
+	})
+	if err := builder.Continue(context.Background(), entry.Snapshot()); err != nil {
+		t.Fatalf("Continue: %v", err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return entry.Snapshot().State != app.StateBuilding })
+
+	snapshot := entry.Snapshot()
+	if snapshot.State != app.StateIdle || snapshot.Artifact.SHA256 == "old" {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	waitFor(t, 2*time.Second, func() bool { return len(notifier.list()) == 1 })
+	if notes := notifier.list(); notes[0].Message != "APP 更新完成" {
+		t.Fatalf("notes = %+v", notes)
+	}
+	prompts := rec.promptList()
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "题目改成动物主题") || !strings.Contains(prompts[0], "重新交付完整的 artifact.tar.gz") {
+		t.Fatalf("prompts = %+v", prompts)
+	}
+	if archived := rec.archiveList(); len(archived) != 0 {
+		t.Fatalf("update must keep the session: %v", archived)
+	}
+}
+
+func TestBuilderContinueRejectsBusyOrMissingSession(t *testing.T) {
+	t.Run("busy", func(t *testing.T) {
+		server := builderTestServer(t, func(w http.ResponseWriter, r *http.Request) {}, nil, "running", nil)
+		defer server.Close()
+		builder, _, _ := newTestBuilder(t, server.URL, &fakeNotifier{})
+		err := builder.Continue(context.Background(), app.App{ID: "app_1", SessionID: "ses_1", Prompt: "x"})
+		if err != ErrSessionBusy {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("terminated", func(t *testing.T) {
+		server := builderTestServer(t, func(w http.ResponseWriter, r *http.Request) {}, nil, "terminated", nil)
+		defer server.Close()
+		builder, _, _ := newTestBuilder(t, server.URL, &fakeNotifier{})
+		err := builder.Continue(context.Background(), app.App{ID: "app_1", SessionID: "ses_1", Prompt: "x"})
+		if err != ErrSessionUnavailable {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("missing session id", func(t *testing.T) {
+		builder, _, _ := newTestBuilder(t, "http://127.0.0.1:1", &fakeNotifier{})
+		if err := builder.Continue(context.Background(), app.App{ID: "app_1", Prompt: "x"}); err != ErrSessionUnavailable {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
+func TestFailKeepsPreviousArtifact(t *testing.T) {
+	builder, registry, _ := newTestBuilder(t, "http://127.0.0.1:1", &fakeNotifier{})
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	entry := registry.Add(app.App{
+		ID: "app_1", Owner: owner, State: app.StateBuilding,
+		Artifact: app.Artifact{SHA256: "keep", Path: "keep.tar.gz"},
+	})
+	if kept := builder.fail("app_1", "构建需要人工处理", nil); !kept {
+		t.Fatal("expected previous artifact to be kept")
+	}
+	snapshot := entry.Snapshot()
+	if snapshot.State != app.StateIdle || snapshot.Artifact.SHA256 != "keep" || snapshot.Error != nil {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	notes := builder.notifier.(*fakeNotifier).list()
+	if len(notes) != 1 || notes[0].State != app.StateIdle || !strings.Contains(notes[0].Message, "更新失败") {
+		t.Fatalf("notes = %+v", notes)
+	}
+}
+
 func newTestBuilder(t *testing.T, serverURL string, notifier *fakeNotifier) (*Builder, *app.Registry, *artifact.Store) {
 	t.Helper()
 	registry := app.NewRegistry()
@@ -465,6 +548,16 @@ func TestBuildPrompt(t *testing.T) {
 	with := BuildPrompt("做一个游戏", []string{"韩鲁鹏", "邓军辉"})
 	if !strings.Contains(with, `初始玩家（按加入顺序）：["韩鲁鹏","邓军辉"]`) {
 		t.Fatalf("prompt does not carry player names: %q", with)
+	}
+}
+
+func TestUpdatePrompt(t *testing.T) {
+	got := UpdatePrompt(" 题目改成动物主题 ")
+	if !strings.Contains(got, "修改要求：\n题目改成动物主题\n") {
+		t.Fatalf("prompt = %q", got)
+	}
+	if !strings.Contains(got, "重新交付完整的 artifact.tar.gz") {
+		t.Fatalf("prompt = %q", got)
 	}
 }
 

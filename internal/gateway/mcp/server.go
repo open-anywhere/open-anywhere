@@ -23,6 +23,7 @@ import (
 type Apps interface {
 	GetScreens(ctx context.Context, owner app.Identity) ([]service.ScreenView, error)
 	CreateApp(ctx context.Context, owner app.Identity, prompt string, playerNames []string) (service.CreateResult, error)
+	UpdateApp(ctx context.Context, owner app.Identity, appID, prompt string) (service.CreateResult, error)
 	GetAppStatus(ctx context.Context, owner app.Identity, appID string) (service.StatusView, error)
 	GetAppOperations(ctx context.Context, owner app.Identity, appID string) (service.OperationsView, error)
 	StartApp(ctx context.Context, owner app.Identity, appID, screenID string, force bool) (service.StatusView, error)
@@ -33,7 +34,7 @@ type Apps interface {
 const (
 	serverName         = "open-anywhere-gateway"
 	defaultTimeout     = 2 * time.Minute
-	serverInstructions = "Open Anywhere 用于让应用在身边屏幕上生成并运行。创建应用是异步任务：create-app 后先告诉用户正在制作，再用 get-app-status 查询；构建完成会发送 notifications/app_status。启动前先用 get-screens 获取明确的 screen_id。用户想再玩之前做过的应用时，先用 list-apps 找到它，不要重新创建。调用应用业务接口前，必须先用 get-app-operations 获取 operation_id、参数和请求体结构，再用 send-request。只对用户说应用和屏幕的自然名称，不要念内部标识。"
+	serverInstructions = "Open Anywhere 用于让应用在身边屏幕上生成并运行。创建应用是异步任务：create-app 后先告诉用户正在制作，再用 get-app-status 查询；构建完成会发送 notifications/app_status。修改已有应用用 update-app，不要重新 create-app。可以同时创建多个应用，用返回的 app_id 区分。启动前先用 get-screens 获取明确的 screen_id。用户想再玩之前做过的应用时，先用 list-apps 找到它，不要重新创建。调用应用业务接口前，必须先用 get-app-operations 获取 operation_id、参数和请求体结构，再用 send-request。只对用户说应用和屏幕的自然名称，不要念内部标识。"
 )
 
 // Server owns one MCP server per SSE connection and routes Linx's POST

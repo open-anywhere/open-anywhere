@@ -299,16 +299,6 @@ func (r *Registry) List() []App {
 	return apps
 }
 
-// FindBuilding returns the owner's current building application, if any.
-func (r *Registry) FindBuilding(owner Identity) (App, bool) {
-	for _, value := range r.List() {
-		if value.State == StateBuilding && value.Owner.SameOwner(owner) {
-			return value, true
-		}
-	}
-	return App{}, false
-}
-
 // RunningOnScreen returns the application currently running on screenID.
 func (r *Registry) RunningOnScreen(screenID string) (App, bool) {
 	for _, value := range r.List() {

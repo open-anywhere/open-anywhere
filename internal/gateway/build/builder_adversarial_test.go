@@ -518,7 +518,7 @@ func TestRegisterPaths(t *testing.T) {
 	t.Run("state left building before registration", func(t *testing.T) {
 		builder, registry, _ := newTestBuilder(t, "http://127.0.0.1:1", &fakeNotifier{})
 		entry := registry.Add(app.App{ID: "app_1", Owner: owner, State: app.StateIdle})
-		builder.register(entry, artifact.Result{Launch: artifact.Launch{Name: "late"}}, artifact.Item{})
+		builder.register(entry, artifact.Result{Launch: artifact.Launch{Name: "late"}}, artifact.Item{}, false)
 		if entry.Snapshot().State != app.StateIdle || entry.Snapshot().Name != "" {
 			t.Fatalf("snapshot = %+v", entry.Snapshot())
 		}
@@ -532,7 +532,7 @@ func TestRegisterPaths(t *testing.T) {
 		registry.SetPersister(failingBuilderStore{func(app.App) bool { return true }})
 		var logs []string
 		builder.logf = func(format string, args ...any) { logs = append(logs, format) }
-		builder.register(entry, artifact.Result{Launch: artifact.Launch{Name: "quiz"}}, artifact.Item{})
+		builder.register(entry, artifact.Result{Launch: artifact.Launch{Name: "quiz"}}, artifact.Item{}, false)
 		if entry.Snapshot().State != app.StateBuilding {
 			t.Fatalf("an undurable ready state was published: %+v", entry.Snapshot())
 		}
