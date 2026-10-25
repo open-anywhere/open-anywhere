@@ -291,7 +291,7 @@ flowchart TB
 
 ```text
 portal_user
-  └─ portal_device（kind=virtual，最多一台）
+  └─ portal_device（virtual 或 physical，每账号最多 10 台）
        └─ Linx agent（用平台 Linx Key 自动创建）
             └─ apps（由该 agent 通过 MCP 创建）
 portal_service_bindings（每用户一行）

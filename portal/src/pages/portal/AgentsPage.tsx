@@ -1,12 +1,14 @@
-import { ReloadOutlined } from '@ant-design/icons'
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { Alert, App as AntApp, Button, Space } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { ApiError, api } from '../../api'
+import { useState } from 'react'
+import { ApiError, api, type CreateDeviceInput } from '../../api'
 import { appsQueryOptions, meQueryOptions } from '../../api/queries'
 import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { deviceForApp } from '../../lib/device'
+import { AddDeviceModal } from './components/AddDeviceModal'
 import { AppRow } from './components/AppRow'
 import { DevicePanel } from './components/DevicePanel'
 import { PageHeader } from './components/PageHeader'
@@ -15,7 +17,7 @@ export function AgentsPage() {
   usePageTitle('智能体')
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
 
   const me = useQuery({
     ...meQueryOptions,
@@ -23,14 +25,42 @@ export function AgentsPage() {
       query.state.data?.devices.some((device) => device.state === 'provisioning') ? 2_000 : false,
   })
 
+  const [addOpen, setAddOpen] = useState(false)
+
   const createDevice = useMutation({
-    mutationFn: api.createDevice,
-    onSuccess: () => {
-      message.success('正在准备你的智能体')
+    mutationFn: (input?: CreateDeviceInput) => api.createDevice(input),
+    onSuccess: (_, input) => {
+      setAddOpen(false)
+      message.success(input?.kind === 'physical' ? '设备已绑定' : '正在准备你的智能体')
       queryClient.invalidateQueries({ queryKey: ['me'] })
+      queryClient.invalidateQueries({ queryKey: ['apps'] })
     },
     onError: (error) => {
-      message.error(error instanceof ApiError ? error.message : '暂时无法创建智能体')
+      message.error(error instanceof ApiError ? error.message : '暂时无法添加设备')
+    },
+  })
+
+  const removeDevice = useMutation({
+    mutationFn: ({ id, force }: { id: string; force?: boolean }) => api.deleteDevice(id, force),
+    onSuccess: () => {
+      message.success('设备已移除')
+      queryClient.invalidateQueries({ queryKey: ['me'] })
+      queryClient.invalidateQueries({ queryKey: ['apps'] })
+    },
+    onError: (error, variables) => {
+      const text = error instanceof ApiError ? error.message : '移除失败'
+      if (error instanceof ApiError && error.code === 'UNBIND_FAILED' && !variables.force) {
+        modal.confirm({
+          title: '向灵矽解绑失败',
+          content: `${text}。仍要从这里移除吗？`,
+          okText: '强制移除',
+          okButtonProps: { danger: true },
+          cancelText: '取消',
+          onOk: () => removeDevice.mutate({ id: variables.id, force: true }),
+        })
+        return
+      }
+      message.error(text)
     },
   })
 
@@ -62,6 +92,11 @@ export function AgentsPage() {
             <Button icon={<ReloadOutlined />} loading={me.isFetching} onClick={() => me.refetch()}>
               刷新
             </Button>
+            {devices.length ? (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
+                添加设备
+              </Button>
+            ) : null}
           </Space>
         }
       />
@@ -85,7 +120,9 @@ export function AgentsPage() {
                 device={device}
                 creating={createDevice.isPending}
                 retrying={retryDevice.isPending && retryDevice.variables === device.id}
-                onCreate={() => createDevice.mutate()}
+                onCreate={() => createDevice.mutate({})}
+                onRemove={devices.length > 1 ? () => removeDevice.mutate({ id: device.id }) : undefined}
+                removing={removeDevice.isPending && removeDevice.variables?.id === device.id}
                 onRetry={() => retryDevice.mutate(device.id)}
                 disconnecting={disconnect.isPending && disconnect.variables === device.id}
                 reconnecting={reconnect.isPending && reconnect.variables === device.id}
@@ -119,12 +156,20 @@ export function AgentsPage() {
           <DevicePanel
             creating={createDevice.isPending}
             retrying={false}
-            onCreate={() => createDevice.mutate()}
+            onCreate={() => createDevice.mutate({})}
             onRetry={() => undefined}
             onCall={() => navigate({ to: '/portal/call' })}
           />
         </section>
       )}
+
+      <AddDeviceModal
+        open={addOpen}
+        devices={devices}
+        submitting={createDevice.isPending}
+        onCancel={() => setAddOpen(false)}
+        onSubmit={(input) => createDevice.mutate(input)}
+      />
     </div>
   )
 }

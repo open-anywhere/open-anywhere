@@ -60,6 +60,7 @@ type PortalDevice struct {
 	ClientID       string     `json:"client_id"`
 	LinxAgentID    string     `json:"agent_id"`
 	AgentName      string     `json:"agent_name"`
+	Name           string     `json:"name"`
 	State          string     `json:"state"`
 	Step           string     `json:"step"`
 	Error          string     `json:"error"`
@@ -426,14 +427,23 @@ func insertPortalDevice(ctx context.Context, q execer, device PortalDevice) erro
 		return fmt.Errorf("store: portal device id, user and mac are required")
 	}
 	_, err := q.ExecContext(ctx, `INSERT INTO portal_devices
-		(id, user_id, kind, mac, client_id, linx_agent_id, agent_name, state, step, error, credential_path,
+		(id, user_id, kind, mac, client_id, linx_agent_id, agent_name, name, state, step, error, credential_path,
 		 created_at, updated_at, registered_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		device.ID, device.UserID, device.Kind, device.MAC, device.ClientID, device.LinxAgentID,
-		device.AgentName, device.State, device.Step, device.Error, device.CredentialPath,
+		device.AgentName, device.Name, device.State, device.Step, device.Error, device.CredentialPath,
 		formatTime(device.CreatedAt), formatTime(device.UpdatedAt), formatTimePtr(device.RegisteredAt))
 	if err != nil {
 		return fmt.Errorf("store: create portal device: %w", err)
+	}
+	return nil
+}
+
+// DeletePortalDevice removes one device record. Callers decide whether its
+// applications, voice runtime and credential file may go.
+func (d *DB) DeletePortalDevice(ctx context.Context, id string) error {
+	if _, err := d.sql.ExecContext(ctx, `DELETE FROM portal_devices WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("store: delete portal device: %w", err)
 	}
 	return nil
 }
@@ -550,10 +560,10 @@ func (d *DB) UpdatePortalDevice(ctx context.Context, device PortalDevice) error 
 		return fmt.Errorf("store: portal device id is required")
 	}
 	_, err := d.sql.ExecContext(ctx, `UPDATE portal_devices SET
-		kind = ?, mac = ?, client_id = ?, linx_agent_id = ?, agent_name = ?, state = ?, step = ?,
+		kind = ?, mac = ?, client_id = ?, linx_agent_id = ?, agent_name = ?, name = ?, state = ?, step = ?,
 		error = ?, credential_path = ?, updated_at = ?, registered_at = ?
 		WHERE id = ?`,
-		device.Kind, device.MAC, device.ClientID, device.LinxAgentID, device.AgentName,
+		device.Kind, device.MAC, device.ClientID, device.LinxAgentID, device.AgentName, device.Name,
 		device.State, device.Step, device.Error, device.CredentialPath,
 		formatTime(device.UpdatedAt), formatTimePtr(device.RegisteredAt), device.ID)
 	if err != nil {
@@ -562,7 +572,7 @@ func (d *DB) UpdatePortalDevice(ctx context.Context, device PortalDevice) error 
 	return nil
 }
 
-const selectPortalDevice = `SELECT id, user_id, kind, mac, client_id, linx_agent_id, agent_name,
+const selectPortalDevice = `SELECT id, user_id, kind, mac, client_id, linx_agent_id, agent_name, name,
 	state, step, error, credential_path, created_at, updated_at, registered_at FROM portal_devices`
 
 func scanPortalDevice(row rowScanner) (PortalDevice, error) {
@@ -572,7 +582,7 @@ func scanPortalDevice(row rowScanner) (PortalDevice, error) {
 		registeredAt         sql.NullString
 	)
 	if err := row.Scan(&device.ID, &device.UserID, &device.Kind, &device.MAC, &device.ClientID,
-		&device.LinxAgentID, &device.AgentName, &device.State, &device.Step, &device.Error,
+		&device.LinxAgentID, &device.AgentName, &device.Name, &device.State, &device.Step, &device.Error,
 		&device.CredentialPath, &createdAt, &updatedAt, &registeredAt); err != nil {
 		return PortalDevice{}, err
 	}

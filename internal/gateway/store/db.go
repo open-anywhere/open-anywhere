@@ -20,7 +20,7 @@ import (
 
 // schemaVersion is the newest schema this binary understands. A database that
 // reports a newer version is refused so an older binary cannot corrupt it.
-const schemaVersion = 3
+const schemaVersion = 4
 
 var memorySequence atomic.Uint64
 
@@ -131,6 +131,18 @@ var schemaV3 = []string{
 	)`,
 }
 
+// schemaV4 lets one account own several devices: any number of virtual agents,
+// and physical hardware bound to an existing agent. A Linx agent may now be
+// shared by several devices, so uniqueness moves from the agent to the
+// (agent, MAC) pair. Devices also get a display name.
+var schemaV4 = []string{
+	`DROP INDEX IF EXISTS portal_devices_one_virtual`,
+	`DROP INDEX IF EXISTS portal_devices_agent`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS portal_devices_agent_mac
+		ON portal_devices(linx_agent_id, mac) WHERE linx_agent_id <> ''`,
+	`ALTER TABLE portal_devices ADD COLUMN name TEXT NOT NULL DEFAULT ''`,
+}
+
 type migration struct {
 	version    int
 	statements []string
@@ -143,6 +155,7 @@ var migrations = []migration{
 	{version: 1, statements: schemaV1},
 	{version: 2, statements: schemaV2},
 	{version: 3, statements: schemaV3, prepare: prepareSchemaV3},
+	{version: 4, statements: schemaV4},
 }
 
 // prepareSchemaV3 refuses duplicate virtual devices and duplicate Linx agent

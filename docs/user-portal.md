@@ -9,7 +9,7 @@ Gateway 以厂商托管的在线 Portal（SaaS 形态）运行：管理员先登
 Portal 与 Gateway 同进程、同端口、同 SQLite：
 
 - 管理员与普通用户使用同一个登录入口，按角色进入 `/admin` 或 `/portal`。
-- 每个用户只有一台虚拟智能体；应用归属仍是 `(MAC, AgentID)`，与灵矽 MCP 侧的判断一致。
+- 注册时自动创建一台虚拟智能体；之后用户可以再添加虚拟设备（各自创建一个智能体），也可以用激活码把硬件设备绑定到已有智能体，最多 10 台。应用归属仍是 `(MAC, AgentID)`，与灵矽 MCP 侧的判断一致。
 - Render/Casting 按用户解析：平台默认服务（managed）或用户自己的公网服务（custom）。
 - 本期不处理局域网穿透、连接器与计费；Render/Casting 假定已作为公网服务暴露。
 
@@ -52,7 +52,7 @@ Portal 与 Gateway 同进程、同端口、同 SQLite：
 
 - 登录成功后：有站内 `redirect` 参数则回到该地址；否则 `admin → /admin`，`user → /portal`。
 - `requireAdmin` 在 `role !== 'admin'` 时跳回 `/portal`；普通用户看不到管理入口。
-- 管理员仍可访问 `/portal`，其引导账号原本拥有的设备与应用继续可用；还没有虚拟设备的账号可在智能体页通过补建入口创建。
+- 管理员仍可访问 `/portal`，其引导账号原本拥有的设备与应用继续可用；还没有虚拟设备的账号可在智能体页通过“添加设备”创建。
 - 配置账号在每次启动时都会被 `EnsureAdmin` 提升为管理员并激活；如果密码变化，会更新哈希并撤销该账号的全部会话。
 
 ## 3. 注册与自动开通
@@ -123,7 +123,11 @@ sequenceDiagram
 
 - **概览**：智能体开通状态/步骤、语音状态、服务绑定是否可用、应用与屏幕统计、最近应用；未绑定可用服务时提示去服务页。
 - **智能体**（原设备页）：一张智能体卡片展示名称、状态、开通步骤、MAC、注册时间与语音状态；下方列出该智能体的应用；提供“重新开通”和“发起通话”。
-- 注册已自动创建虚拟设备；`POST /api/portal/devices` 仅作为旧账号补建入口保留，已有虚拟设备时直接返回现有设备。
+- 注册已自动创建第一台虚拟设备。智能体页的“添加设备”可以继续添加两种设备，每个账号最多 10 台（`DEVICE_LIMIT`）：
+  - **虚拟设备**：`kind=virtual`，新建一个独立的 Linx 智能体并走完整开通流程，在浏览器里用麦克风和扬声器对话。可选 `name` 用于区分。
+  - **硬件设备**：`kind=physical`。硬件联网后会播报或显示激活码，用户把它填入 `activation_code`；网关调用 Linx `POST /xiaozhi/device/bind/{agentId}/{code}` 把硬件绑到所选智能体（`agent_device_id`，默认第一台已有智能体的设备），并用平台返回的 `macAddress` 记录设备，使该硬件发来的 MCP 请求按 `(MAC, AgentID)` 归到这个用户。硬件自己连接灵矽，没有浏览器语音运行时，也不会在网关重启时被恢复。一个智能体可以绑多台硬件，它们各自的应用互相独立。
+- 移除设备：`DELETE /api/portal/devices/{id}`。至少保留一台；设备名下还有应用返回 `APP_BUSY`；仍有硬件绑在某个智能体上时不能移除该智能体的设备（`DEVICE_HAS_HARDWARE`）。移除硬件会先向灵矽解绑，解绑失败返回 `UNBIND_FAILED`，确认已在灵矽侧处理后可加 `?force=true` 强制移除。移除虚拟设备会停止其语音运行时并删除凭证文件，灵矽上的智能体本身不删除。
+- 灵矽返回的硬件 MAC 按原样保存并精确匹配 MCP 的 `X-Linx-Device-Id`，不做大小写归一；接入新批次硬件后需用真实设备确认两边格式一致。
 - 设备视图不返回 token 与凭证文件路径；`client_id` 可以展示，便于排障。
 
 ### 4.2 应用
@@ -208,7 +212,8 @@ sequenceDiagram
 | `POST` | `/api/portal/logout` | 删除会话与 Cookie，返回 `204` |
 | `GET` | `/api/portal/me` | 当前用户（含 role/status）与设备列表 |
 | `GET` | `/api/portal/devices` | 当前用户的智能体设备列表 |
-| `POST` | `/api/portal/devices` | 补建虚拟设备（旧账号兼容），返回 `202` |
+| `POST` | `/api/portal/devices` | 添加设备：`{kind: virtual\|physical, name?, activation_code?, agent_device_id?}`；虚拟设备返回 `202`，硬件返回 `201` |
+| `DELETE` | `/api/portal/devices/{id}` | 移除设备，`?force=true` 在灵矽解绑失败时仍移除；返回 `204` |
 | `GET` | `/api/portal/devices/{id}` | 设备开通详情与语音状态 |
 | `POST` | `/api/portal/devices/{id}/retry` | 重试开通；已注册设备则重启语音 |
 | `POST` | `/api/portal/devices/{id}/disconnect` | 断开已注册设备与灵矽的连接；设备保持离线，凭证与注册不变，直到重新连接或网关重启 |
@@ -274,6 +279,11 @@ POST /voice/{device_id}/abort
 | `SERVICE_TEST_RATE_LIMITED` / `SETTINGS_TEST_RATE_LIMITED` | 429 | 连接测试过于频繁 |
 | `PLATFORM_NOT_CONFIGURED` | 409（若经用户接口映射） | 平台 AgentAPI 或 Linx 未配置；MCP `create-app` 以工具错误返回，设备开通失败时设备 DTO 带 `error_code=PLATFORM_NOT_CONFIGURED` 与中文文案 |
 | `DEVICE_BUSY` / `DEVICE_NOT_READY` | 409 | 设备正在开通，或语音尚未就绪 |
+| `DEVICE_LIMIT` | 409 | 设备数量已达每账号 10 台上限 |
+| `AGENT_NOT_READY` | 409 | 添加硬件时还没有开通完成的智能体 |
+| `ACTIVATION_CODE_INVALID` / `DEVICE_ALREADY_BOUND` / `DEVICE_EXISTS` | 400 / 409 / 409 | 激活码无效或已使用；灵矽上设备已被绑定；该硬件已添加过 |
+| `LAST_DEVICE` / `DEVICE_HAS_HARDWARE` | 409 | 至少保留一台设备；智能体上仍绑着硬件 |
+| `UNBIND_FAILED` / `BIND_FAILED` | 502 | 向灵矽解绑或绑定失败 |
 | `SCREEN_DISCOVERY_FAILED` | 503 | Casting 不可用，无法发现屏幕 |
 | `SCREEN_APP_NOT_FOUND` | 404 | 屏幕上没有当前用户的应用 |
 | `APP_BUILDING` / `APP_BUSY` / `APP_IN_ERROR` | 409 | 应用状态不允许删除或停止 |
@@ -289,18 +299,19 @@ MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MIS
 
 ## 7. 数据模型与迁移摘要
 
-当前 `schemaVersion = 3`，按版本有序迁移（详见 [控制面数据库设计](gateway-database.md)）：
+当前 `schemaVersion = 4`，按版本有序迁移（详见 [控制面数据库设计](gateway-database.md)）：
 
 | 版本 | 内容 |
 | --- | --- |
 | v1 | `apps`、`artifacts` |
 | v2 | `portal_users`、`portal_sessions`、`portal_devices`、`portal_settings` |
 | v3 | 角色/状态、登录时间、唯一约束、服务绑定、平台设置 |
+| v4 | 一个账号可有多台设备：去掉“一用户一台虚拟设备”和“一个智能体一台设备”的唯一索引，改为 `(linx_agent_id, mac)` 唯一；`portal_devices.name` |
 
 关键变化：
 
 - `portal_users` 新增 `role`（`admin` / `user`）、`status`（`active` / `disabled`）与 `last_login_at`；旧账号默认 `user`，配置引导账号由 `EnsureAdmin` 提升为管理员。
-- 唯一索引保证一个用户最多一台 `kind='virtual'` 设备，非空 `linx_agent_id` 不得重复；迁移前预检重复数据，发现重复时回滚并要求人工处理，不自动删除。
+- v3 的唯一索引（一个用户最多一台虚拟设备、一个 `linx_agent_id` 只能一台设备）在 v4 被替换：设备数量由接口限制（每账号 10 台），唯一性改由 `mac` 全局唯一与 `(linx_agent_id, mac)` 唯一保证，使硬件可以共用用户已有的智能体。
 - `portal_service_bindings`：每用户一行，`mode` 为 `managed` / `custom`，保存两个地址与加密后的 Render/Casting token。
 - `platform_settings`：平台级键值（AgentAPI、Linx、默认服务、注册开关），记录 `is_secret`、`updated_at`、`updated_by`。
 - `apps` 表不变，归属仍通过 `portal_devices` 的 `(mac, linx_agent_id)` 反查。

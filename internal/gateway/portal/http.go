@@ -86,6 +86,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/portal/devices", a.withUser(a.listDevices))
 	mux.HandleFunc("POST /api/portal/devices", a.withUser(a.createDevice))
 	mux.HandleFunc("GET /api/portal/devices/{id}", a.withUser(a.getDevice))
+	mux.HandleFunc("DELETE /api/portal/devices/{id}", a.withUser(a.deleteDevice))
 	mux.HandleFunc("POST /api/portal/devices/{id}/retry", a.withUser(a.retryDevice))
 	mux.HandleFunc("POST /api/portal/devices/{id}/disconnect", a.withUser(a.disconnectDevice))
 	mux.HandleFunc("POST /api/portal/devices/{id}/reconnect", a.withUser(a.reconnectDevice))
@@ -229,43 +230,6 @@ func (a *API) listDevices(w http.ResponseWriter, r *http.Request, user store.Por
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"devices": devices})
-}
-
-func (a *API) createDevice(w http.ResponseWriter, r *http.Request, user store.PortalUser) {
-	devices, err := a.db.PortalDevicesByUser(r.Context(), user.ID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	for _, device := range devices {
-		if device.Kind == store.PortalDeviceVirtual {
-			writeJSON(w, http.StatusAccepted, map[string]any{"device": a.deviceView(device)})
-			return
-		}
-	}
-	identity, err := NewDeviceIdentity()
-	if err != nil {
-		writeError(w, internalError("无法生成设备身份"))
-		return
-	}
-	now := a.now()
-	device := store.PortalDevice{
-		ID:        "dev_" + randText(),
-		UserID:    user.ID,
-		Kind:      store.PortalDeviceVirtual,
-		MAC:       identity.MAC,
-		ClientID:  identity.ClientID,
-		State:     store.PortalDeviceProvisioning,
-		Step:      stepCreateAgent,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := a.db.CreatePortalDevice(r.Context(), device); err != nil {
-		writeError(w, err)
-		return
-	}
-	a.provision.Start(device.ID)
-	writeJSON(w, http.StatusAccepted, map[string]any{"device": a.deviceView(device)})
 }
 
 func (a *API) getDevice(w http.ResponseWriter, r *http.Request, user store.PortalUser) {
@@ -594,6 +558,7 @@ func (a *API) deviceView(device store.PortalDevice) DeviceView {
 		ClientID:     device.ClientID,
 		AgentID:      device.LinxAgentID,
 		AgentName:    device.AgentName,
+		Name:         device.Name,
 		State:        device.State,
 		Step:         device.Step,
 		Error:        device.Error,

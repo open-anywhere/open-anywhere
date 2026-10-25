@@ -22,6 +22,7 @@ type DeviceView struct {
 	ClientID     string     `json:"client_id"`
 	AgentID      string     `json:"agent_id"`
 	AgentName    string     `json:"agent_name"`
+	Name         string     `json:"name"`
 	State        string     `json:"state"`
 	Step         string     `json:"step"`
 	Error        string     `json:"error,omitempty"`

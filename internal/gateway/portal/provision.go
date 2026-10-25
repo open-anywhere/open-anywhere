@@ -260,6 +260,28 @@ func (p *Provisioner) template(ctx context.Context) (Template, error) {
 	return result, nil
 }
 
+// BindHardware attaches physical hardware, identified by the activation code it
+// shows, to an agent the user already owns and returns the MAC address the
+// platform reports. The device then talks to Linx on its own; the portal only
+// records ownership so MCP calls from it map to this user.
+func (p *Provisioner) BindHardware(ctx context.Context, agentID, code string) (string, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return "", err
+	}
+	return client.BindHardware(ctx, agentID, code)
+}
+
+// UnbindHardware releases hardware from the platform account. Failure is
+// reported so the caller can decide whether the record may still go.
+func (p *Provisioner) UnbindHardware(ctx context.Context, mac string) error {
+	client, err := p.client(ctx)
+	if err != nil {
+		return err
+	}
+	return client.UnbindDevice(ctx, mac)
+}
+
 // SyncMCP pushes the current MCP address and token to the shared Linx MCP
 // instance, if one has been created. It is a no-op before the first
 // provisioning run.
@@ -318,6 +340,9 @@ func (p *Provisioner) ensureAgent(ctx context.Context, client *linx.Client, devi
 		return p.fail(ctx, device, stepCreateAgent, "", err)
 	}
 	name := "Open Anywhere · " + user.Username
+	if device.Name != "" {
+		name += " · " + device.Name
+	}
 	agentID, err := client.CreateAgent(ctx, linx.AgentRequest{
 		Name:          name,
 		AssistantName: tmpl.AssistantName,
@@ -552,6 +577,9 @@ func (p *Provisioner) Recover(ctx context.Context) error {
 		return err
 	}
 	for _, device := range devices {
+		if device.Kind != store.PortalDeviceVirtual {
+			continue
+		}
 		path := p.CredentialPath(device)
 		if _, err := devicelinx.LoadDevice(path); err != nil {
 			device.State = store.PortalDeviceError
@@ -575,6 +603,9 @@ func (p *Provisioner) Recover(ctx context.Context) error {
 			return err
 		}
 		for _, device := range devices {
+			if device.Kind != store.PortalDeviceVirtual {
+				continue
+			}
 			path := p.CredentialPath(device)
 			if _, err := devicelinx.LoadDevice(path); err != nil {
 				continue

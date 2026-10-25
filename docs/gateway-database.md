@@ -273,7 +273,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 1. 创建数据库父目录（`db.go:57-63`）。
 2. 以 10 秒超时 `Ping`。
 3. 读取 `PRAGMA user_version`；若大于程序支持的 `schemaVersion`（当前为 3）则拒绝启动。
-4. 按版本依次执行尚未应用的迁移（v1 → v2 → v3）；每个版本在独立事务中执行，成功后在同一事务写入 `PRAGMA user_version`。新库从 0 一次执行到 3，已有 v2 库只执行 v3。
+4. 按版本依次执行尚未应用的迁移（v1 → v2 → v3 → v4）；每个版本在独立事务中执行，成功后在同一事务写入 `PRAGMA user_version`。新库从 0 一次执行到 4，已有 v3 库只执行 v4。
 
 写入并发控制分两层：
 
@@ -358,7 +358,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 
 ## 10. Schema 版本与迁移
 
-- 当前 `schemaVersion = 3`，版本号保存在 SQLite `PRAGMA user_version`。
+- 当前 `schemaVersion = 4`，版本号保存在 SQLite `PRAGMA user_version`。
 - 迁移是有序列表，而不是一组混合的 `CREATE ... IF NOT EXISTS`：
 
 | 版本 | 内容 |
@@ -366,9 +366,10 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 | v1 | `apps`、`artifacts` 及 `apps_owner_state` 索引 |
 | v2 | `portal_users`、`portal_sessions`、`portal_devices`、`portal_settings` 及索引 |
 | v3 | `portal_users.role/status/last_login_at`、角色/过期索引、虚拟设备与 AgentID 唯一索引、`portal_service_bindings`、`platform_settings` |
+| v4 | 删除 `portal_devices_one_virtual` 与 `portal_devices_agent`，新增 `portal_devices_agent_mac(linx_agent_id, mac)` 唯一索引与 `portal_devices.name` |
 
 - 每个版本在一个事务中执行，`PRAGMA user_version` 也在该事务内写入；任一步失败会回滚整个版本，schema 与版本号都保持原状。
-- 打开时只拒绝**比程序更新**的数据库，旧程序看到 v3 会拒绝启动，避免写入不认识的 schema。
+- 打开时只拒绝**比程序更新**的数据库，旧程序看到更新的版本会拒绝启动，避免写入不认识的 schema。
 - v3 使用 `ALTER TABLE` 增加列，只在 `user_version < 3` 时执行，不做 `IF NOT EXISTS` 兜底。
 - **迁移前预检**（`prepareSchemaV3`）：
   - 同一用户存在多台 `kind='virtual'` 设备；
@@ -389,7 +390,7 @@ WAL 模式下的备份：
 - 每次构建事件（`agent.message`、`agent.thinking`、`session.error`）都会把**整条应用快照**重新序列化并写入：高频思考事件会带来明显的写放大和 WAL 增长。
 - `ListApps` / `ListArtifacts` 是启动期全表扫描，当前数据量下没有问题；`ORDER BY updated_at` 使用文本排序，而 `RFC3339Nano` 的小数位长度可变，同一秒内"无小数"与"有小数"的字符串顺序不一定等于时间顺序。该顺序只影响启动加载次序，不影响业务。
 - 单连接串行化意味着一次锁等待会阻塞后续所有 SQL，也会拖慢 MCP 调用中的持久化步骤。`/healthz` 的 `Ping` 自带 2 秒超时，锁等待超过 2 秒时会直接返回 503。
-- 门户数据量按“一个用户一台虚拟设备”增长；用户列表分页查询（默认 50、上限 100），智能体列表最多返回 500 条，全局应用列表最多 200 条。注册、设置与绑定写入都不在应用构建的热路径上。
+- 门户数据量按“每个账号最多 10 台设备”增长；用户列表分页查询（默认 50、上限 100），智能体列表最多返回 500 条，全局应用列表最多 200 条。注册、设置与绑定写入都不在应用构建的热路径上。
 
 ## 12. 安全
 
@@ -561,7 +562,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 - `portal_users` 1:N `portal_sessions` / `portal_devices`；外键依赖 DSN 里的 `foreign_keys(1)`。
 - `portal_users.role` 取 `admin` / `user`，`status` 取 `active` / `disabled`。v2 旧账号迁移后默认 `user`；启动时 `EnsureAdmin` 把配置文件声明的引导账号提升为 `admin` 并激活，不通过 SQL 批量提升所有旧账号。
 - `portal_users.last_login_at` 在成功登录时更新；会话过期或用户被停用时，`Authenticate` 会删除会话。
-- 一个用户最多一台 `kind='virtual'` 设备（`portal_devices_one_virtual`），非空 `linx_agent_id` 全局唯一（`portal_devices_agent`）。迁移前先预检重复数据，重复时拒绝升级。
+- v3 曾限制一个用户最多一台 `kind='virtual'` 设备（`portal_devices_one_virtual`）、非空 `linx_agent_id` 全局唯一（`portal_devices_agent`）；v4 删除这两个索引，改用 `portal_devices_agent_mac(linx_agent_id, mac)` 唯一（`mac` 本身仍全局唯一），一个智能体可以挂多台硬件设备，设备数量上限由接口控制。
 - `portal_devices.mac` 对应 `apps.data.Owner.device_id`，`linx_agent_id` 对应 `Owner.agent_id`。应用表不新增外键：应用由灵矽 MCP 写入，可能早于门户记录，归属过滤仍在内存完成。
 - `credential_path` 只是相对 `portal.data_dir` 的文件名，设备 token 不进数据库；凭证文件 `0600`，目录 `0700`。
 - `portal_sessions.token_hash` 存会话 token 的 SHA-256，不存明文；启动时清理 `expires_at < now` 的行。

@@ -26,6 +26,7 @@ export interface Device {
   client_id: string
   agent_id: string
   agent_name: string
+  name: string
   state: DeviceState
   step: string
   error?: string
@@ -34,6 +35,15 @@ export interface Device {
   updated_at: string
   registered_at?: string
   voice: VoiceState
+}
+
+export interface CreateDeviceInput {
+  kind?: 'virtual' | 'physical'
+  name?: string
+  /** Code shown by the hardware; only for physical devices. */
+  activation_code?: string
+  /** Which of the account's agents the hardware joins. */
+  agent_device_id?: string
 }
 
 export type AppState = 'building' | 'idle' | 'running' | 'error'
@@ -383,7 +393,12 @@ export const api = {
   login: (username: string, password: string) =>
     postJSON<{ user: User }>('/login', { username, password }),
   logout: () => postJSON<void>('/logout', {}),
-  createDevice: () => postJSON<{ device: Device }>('/devices'),
+  createDevice: (input: CreateDeviceInput = {}) => postJSON<{ device: Device }>('/devices', input),
+  deleteDevice: (id: string, force = false) =>
+    request<void>(`/devices/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, {
+      method: 'DELETE',
+      body: '{}',
+    }),
   getDevice: (id: string) => request<{ device: Device }>(`/devices/${encodeURIComponent(id)}`),
   retryDevice: (id: string) =>
     postJSON<{ device: Device }>(`/devices/${encodeURIComponent(id)}/retry`),

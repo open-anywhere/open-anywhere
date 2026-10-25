@@ -270,33 +270,69 @@ func (c *Client) AttachMCP(ctx context.Context, agentID string, mcpIDs []string)
 // BindDevice binds a device behind an activation code to an agent. An already
 // bound device (HTTP 409) is not an error for the caller.
 func (c *Client) BindDevice(ctx context.Context, agentID, code string) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/xiaozhi/device/bind/"+agentID+"/"+code, nil)
+	_, err := c.bind(ctx, agentID, code, true)
+	return err
+}
+
+// BindHardware binds physical hardware to an agent and returns the MAC address
+// the platform reports for it. A device that is already bound is an error here
+// (unlike BindDevice): without the platform's answer the MAC is unknown, so
+// the portal cannot tell which hardware the code belongs to.
+func (c *Client) BindHardware(ctx context.Context, agentID, code string) (string, error) {
+	mac, err := c.bind(ctx, agentID, code, false)
 	if err != nil {
-		return err
+		return "", err
+	}
+	if strings.TrimSpace(mac) == "" {
+		return "", &Error{Message: "platform bound the device but returned no MAC address"}
+	}
+	return strings.TrimSpace(mac), nil
+}
+
+func (c *Client) bind(ctx context.Context, agentID, code string, tolerateConflict bool) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/xiaozhi/device/bind/"+url.PathEscape(agentID)+"/"+url.PathEscape(code), nil)
+	if err != nil {
+		return "", err
 	}
 	request.Header.Set("Authorization", "Bearer "+c.apiKey)
 	response, err := c.http.Do(request)
 	if err != nil {
-		return &Error{Message: "bind request failed", Cause: err}
+		return "", &Error{Message: "bind request failed", Cause: err}
 	}
 	defer response.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<16))
-	if response.StatusCode == http.StatusConflict {
-		return nil
-	}
 	var envelope struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
+		Data struct {
+			MACAddress string `json:"macAddress"`
+		} `json:"data"`
 	}
 	_ = json.Unmarshal(body, &envelope)
+	if response.StatusCode == http.StatusConflict {
+		if tolerateConflict {
+			return "", nil
+		}
+		return "", &Error{Status: response.StatusCode, Code: envelope.Code, Message: "device is already bound"}
+	}
 	if response.StatusCode >= 200 && response.StatusCode < 300 && envelope.Code == 0 {
-		return nil
+		return envelope.Data.MACAddress, nil
 	}
 	message := envelope.Msg
 	if message == "" {
 		message = "platform refused the device binding"
 	}
-	return &Error{Status: response.StatusCode, Code: envelope.Code, Message: message}
+	return "", &Error{Status: response.StatusCode, Code: envelope.Code, Message: message}
+}
+
+// UnbindDevice releases hardware from the platform account so its activation
+// code can be used again.
+func (c *Client) UnbindDevice(ctx context.Context, mac string) error {
+	if strings.TrimSpace(mac) == "" {
+		return errors.New("linx: device id is required")
+	}
+	return c.do(ctx, http.MethodPost, "/xiaozhi/device/unbind", map[string]string{"deviceId": mac}, nil)
 }
 
 // ReportOTA reports a device identity and returns the platform's answer.
