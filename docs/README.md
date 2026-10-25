@@ -6,7 +6,7 @@
 
 | 我想…… | 去哪 |
 | --- | --- |
-| 知道这东西为什么值得做 | [产品愿景](product/vision.md)、[商业策略](product/business.md) |
+| 知道这东西为什么值得做 | [产品愿景](product/vision.md)、[商业策略](product/business.md)、[商业计划书](product/business-plan.md) |
 | 看懂系统怎么分层、模块怎么切 | [架构总览](architecture/overview.md)、[模块规格](architecture/modules.md) |
 | 查某条契约、某个接口 | [architecture/interfaces/](architecture/interfaces/) |
 | 把服务跑起来、排查现场问题 | [operations/](operations/) |
@@ -19,6 +19,7 @@ docs/
 ├── product/                    为什么做、卖给谁
 │   ├── vision.md               产品愿景、用户、体验
 │   ├── business.md             市场、定位、收费与验证
+│   ├── business-plan.md        商业模型、第一周闭环、年龄分段、定价与三年目标
 │   └── research.md             同类产品调研与扩展方向
 ├── architecture/               系统怎么切、契约是什么
 │   ├── overview.md             分层、上下文、三条契约、关键取舍
