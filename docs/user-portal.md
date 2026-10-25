@@ -213,6 +213,9 @@ sequenceDiagram
 | `GET` | `/api/portal/me` | 当前用户（含 role/status）与设备列表 |
 | `GET` | `/api/portal/devices` | 当前用户的智能体设备列表 |
 | `POST` | `/api/portal/devices` | 添加设备：`{kind: virtual\|physical, name?, activation_code?, agent_device_id?}`；虚拟设备返回 `202`，硬件返回 `201` |
+| `GET` | `/api/portal/voices` | 灵矽平台可选的音色列表 |
+| `GET` | `/api/portal/devices/{id}/agent` | 读取设备所属智能体的名称与音色 |
+| `PUT` | `/api/portal/devices/{id}/agent` | 修改智能体名称（1–20 个字符）与音色，只提交变化的字段；系统提示词与模型不开放，因为提示词决定了 MCP 工具的调用方式 |
 | `DELETE` | `/api/portal/devices/{id}` | 移除设备，`?force=true` 在灵矽解绑失败时仍移除；返回 `204` |
 | `GET` | `/api/portal/devices/{id}` | 设备开通详情与语音状态 |
 | `POST` | `/api/portal/devices/{id}/retry` | 重试开通；已注册设备则重启语音 |
@@ -283,7 +286,7 @@ POST /voice/{device_id}/abort
 | `AGENT_NOT_READY` | 409 | 添加硬件时还没有开通完成的智能体 |
 | `ACTIVATION_CODE_INVALID` / `DEVICE_ALREADY_BOUND` / `DEVICE_EXISTS` | 400 / 409 / 409 | 激活码无效或已使用；灵矽上设备已被绑定；该硬件已添加过 |
 | `LAST_DEVICE` / `DEVICE_HAS_HARDWARE` | 409 | 至少保留一台设备；智能体上仍绑着硬件 |
-| `UNBIND_FAILED` / `BIND_FAILED` | 502 | 向灵矽解绑或绑定失败 |
+| `UNBIND_FAILED` / `PLATFORM_ERROR` / `PLATFORM_UNAVAILABLE` / `PLATFORM_AUTH_FAILED` | 502 | 向灵矽解绑失败；调用灵矽失败、不可用，或平台 API Key 无效 |
 | `SCREEN_DISCOVERY_FAILED` | 503 | Casting 不可用，无法发现屏幕 |
 | `SCREEN_APP_NOT_FOUND` | 404 | 屏幕上没有当前用户的应用 |
 | `APP_BUILDING` / `APP_BUSY` / `APP_IN_ERROR` | 409 | 应用状态不允许删除或停止 |

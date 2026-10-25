@@ -46,6 +46,20 @@ export interface CreateDeviceInput {
   agent_device_id?: string
 }
 
+export interface Voice {
+  id: string
+  name: string
+  demo?: string
+  gender?: string
+  age?: string
+  styles?: string[]
+}
+
+export interface AgentSettings {
+  assistant_name: string
+  tts_voice_id: string
+}
+
 export type AppState = 'building' | 'idle' | 'running' | 'error'
 
 export interface AppError {
@@ -187,7 +201,13 @@ export interface AdminOverview {
   users: { total: number; active: number; disabled: number; admins: number }
   agents: { total: number; registered: number; provisioning: number; error: number; disabled: number }
   apps: { total: number; running: number; building: number; error: number; idle: number }
-  platform: { agentapi: boolean; linx: boolean; services: boolean; registration_open: boolean }
+  platform: {
+    agentapi: boolean
+    linx: boolean
+    mcp: boolean
+    services: boolean
+    registration_open: boolean
+  }
 }
 
 export interface SecretState {
@@ -222,7 +242,7 @@ export interface PlatformSettings {
     casting_token: SecretState
   }
   registration: { open: boolean }
-  ready: { agentapi: boolean; linx: boolean; services: boolean }
+  ready: { agentapi: boolean; linx: boolean; mcp: boolean; services: boolean }
 }
 
 export interface SecretPatch {
@@ -394,6 +414,14 @@ export const api = {
     postJSON<{ user: User }>('/login', { username, password }),
   logout: () => postJSON<void>('/logout', {}),
   createDevice: (input: CreateDeviceInput = {}) => postJSON<{ device: Device }>('/devices', input),
+  voices: () => request<{ voices: Voice[] }>('/voices'),
+  getAgentSettings: (deviceId: string) =>
+    request<{ agent: AgentSettings }>(`/devices/${encodeURIComponent(deviceId)}/agent`),
+  updateAgentSettings: (deviceId: string, input: Partial<AgentSettings>) =>
+    request<{ agent: AgentSettings }>(`/devices/${encodeURIComponent(deviceId)}/agent`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
   deleteDevice: (id: string, force = false) =>
     request<void>(`/devices/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, {
       method: 'DELETE',

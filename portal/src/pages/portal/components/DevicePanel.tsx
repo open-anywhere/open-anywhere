@@ -2,6 +2,7 @@ import {
   AudioOutlined,
   DeleteOutlined,
   DesktopOutlined,
+  SettingOutlined,
   DisconnectOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -45,6 +46,8 @@ interface Props {
   /** Present only when the device may be removed. */
   onRemove?: () => void
   removing?: boolean
+  /** Opens the agent name / voice dialog. */
+  onSettings?: () => void
 }
 
 export function DevicePanel({
@@ -60,6 +63,7 @@ export function DevicePanel({
   onReconnect,
   onRemove,
   removing,
+  onSettings,
 }: Props) {
   if (!device) {
     return (
@@ -146,6 +150,11 @@ export function DevicePanel({
               onClick={onRetry}
             >
               {device.state === 'registered' ? '重新连接' : '重试'}
+            </Button>
+          ) : null}
+          {onSettings && device.agent_id ? (
+            <Button icon={<SettingOutlined />} onClick={onSettings}>
+              智能体设置
             </Button>
           ) : null}
           {onRemove ? (

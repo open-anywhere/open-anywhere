@@ -186,7 +186,7 @@ func (a *API) createPhysicalDevice(w http.ResponseWriter, r *http.Request, user 
 	writeJSON(w, http.StatusCreated, map[string]any{"device": a.deviceView(device)})
 }
 
-// mapBindError turns a Linx activation failure into a message people can act on.
+// mapBindError turns a Linx failure (activation, voices, agent settings) into a message people can act on.
 func mapBindError(err error) error {
 	var apiErr *linx.Error
 	switch {
@@ -201,7 +201,7 @@ func mapBindError(err error) error {
 	case linx.IsBindRejected(err):
 		return apiError(http.StatusBadRequest, "ACTIVATION_CODE_INVALID", "激活码无效或已使用，请让设备重新联网获取新的激活码")
 	}
-	return apiError(http.StatusBadGateway, "BIND_FAILED", "绑定设备失败，请稍后重试")
+	return apiError(http.StatusBadGateway, "PLATFORM_ERROR", "调用灵矽平台失败，请稍后重试")
 }
 
 // deleteDevice removes a device. Virtual devices lose their voice runtime and

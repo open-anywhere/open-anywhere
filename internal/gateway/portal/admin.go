@@ -217,6 +217,7 @@ func (a *API) adminOverview(w http.ResponseWriter, r *http.Request, _ store.Port
 		"platform": map[string]any{
 			"agentapi":          ready.AgentAPI,
 			"linx":              ready.Linx,
+			"mcp":               ready.MCP,
 			"services":          ready.Services,
 			"registration_open": registration,
 		},

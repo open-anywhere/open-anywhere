@@ -244,6 +244,64 @@ func (c *Client) EnsureMCP(ctx context.Context, spec MCPSpec) (serverID, instanc
 	return "", "", errors.New("linx: created MCP instance was not found")
 }
 
+// Voice is one selectable text-to-speech voice.
+type Voice struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Demo string `json:"demo"`
+	Tags struct {
+		Gender string   `json:"gender"`
+		Age    string   `json:"age"`
+		Styles []string `json:"styles"`
+	} `json:"tags"`
+}
+
+// Voices lists the voices the platform account can assign to an agent.
+func (c *Client) Voices(ctx context.Context) ([]Voice, error) {
+	var data struct {
+		Voices []Voice `json:"voices"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/voices", nil, &data); err != nil {
+		return nil, err
+	}
+	return data.Voices, nil
+}
+
+// AgentInfo is the part of an agent a portal user may see and change.
+type AgentInfo struct {
+	AssistantName string `json:"assistantName"`
+	TTSVoiceID    string `json:"ttsVoiceId"`
+}
+
+// GetAgent reads an agent's configuration.
+func (c *Client) GetAgent(ctx context.Context, agentID string) (AgentInfo, error) {
+	var info AgentInfo
+	if strings.TrimSpace(agentID) == "" {
+		return info, errors.New("linx: agent id is required")
+	}
+	err := c.do(ctx, http.MethodGet, "/xiaozhi/agent/"+url.PathEscape(agentID), nil, &info)
+	return info, err
+}
+
+// UpdateAgent changes only the fields that are set. The platform keeps every
+// field that is left out, so the prompt and models are never touched.
+func (c *Client) UpdateAgent(ctx context.Context, agentID string, assistantName, ttsVoiceID *string) error {
+	if strings.TrimSpace(agentID) == "" {
+		return errors.New("linx: agent id is required")
+	}
+	body := map[string]string{}
+	if assistantName != nil {
+		body["assistantName"] = *assistantName
+	}
+	if ttsVoiceID != nil {
+		body["ttsVoiceId"] = *ttsVoiceID
+	}
+	if len(body) == 0 {
+		return nil
+	}
+	return c.do(ctx, http.MethodPut, "/xiaozhi/agent/"+url.PathEscape(agentID), body, nil)
+}
+
 // UpdateMCPInstance rewrites the address and bearer token of an existing MCP
 // instance (PUT /v1/mcps/{id}), so a rotated token reaches agents that
 // already use it.

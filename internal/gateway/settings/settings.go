@@ -184,6 +184,9 @@ type ServicesMasked struct {
 type ReadyFlags struct {
 	AgentAPI bool `json:"agentapi"`
 	Linx     bool `json:"linx"`
+	// MCP is true once the gateway MCP address and token are set, which is
+	// what Linx needs to call the application tools.
+	MCP      bool `json:"mcp"`
 	Services bool `json:"services"`
 }
 
@@ -418,6 +421,7 @@ func (p *Provider) Masked(ctx context.Context) (Masked, error) {
 		Ready: ReadyFlags{
 			AgentAPI: snapshot.AgentAPI.Ready(),
 			Linx:     snapshot.Linx.Ready(),
+			MCP:      snapshot.Linx.MCPReady(),
 			Services: snapshot.Services.Ready(),
 		},
 	}, nil

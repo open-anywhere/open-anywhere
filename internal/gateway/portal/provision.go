@@ -272,6 +272,33 @@ func (p *Provisioner) BindHardware(ctx context.Context, agentID, code string) (s
 	return client.BindHardware(ctx, agentID, code)
 }
 
+// Voices lists the voices a user can pick for an agent.
+func (p *Provisioner) Voices(ctx context.Context) ([]linx.Voice, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.Voices(ctx)
+}
+
+// AgentInfo reads an agent's current name and voice.
+func (p *Provisioner) AgentInfo(ctx context.Context, agentID string) (linx.AgentInfo, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return linx.AgentInfo{}, err
+	}
+	return client.GetAgent(ctx, agentID)
+}
+
+// UpdateAgent changes an agent's assistant name and/or voice.
+func (p *Provisioner) UpdateAgent(ctx context.Context, agentID string, assistantName, ttsVoiceID *string) error {
+	client, err := p.client(ctx)
+	if err != nil {
+		return err
+	}
+	return client.UpdateAgent(ctx, agentID, assistantName, ttsVoiceID)
+}
+
 // UnbindHardware releases hardware from the platform account. Failure is
 // reported so the caller can decide whether the record may still go.
 func (p *Provisioner) UnbindHardware(ctx context.Context, mac string) error {

@@ -9,6 +9,7 @@ import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { deviceForApp } from '../../lib/device'
 import { AddDeviceModal } from './components/AddDeviceModal'
+import { AgentSettingsModal } from './components/AgentSettingsModal'
 import { AppRow } from './components/AppRow'
 import { DevicePanel } from './components/DevicePanel'
 import { PageHeader } from './components/PageHeader'
@@ -26,6 +27,7 @@ export function AgentsPage() {
   })
 
   const [addOpen, setAddOpen] = useState(false)
+  const [settingsDevice, setSettingsDevice] = useState<string>()
 
   const createDevice = useMutation({
     mutationFn: (input?: CreateDeviceInput) => api.createDevice(input),
@@ -123,6 +125,7 @@ export function AgentsPage() {
                 onCreate={() => createDevice.mutate({})}
                 onRemove={devices.length > 1 ? () => removeDevice.mutate({ id: device.id }) : undefined}
                 removing={removeDevice.isPending && removeDevice.variables?.id === device.id}
+                onSettings={() => setSettingsDevice(device.id)}
                 onRetry={() => retryDevice.mutate(device.id)}
                 disconnecting={disconnect.isPending && disconnect.variables === device.id}
                 reconnecting={reconnect.isPending && reconnect.variables === device.id}
@@ -162,6 +165,8 @@ export function AgentsPage() {
           />
         </section>
       )}
+
+      <AgentSettingsModal deviceId={settingsDevice} onClose={() => setSettingsDevice(undefined)} />
 
       <AddDeviceModal
         open={addOpen}

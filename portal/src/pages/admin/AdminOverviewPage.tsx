@@ -5,7 +5,7 @@ import {
   RobotOutlined,
   TeamOutlined,
 } from '@ant-design/icons'
-import { Alert, Button, Skeleton, Space, Tag } from 'antd'
+import { Alert, Button, Skeleton, Space, Steps, Tag } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ApiError } from '../../api'
@@ -23,6 +23,7 @@ export function AdminOverviewPage() {
     ? [
         !data.platform.agentapi ? 'AgentAPI' : null,
         !data.platform.linx ? 'Linx' : null,
+        !data.platform.mcp ? '灵矽 MCP 地址' : null,
         !data.platform.services ? '默认屏幕服务' : null,
       ].filter(Boolean)
     : []
@@ -113,6 +114,51 @@ export function AdminOverviewPage() {
             />
           </div>
 
+          {missing.length ? (
+            <section className="surface">
+              <div className="section-header">
+                <div>
+                  <h2>配置向导</h2>
+                  <p>按顺序完成下面几步，用户才能注册后直接使用。每一项都在平台设置里填写，页面上写明了数据从哪里取。</p>
+                </div>
+                <Link to="/admin/settings">
+                  <Button type="primary">去配置</Button>
+                </Link>
+              </div>
+              <Steps
+                direction="vertical"
+                size="small"
+                items={[
+                  {
+                    title: 'AgentAPI',
+                    description: '填写服务地址、API Key、构建智能体 ID 和环境 ID，用来生成应用。',
+                    status: data.platform.agentapi ? 'finish' : 'process',
+                  },
+                  {
+                    title: '灵矽平台',
+                    description: '填写灵矽智控台创建的 API Key，用来为每位用户创建智能体。',
+                    status: data.platform.linx ? 'finish' : 'wait',
+                  },
+                  {
+                    title: '灵矽 MCP 地址',
+                    description: '填写灵矽云能访问到的网关公网地址（以 /mcp 结尾）。MCP Token 已自动生成。',
+                    status: data.platform.mcp ? 'finish' : 'wait',
+                  },
+                  {
+                    title: '默认屏幕服务',
+                    description: '填写平台托管用户使用的 Render 与 Casting 地址。',
+                    status: data.platform.services ? 'finish' : 'wait',
+                  },
+                  {
+                    title: '开放注册',
+                    description: '以上都就绪并验证后，再打开注册开关。',
+                    status: data.platform.registration_open ? 'finish' : 'wait',
+                  },
+                ]}
+              />
+            </section>
+          ) : null}
+
           <section className="surface">
             <div className="section-header">
               <div>
@@ -131,6 +177,10 @@ export function AdminOverviewPage() {
               <span>
                 Linx：{' '}
                 {data.platform.linx ? <Tag color="green">已配置</Tag> : <Tag color="red">未配置</Tag>}
+              </span>
+              <span>
+                灵矽 MCP：{' '}
+                {data.platform.mcp ? <Tag color="green">已配置</Tag> : <Tag color="red">未配置</Tag>}
               </span>
               <span>
                 默认屏幕服务：{' '}
