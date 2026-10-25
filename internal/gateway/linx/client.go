@@ -249,10 +249,13 @@ type Voice struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Demo string `json:"demo"`
+	// Tier is "free" or "pro"; pro voices cost more to run.
+	Tier string `json:"tier"`
 	Tags struct {
-		Gender string   `json:"gender"`
-		Age    string   `json:"age"`
-		Styles []string `json:"styles"`
+		Gender    string   `json:"gender"`
+		Age       string   `json:"age"`
+		Styles    []string `json:"styles"`
+		Languages []string `json:"languages"`
 	} `json:"tags"`
 }
 
@@ -327,6 +330,7 @@ type AgentInfo struct {
 	LLMModelID    string     `json:"llmModelId"`
 	MemModelID    string     `json:"memModelId"`
 	LangCode      string     `json:"langCode"`
+	SystemPrompt  string     `json:"systemPrompt"`
 	Extra         AgentExtra `json:"extra"`
 }
 
@@ -350,7 +354,10 @@ type AgentPatch struct {
 	LLMModelID    *string
 	MemModelID    *string
 	LangCode      *string
-	Extra         *AgentExtra
+	// SystemPrompt is only ever set by the portal to append a user note to
+	// the platform prompt; users cannot supply it directly.
+	SystemPrompt *string
+	Extra        *AgentExtra
 }
 
 func (p AgentPatch) body() map[string]any {
@@ -365,6 +372,7 @@ func (p AgentPatch) body() map[string]any {
 	set("llmModelId", p.LLMModelID)
 	set("memModelId", p.MemModelID)
 	set("langCode", p.LangCode)
+	set("systemPrompt", p.SystemPrompt)
 	if p.Extra != nil {
 		extra := map[string]any{}
 		llm := map[string]any{}

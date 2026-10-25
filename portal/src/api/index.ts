@@ -53,6 +53,8 @@ export interface Voice {
   gender?: string
   age?: string
   styles?: string[]
+  languages?: string[]
+  tier?: string
 }
 
 export interface AgentOption {
@@ -81,6 +83,8 @@ export interface AgentSettings {
   llm_max_tokens?: number
   idle_timeout_seconds?: number
   disable_greeting?: boolean
+  /** The user's note appended to the platform prompt. */
+  persona?: string
 }
 
 export type AppState = 'building' | 'idle' | 'running' | 'error'

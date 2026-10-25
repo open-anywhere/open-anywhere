@@ -50,6 +50,9 @@ type VoiceView struct {
 	Gender string   `json:"gender,omitempty"`
 	Age    string   `json:"age,omitempty"`
 	Styles []string `json:"styles,omitempty"`
+	// Languages are the language codes the voice can speak; Tier is "free" or "pro".
+	Languages []string `json:"languages,omitempty"`
+	Tier      string   `json:"tier,omitempty"`
 }
 
 // AgentOptionsView lists everything a user can pick from.
@@ -77,6 +80,8 @@ type AgentSettingsView struct {
 	LLMMaxTokens       *int     `json:"llm_max_tokens,omitempty"`
 	IdleTimeoutSeconds *int     `json:"idle_timeout_seconds,omitempty"`
 	DisableGreeting    *bool    `json:"disable_greeting,omitempty"`
+	// Persona is the user's note appended to the platform prompt.
+	Persona string `json:"persona"`
 }
 
 type updateAgentRequest struct {
@@ -91,6 +96,7 @@ type updateAgentRequest struct {
 	LLMMaxTokens       *int     `json:"llm_max_tokens"`
 	IdleTimeoutSeconds *int     `json:"idle_timeout_seconds"`
 	DisableGreeting    *bool    `json:"disable_greeting"`
+	Persona            *string  `json:"persona"`
 }
 
 func agentSettingsView(info linx.AgentInfo) AgentSettingsView {
@@ -106,6 +112,7 @@ func agentSettingsView(info linx.AgentInfo) AgentSettingsView {
 		LLMMaxTokens:       info.Extra.LLM.MaxTokens,
 		IdleTimeoutSeconds: info.Extra.Goodbye.IdleTimeoutSeconds,
 		DisableGreeting:    info.Extra.DisableGreeting,
+		Persona:            personaOf(info.SystemPrompt),
 	}
 }
 
@@ -131,6 +138,7 @@ func (a *API) loadVoices(ctx context.Context) ([]VoiceView, error) {
 		out = append(out, VoiceView{
 			ID: voice.ID, Name: voice.Name, Demo: voice.Demo,
 			Gender: voice.Tags.Gender, Age: voice.Tags.Age, Styles: voice.Tags.Styles,
+			Languages: voice.Tags.Languages, Tier: voice.Tier,
 		})
 	}
 	return out, nil
@@ -207,7 +215,7 @@ func hasChange(in updateAgentRequest) bool {
 	return in.AssistantName != nil || in.TTSVoiceID != nil || in.LangCode != nil ||
 		in.LLMModelID != nil || in.MemModelID != nil || in.VoiceVolume != nil ||
 		in.VoiceSpeed != nil || in.LLMTemperature != nil || in.LLMMaxTokens != nil ||
-		in.IdleTimeoutSeconds != nil || in.DisableGreeting != nil
+		in.IdleTimeoutSeconds != nil || in.DisableGreeting != nil || in.Persona != nil
 }
 
 // inList reports whether id is one of options. Only values the platform
@@ -231,8 +239,16 @@ func trimmed(value *string) *string {
 }
 
 // buildPatch validates a request and turns it into a Linx update.
-func (a *API) buildPatch(ctx context.Context, in updateAgentRequest) (linx.AgentPatch, error) {
+func (a *API) buildPatch(ctx context.Context, in updateAgentRequest, current linx.AgentInfo) (linx.AgentPatch, error) {
 	var patch linx.AgentPatch
+	if in.Persona != nil {
+		note, err := validatePersona(*in.Persona, current.SystemPrompt)
+		if err != nil {
+			return patch, err
+		}
+		prompt := withPersona(current.SystemPrompt, note)
+		patch.SystemPrompt = &prompt
+	}
 	if in.AssistantName != nil {
 		name := strings.TrimSpace(*in.AssistantName)
 		if name == "" || utf8.RuneCountInString(name) > maxAssistantNameRunes {
@@ -349,7 +365,15 @@ func (a *API) updateDeviceAgent(w http.ResponseWriter, r *http.Request, user sto
 		writeError(w, apiError(http.StatusServiceUnavailable, "PROVISION_UNAVAILABLE", "开通组件暂不可用"))
 		return
 	}
-	patch, err := a.buildPatch(r.Context(), in)
+	// The current prompt is needed to place the persona behind it.
+	var current linx.AgentInfo
+	if in.Persona != nil {
+		if current, err = a.provision.AgentInfo(r.Context(), device.LinxAgentID); err != nil {
+			writeError(w, mapBindError(err))
+			return
+		}
+	}
+	patch, err := a.buildPatch(r.Context(), in, current)
 	if err != nil {
 		if _, ok := err.(*APIError); ok {
 			writeError(w, err)
