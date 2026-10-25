@@ -68,6 +68,7 @@ export interface AgentOptions {
   languages: AgentOption[]
   llm_models: AgentOption[]
   memory_modes: AgentOption[]
+  default_system_prompt: string
 }
 
 // The numeric fields are absent when the platform reports no value for them.
@@ -83,8 +84,8 @@ export interface AgentSettings {
   llm_max_tokens?: number
   idle_timeout_seconds?: number
   disable_greeting?: boolean
-  /** The user's note appended to the platform prompt. */
-  persona?: string
+  /** The agent's full role description. */
+  system_prompt?: string
 }
 
 export type AppState = 'building' | 'idle' | 'running' | 'error'

@@ -354,8 +354,6 @@ type AgentPatch struct {
 	LLMModelID    *string
 	MemModelID    *string
 	LangCode      *string
-	// SystemPrompt is only ever set by the portal to append a user note to
-	// the platform prompt; users cannot supply it directly.
 	SystemPrompt *string
 	Extra        *AgentExtra
 }

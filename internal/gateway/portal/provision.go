@@ -290,6 +290,9 @@ func (p *Provisioner) AgentInfo(ctx context.Context, agentID string) (linx.Agent
 	return client.GetAgent(ctx, agentID)
 }
 
+// DefaultSystemPrompt is the role description new agents start with.
+func (p *Provisioner) DefaultSystemPrompt() string { return p.cfg.SystemPrompt }
+
 // Languages lists the languages a user can pick for an agent.
 func (p *Provisioner) Languages(ctx context.Context) ([]linx.Language, error) {
 	client, err := p.client(ctx)
