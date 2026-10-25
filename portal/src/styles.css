@@ -364,6 +364,12 @@ button {
   color: var(--oa-text);
 }
 
+.brand-mascot {
+  display: block;
+  width: auto;
+  height: 34px;
+}
+
 .brand-logo {
   display: block;
   width: auto;
