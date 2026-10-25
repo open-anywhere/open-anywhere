@@ -30,7 +30,7 @@ Because nearly every household and every business already owns at least one scre
 Current commercial facts, stated once so agents do not restate a different version:
 
 - **Beachhead.** 18–30 party organizers and 30–45 households with children. The first profit engine is hospitality and party venues (民宿、轰趴馆、桌游店).
-- **Entry price.** 68 CNY/month standard plan. Standard annual card 599 CNY (240 credits + 60 run hours). Family annual card: list 899 CNY (360 credits + 100 run hours, includes one toy), first-year transaction 599 CNY without hardware. High-frequency annual card 1,599 CNY (720 credits + 200 run hours). Annual cards are quota-bearing prepaid bundles, not monthly quota × 12.
+- **Entry price.** 68 CNY/month standard plan. Standard annual card 599 CNY (800 credits + 60 run hours). Family annual card: list 899 CNY (1,200 credits + 100 run hours, includes one toy), first-year transaction 599 CNY without hardware. High-frequency annual card 1,599 CNY (2,400 credits + 150 run hours). Annual cards are 10 months of quota released over 12 months, priced at roughly 8.8–9.6 months of the matching monthly tier; they are not monthly quota × 12.
 - **Merchant price ladder.** Single event 399 CNY; monthly 599 CNY for 4 events; annual 3,999 CNY for 50 events. On-site hosting and setup are 500–1,000 CNY per event and are not included in the software subscription; the 199 CNY first-week single is a founder-led pilot, not a standard SKU.
 - **Credits.** Template 1, edit 2, new app 5, complex app 10. One credit equals one CNY on top-up.
 - **Run hours.** 1 / 3 / 6 / 10 / 15 / 25 hours for the 0 / 39 / 68 / 99 / 166 / 288 CNY tiers.
@@ -61,19 +61,15 @@ Agents reviewing or extending this repository must not treat roadmap items as im
 - A commercial claim must cite code, a dated record under `docs/`, or a sourced external figure in appendix B of the business plan.
 - Do not describe planned work in the present tense. Use "roadmap" or "target" and name the milestone.
 - When two documents disagree on a number, fix the disagreement rather than adding a third number.
-- Commercial price claims must use section 5.3 of the business plan. Annual cards are quota-bearing prepaid bundles; do not describe them as monthly quota × 12 or as unlimited generation.
+- Commercial price claims must use section 5.3 of the business plan. Annual cards are 10 months of quota released over 12 months at roughly 8.8–9.6 months of the matching monthly price; do not describe them as monthly quota × 12 or as unlimited generation.
 - A validation claim must name the sample size, participant composition, and date. A team test is never "market validation".
 
 ## Known Documentation and Implementation Drift
 
 These are known as of 2026-10-26. Treat code and this file as current; the listed documents are being corrected.
 
-- `docs/architecture.md` describes AirPlay in its summary and component table. The implemented casting adapter is DLNA only (`docs/casting.md`); AirPlay is a planned adapter.
 - `docs/product-extensions.md` still marks multi-app sessions as unimplemented. Multi-app sessions are implemented, with the switching limitation described above.
-- `docs/product.md` section 7.1 says the personal party scenario completed a "first full validation". That is the same four-person team test described in Commercial Status; it is a technical happy-path test, not independent market validation. The business plan section 12.1 is authoritative.
-- `docs/business-strategy.md` still says single-tenant and no billing. The Portal is multi-tenant; billing is roadmap, not implemented.
 - `internal/gateway/portal/agent-prompt.txt` predates `update-app` and multi-app support, while `docs/agent-system-prompts/open-anywhere-host.txt` already documents them. Regenerate the embedded prompt from the docs copy and add a test that the two match before shipping.
-- `docs/app-management-mcp.md` lists nine tools including a compatibility helper. The stable product surface is the eight tools in `internal/gateway/mcp/tools.go`; compatibility helpers are not part of the MCP contract.
 - `speaker_probe` is disabled by default and the compatibility probe returns `verified:false`. Do not claim voiceprint or speaker identity is shipped.
 
 ## Architecture
@@ -86,7 +82,7 @@ Display, input, and compute are deliberately isolated. Each plane can be replace
 | Compute | Control plane, AgentAPI, Render | MCP routing and orchestration, app registry, asynchronous builds in a sandbox, app runtime, stage capture | Understand the app's business semantics; speak the device protocol |
 | Display | Casting service and the target TV, projector, or other display | Device discovery, DLNA session lifecycle, playing a media stream (AirPlay is a planned adapter) | Know which app produced the stream |
 
-The planes meet through four narrow contracts. `docs/architecture.md` counts the first, second, and Portal API as its three; the Casting API is the display-plane contract that file leaves implicit.
+The planes meet through four narrow contracts.
 
 1. **MCP** between Linx and the control plane. Linx sees a stable set of tools and never talks to AgentAPI or Render directly.
 2. **OpenAPI + `launch.json` + HTTP** between the control plane, Render, and apps. Apps expose HTTP and know nothing about MCP; the control plane validates and forwards requests.

@@ -66,6 +66,8 @@ Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE �
 | `stop-app` | 停止运行中的应用 | `app_id` | `app_id`, `state: idle` |
 | `send-request` | 调用应用的业务操作 | `app_id`, `operation_id`, `parameters`, `body` | `status`, `body` |
 
+> **稳定工具面是 8 个**：`get-screens`、`create-app`、`update-app`、`get-app-status`、`get-app-operations`、`start-app`、`stop-app`、`send-request`，对应 `internal/gateway/mcp/tools.go`。`list-apps` 是兼容层 helper（`internal/gateway/mcp/compatibility.go`），用于历史应用查询和旧版 host prompt，不属于稳定契约；新接入不应依赖它。
+
 ### 2.2 应用状态
 
 应用状态表示应用在指定屏幕上的整体可用性。`running` 要求应用健康检查通过且投屏服务报告正在播放；只启动应用进程不算成功。不向灵矽暴露独立的 `display.state`。
