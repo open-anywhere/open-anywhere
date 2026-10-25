@@ -64,7 +64,7 @@ When working in this repository:
 
 - Keep the control plane a router and orchestrator, not an app runtime.
 - Put generation and build rules in the app-builder skill and AgentAPI, runtime behavior in Render, protocol and session behavior in Casting, and device behavior in the voice entry.
-- Read the design documents before changing a contract: [`docs/architecture.md`](docs/architecture.md), [`docs/app-artifact.md`](docs/app-artifact.md), [`docs/casting.md`](docs/casting.md), [`docs/render-runtime.md`](docs/render-runtime.md), and [`docs/voice-entry.md`](docs/voice-entry.md).
+- Read the design documents before changing a contract: [`docs/architecture/overview.md`](docs/architecture/overview.md), [`docs/architecture/interfaces/app-artifact.md`](docs/architecture/interfaces/app-artifact.md), [`docs/operations/casting.md`](docs/operations/casting.md), [`docs/operations/render.md`](docs/operations/render.md), and [`docs/architecture/voice-entry.md`](docs/architecture/voice-entry.md).
 
 ## Scope of These Instructions
 

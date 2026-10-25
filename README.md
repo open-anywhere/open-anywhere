@@ -56,7 +56,7 @@
 | 写代码 | AgentAPI | 在隔离环境里生成应用并自测 |
 | 上屏 | Render | 启动应用、采集画面、送出媒体流 |
 
-生成的应用把每个操作都声明成 OpenAPI，控制面提供稳定的 Mcp 工具，所以语音不只能创建它，还能在运行时操作它：开始、下一题、查比分，都是一次业务调用。
+生成的应用把每个操作都声明成 OpenAPI，控制面提供稳定的 MCP 工具，所以语音不只能创建它，还能在运行时操作它：开始、下一题、查比分，都是一次业务调用。
 
 ## AI 价值呈现
 
@@ -76,12 +76,12 @@
 
 这个作品本身，也是用同一套方法做出来的。六件我们实际做了的事：
 
-- **先做技能，再接平台。** 灵矽和 AgentAPI 都是新平台、模型不熟悉，也没有现成技能包。我们先把官方文档（41 页 / 34 页）封装成仓库内的 skill，让 Agent 基于文档接入，而不是猜接口。
-- **先定架构契约，再并行开发。** 三个人同时推进控制面、运行端、投屏与语音侧，前提是先把模块和接口定下来，靠契约联调而不是靠口头约定，实际跑通 MVP 只花了一顿饭的时间。
-- **用假下游补齐联调。** 真实服务与硬件不可重复，我们让 Agent 按接口写假下游（59 个文件使用 `httptest`），先跑通协议、状态机和错误路径，再接真实服务。
-- **把动态能力收敛成固定工具。** 应用是当场生成的、能力各不相同，但语音侧只看到两个通用工具：读操作表与发请求。接入面不随应用数量增长。
-- **用对抗性测试补实现层。** 15 个 `*_adversarial_test.go` 专门找边界、并发、资源清理与失败路径的问题。
-- **10 个 Subagent 多领域评审。** 一次评审覆盖投屏、渲染、构建、语音四条链路，25 个文件，每条修复都补回归测试（[PR #67](https://github.com/open-anywhere/open-anywhere/pull/67)）。
+- **先做技能，再接平台。** 灵矽和 AgentAPI 都是新平台、模型不熟悉，也没有现成技能包。我们先把官方文档封装成仓库内的 skill（[linx-use](.agents/skills/linx-use/SKILL.md) 41 页、[agentapi-use](.agents/skills/agentapi-use/SKILL.md) 34 页），让 Agent 基于文档接入，而不是猜接口。
+- **先定架构契约，再让 Agent 并行。** 第一天下午三个人一起把架构拆分定下来；晚饭前给各自的 Agent 派发长任务，并写好验收标准。吃完饭回来，MVP 已经写完——一个多小时，一次跑通。架构清楚让任务能拆开，验收标准让 Agent 知道什么时候算完成。
+- **用 mock 顶住并行开发的等待。** 三个人进度有快有慢，快的要等慢的接口。架构边界足够清楚，我们让 AI 按接口写大量 mock 先跑冒烟测试（59 个文件使用 `httptest`）。结果是**三个人第一次联调就一次性调通**。
+- **把 OpenAPI 抽象成固定工具。** 不同应用有不同玩法，逐个对接会让语音侧随应用数量不断膨胀。我们让应用用 OpenAPI 声明自己的操作，语音侧只保留两个通用工具：读操作表、发请求。新应用上线不需要重新接入。
+- **用对抗性视角写测试。** 让 AI 以网络安全里的对抗视角写测试：先假设这段代码会被恶意使用，再去找最容易攻破的地方。这样它不会为了覆盖率数字堆无效断言，而是认真检查边界上的风险；反过来也倒逼实现写得更可测试。仓库中有 15 个 `*_adversarial_test.go`。
+- **10 个角度的独立评审。** 用 [code-review skill](.agents/skills/code-review/SKILL.md) 把 diff 交给 10 个互不通气的角度（5 个正确性、3 个清理、1 个改动层次、1 个约定），每个角度至多 8 条候选，再经单票三态验证与一轮补漏扫描，收敛到至多 15 条。独立会话避免被主对话带偏，也避免一个角度压制另一个；召回优先，宁可多报。
 
 我们认为其中最重要的三条经验是：
 
@@ -98,7 +98,7 @@
 
 ## 架构
 
-四个部件分布在三个互不重叠的平面上：输入、计算、显示。平面之间只有三条契约——MCP 让语音只看到工具；OpenAPI + `launch.json` + HTTP 让应用只暴露 HTTP；投屏 HTTP 只传媒体流地址。详见[架构设计](docs/architecture.md)与[模块规格](docs/modules.md)。
+四个部件分布在三个互不重叠的平面上：输入、计算、显示。平面之间只有三条契约——MCP 让语音只看到工具；OpenAPI + `launch.json` + HTTP 让应用只暴露 HTTP；投屏 HTTP 只传媒体流地址。详见[架构设计](docs/architecture/overview.md)与[模块规格](docs/architecture/modules.md)。
 
 ## 快速开始
 
@@ -110,17 +110,19 @@ go run ./cmd/casting -addr :8080 -interface en0
 go run ./cmd/voiceentry -serve                # 打开 http://127.0.0.1:8788/
 ```
 
-配置文件从 `gateway.example.yaml` 复制。Render 需要 Node.js、Chromium、FFmpeg 与 lsof；Portal 前端在 `portal/` 下用 pnpm 构建。逐步说明见 [Gateway](docs/start/gateway.md)、[Render](docs/start/render.md)、[Casting](docs/start/casting.md) 启动指南。
+配置文件从 `gateway.example.yaml` 复制。Render 需要 Node.js、Chromium、FFmpeg 与 lsof；Portal 前端在 `portal/` 下用 pnpm 构建。逐步说明见 [Gateway](docs/operations/gateway.md)、[Render](docs/operations/render.md)、[Casting](docs/operations/casting.md) 启动指南。
 
 ## 文档
 
 | 我想…… | 去哪 |
 | --- | --- |
-| 了解产品与商业 | [产品设计](docs/product.md)、[商业策略](docs/business-strategy.md) |
-| 看懂分层与契约 | [架构设计](docs/architecture.md) |
-| 看模块职责与分工 | [模块规格](docs/modules.md) |
-| 查接口、数据与错误码 | [应用包](docs/app-artifact.md)、[应用管理 MCP](docs/app-management-mcp.md)、[控制面数据库](docs/gateway-database.md) |
-| 看投屏与语音 | [Casting](docs/casting.md)、[现场语音入口](docs/voice-entry.md) |
+| 了解产品与商业 | [产品设计](docs/product/vision.md)、[商业策略](docs/product/business.md) |
+| 看懂分层与契约 | [架构设计](docs/architecture/overview.md) |
+| 看模块职责与分工 | [模块规格](docs/architecture/modules.md) |
+| 查接口、数据与错误码 | [应用包](docs/architecture/interfaces/app-artifact.md)、[应用管理 MCP](docs/architecture/interfaces/app-management-mcp.md)、[控制面数据库](docs/architecture/database.md) |
+| 看投屏与语音 | [Casting](docs/operations/casting.md)、[现场语音入口](docs/architecture/voice-entry.md) |
+
+完整索引见 [docs/README.md](docs/README.md)。
 
 ## 团队
 
