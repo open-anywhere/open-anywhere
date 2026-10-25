@@ -25,14 +25,24 @@ func (s *Service) updateRuntime(id string, fn func(*app.App)) error {
 	return &ToolError{Code: "APP_NOT_FOUND", Message: "应用不存在"}
 }
 
-// reconcile identifies unknown outcomes using read-only downstream records before
-// cleanup. It never repeats a POST and never deletes a foreign app/target session.
+// reconcile resolves the owner's services and reconciles the record.
 func (s *Service) reconcile(parent context.Context, record *app.Record) error {
+	rt, err := s.runtimeFor(parent, record.Snapshot().Owner)
+	if err != nil {
+		return err
+	}
+	return s.reconcileWith(parent, rt, record)
+}
+
+// reconcileWith identifies unknown outcomes using read-only downstream records
+// before cleanup. It never repeats a POST and never deletes a foreign
+// app/target session.
+func (s *Service) reconcileWith(parent context.Context, rt runtime, record *app.Record) error {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	a := record.Snapshot()
 	if a.PendingRuntime {
-		ports, err := s.render.ListPorts(ctx)
+		ports, err := rt.render.ListPorts(ctx)
 		if err != nil {
 			return err
 		}
@@ -54,7 +64,7 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 			}
 			a = record.Snapshot()
 		} else {
-			instance, err := s.render.Get(ctx, found)
+			instance, err := rt.render.Get(ctx, found)
 			if err != nil {
 				return err
 			}
@@ -73,7 +83,7 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 		}
 	}
 	if a.PendingProjection {
-		target, err := s.casting.GetTarget(ctx, a.TargetID)
+		target, err := rt.casting.GetTarget(ctx, a.TargetID)
 		if err != nil {
 			return err
 		}
@@ -87,7 +97,7 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 			}
 			a = record.Snapshot()
 		} else {
-			p, err := s.casting.GetSession(ctx, target.ActiveSessionID)
+			p, err := rt.casting.GetSession(ctx, target.ActiveSessionID)
 			if err != nil {
 				return err
 			}
@@ -101,7 +111,7 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 		}
 	}
 	if a.ProjectionSessionID != "" {
-		p, err := s.casting.StopSession(ctx, a.ProjectionSessionID)
+		p, err := rt.casting.StopSession(ctx, a.ProjectionSessionID)
 		if err != nil && !casting.IsStatus(err, http.StatusNotFound) {
 			return err
 		}
@@ -114,7 +124,7 @@ func (s *Service) reconcile(parent context.Context, record *app.Record) error {
 		a = record.Snapshot()
 	}
 	if a.InstanceID != "" {
-		r, err := s.render.Delete(ctx, a.InstanceID)
+		r, err := rt.render.Delete(ctx, a.InstanceID)
 		if err != nil && !render.IsStatus(err, http.StatusNotFound) {
 			return err
 		}

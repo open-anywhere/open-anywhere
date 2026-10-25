@@ -1,8 +1,6 @@
 # 控制面数据库设计
 
-> 状态：按当前实现整理（以代码为准）
-> 日期：2026-10-25
-> 代码位置：`internal/gateway/store/db.go`、`internal/gateway/app/app.go`、`internal/gateway/artifact/store.go`、`internal/gateway/service/`、`cmd/gateway/main.go`
+> 代码位置：`internal/gateway/store/db.go`、`internal/gateway/store/portal.go`、`internal/gateway/store/platform.go`、`internal/gateway/app/app.go`、`internal/gateway/artifact/store.go`、`internal/gateway/settings/settings.go`、`internal/gateway/secret/secretbox.go`、`internal/gateway/service/`、`cmd/gateway/main.go`
 
 ## 1. 定位与边界
 
@@ -16,8 +14,12 @@
 | 屏幕映射 | `screens` 指向的 JSON 文件 | 否 |
 | 投屏会话 | Casting 服务内存 | 否 |
 | Render 实例 | Render 服务内存 | 否 |
-| 门户账号、会话、设备记录（计划） | `portal_*` 四张表 | 是（v2，尚未实现） |
-| 虚拟设备凭证（计划） | `{portal.data_dir}/devices/{device_id}.json` | 否，0600 文件 |
+| 门户账号、角色/状态、会话、设备记录 | `portal_users` / `portal_sessions` / `portal_devices` | 是（v2，v3 增加角色与状态） |
+| 用户服务绑定 | `portal_service_bindings` | 是（v3；token 为密文） |
+| 平台设置（AgentAPI / Linx / 默认服务 / 注册开关） | `platform_settings` | 是（v3；秘密字段为密文） |
+| 平台侧 MCP Server/实例 ID 缓存 | `portal_settings` | 是 |
+| 虚拟设备凭证 | `{portal.data_dir}/devices/{device_id}.json` | 否，0600 文件 |
+| 主密钥 | `GATEWAY_SECRET_KEY` 或 `{portal.data_dir}/secret.key` | 否 |
 | MCP 调用日志 | 进程标准日志 | 否 |
 
 因此控制面重启后能恢复的是"应用属于谁、处于什么阶段、产物在哪、下一步该做什么"，而不是下游的真实运行状态。下游状态通过 `session_id`、`instance_id`、`projection_session_id` 等已持久化标识，由 `reconcile` 只读核对后重建（见 `internal/gateway/service/reconcile.go`）。
@@ -35,6 +37,8 @@
 | 数据库文件 | `database.path` | `GATEWAY_DB` | `-db` | `open-anywhere.gateway.db` |
 | 产物目录 | `artifacts.dir` | `ARTIFACTS_DIR` | `-artifacts-dir` | `artifacts` |
 | 产物下载基地址 | `artifacts.base_url` | `ARTIFACT_BASE_URL` | `-artifact-base-url` | 示例为 `http://192.168.31.203:8090` |
+| Portal 数据目录 | `portal.data_dir` | `PORTAL_DATA_DIR` | `-portal-data-dir` | `portal-data` |
+| 主密钥 | — | `GATEWAY_SECRET_KEY`（base64 32 字节） | — | 否则读取 `{portal.data_dir}/secret.key` |
 
 相对路径相对于 Gateway 进程的工作目录。打开数据库时会自动创建父目录（`store.Open`，`internal/gateway/store/db.go:57-63`）。
 
@@ -68,6 +72,49 @@ erDiagram
 ```
 
 一个应用最多对应一个产物包；产物表以 `app_id` 为主键，重复构建会覆盖同一行和同一个文件。两表之间**没有外键约束**，删除顺序由 Go 代码保证。
+
+门户侧是独立的一组表，通过 `portal_devices` 把灵矽身份映射到用户：
+
+```mermaid
+erDiagram
+    PORTAL_USERS ||--o{ PORTAL_SESSIONS : user_id
+    PORTAL_USERS ||--o{ PORTAL_DEVICES : user_id
+    PORTAL_USERS ||--o| PORTAL_SERVICE_BINDINGS : user_id
+    PORTAL_USERS {
+        TEXT id PK
+        TEXT username
+        TEXT password_hash
+        TEXT role
+        TEXT status
+        TEXT last_login_at
+    }
+    PORTAL_DEVICES {
+        TEXT id PK
+        TEXT user_id
+        TEXT kind
+        TEXT mac
+        TEXT linx_agent_id
+        TEXT state
+        TEXT step
+        TEXT credential_path
+    }
+    PORTAL_SERVICE_BINDINGS {
+        TEXT user_id PK
+        TEXT mode
+        TEXT render_url
+        TEXT casting_url
+        TEXT render_token_enc
+        TEXT casting_token_enc
+    }
+    PLATFORM_SETTINGS {
+        TEXT key PK
+        TEXT value
+        INTEGER is_secret
+        TEXT updated_by
+    }
+```
+
+`portal_devices` 的 `(mac, linx_agent_id)` 对应 `apps.data.Owner` 的 `(device_id, agent_id)`，应用归属仍由内存注册表按 `SameOwner` 判断，应用表不增加外键。平台设置是全局键值表，与用户没有外键关系。
 
 ## 4. 表结构
 
@@ -218,15 +265,15 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 | --- | --- |
 | `busy_timeout(5000)` | 锁等待最多 5 秒 |
 | `journal_mode(WAL)` | 允许外部只读工具与进程并发读，写入仍是单写者 |
-| `foreign_keys(1)` | 开启外键检查；当前 schema 没有外键，因此暂无实际效果 |
+| `foreign_keys(1)` | 开启外键检查；门户的 session/device 表依赖它做级联删除 |
 | `SetMaxOpenConns(1)` | 进程内所有 SQL 串行化，避免 `database/sql` 多连接竞争；也意味着一个慢查询会阻塞健康检查 |
 
 打开流程：
 
 1. 创建数据库父目录（`db.go:57-63`）。
 2. 以 10 秒超时 `Ping`。
-3. 读取 `PRAGMA user_version`；若大于程序支持的 `schemaVersion`（当前为 1）则拒绝启动。
-4. 逐条执行 `CREATE TABLE/INDEX IF NOT EXISTS`，再把 `user_version` 写为 1。
+3. 读取 `PRAGMA user_version`；若大于程序支持的 `schemaVersion`（当前为 3）则拒绝启动。
+4. 按版本依次执行尚未应用的迁移（v1 → v2 → v3）；每个版本在独立事务中执行，成功后在同一事务写入 `PRAGMA user_version`。新库从 0 一次执行到 3，已有 v2 库只执行 v3。
 
 写入并发控制分两层：
 
@@ -257,7 +304,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 5. 对每个同时存在产物行的应用，用步骤 3 计算的路径和地址覆盖 `App.Artifact`，`Revision++` 后 `SaveApp`。
 6. `registry.Load`：只加载，不写回；`Revision` 为 0 时补为 1。
 7. `RecoverRuntime`：把 `PendingRuntime` / `PendingProjection`，以及 `idle` 但仍有实例或投屏绑定的应用标为 `error` + `CleanupPending` + `RECOVERY_PENDING`，等待 `reconcile` 只读核对。
-8. `PruneHistory`：按全局上限清理历史。
+8. `PruneHistory`：按 `(device_id, agent_id)` 分组，每组保留最新 10 个。
 9. 对 `State == building` 的应用调用 `builder.Resume`；缺少 `SessionID` 的直接置为构建失败。
 10. `RunMonitor` 周期核对运行状态并完成遗留清理。
 
@@ -303,26 +350,37 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 
 `HistoryLimit = 10`，由 `Service.PruneHistory` 执行：
 
-- 只保留最新的 10 个应用，**按全局排序，不按设备或智能体分组**。
+- 按 `(device_id, agent_id)` 分组，每组保留最新的 10 个应用，用户之间互不挤占。
 - 只在创建应用后和进程启动时触发。
 - `building`、`running`，以及仍持有 Render 实例、投屏会话、清理标记的应用永不删除。
 - 删除一个应用会同时删除其产物文件和元数据。
-- 启动或运行时的任何一次裁剪都不做"删除后校验"，因此不是跨表事务。
-
-门户设计已确定把裁剪改为按 `(device_id, agent_id)` 分组、每组保留 10 个，避免用户之间互相挤占（见 [用户管理端设计](user-portal.md) 9.4）。该变更会随 v2 一起实现。
+- 启动或运行时的任何一次裁剪都不做“删除后校验”，因此不是跨表事务。
 
 ## 10. Schema 版本与迁移
 
-- 当前 `schemaVersion = 1`，保存在 SQLite `PRAGMA user_version`。
-- 打开时只拒绝**比程序更新**的数据库；更旧的版本（0）直接建表并写成 1。
-- 建表语句全部是 `CREATE ... IF NOT EXISTS`，`schema` 列表没有按版本分组的迁移步骤。
-- 修改已有表结构（例如新增 `owner_agent_id`）时，`IF NOT EXISTS` 不会生效，必须：
-  1. 增加有序迁移步骤，按 `user_version` 逐级执行，并在事务内完成；
-  2. 对已有数据库执行 `ALTER TABLE ... ADD COLUMN`（或重建表）；
-  3. 递增 `schemaVersion`；
-  4. 保留"新库拒绝启动"的保护，避免旧程序写入不认识的 schema。
+- 当前 `schemaVersion = 3`，版本号保存在 SQLite `PRAGMA user_version`。
+- 迁移是有序列表，而不是一组混合的 `CREATE ... IF NOT EXISTS`：
 
-门户设计会引入 v2：只新增 `portal_users`、`portal_sessions`、`portal_devices`、`portal_settings` 四张表，不修改现有表；实现时递增 `schemaVersion`，并把第 15 节改为“按当前实现整理”。
+| 版本 | 内容 |
+| --- | --- |
+| v1 | `apps`、`artifacts` 及 `apps_owner_state` 索引 |
+| v2 | `portal_users`、`portal_sessions`、`portal_devices`、`portal_settings` 及索引 |
+| v3 | `portal_users.role/status/last_login_at`、角色/过期索引、虚拟设备与 AgentID 唯一索引、`portal_service_bindings`、`platform_settings` |
+
+- 每个版本在一个事务中执行，`PRAGMA user_version` 也在该事务内写入；任一步失败会回滚整个版本，schema 与版本号都保持原状。
+- 打开时只拒绝**比程序更新**的数据库，旧程序看到 v3 会拒绝启动，避免写入不认识的 schema。
+- v3 使用 `ALTER TABLE` 增加列，只在 `user_version < 3` 时执行，不做 `IF NOT EXISTS` 兜底。
+- **迁移前预检**（`prepareSchemaV3`）：
+  - 同一用户存在多台 `kind='virtual'` 设备；
+  - 非空 `linx_agent_id` 被多台设备重复使用。
+  发现重复时整个 v3 迁移回滚，并给出明确错误，要求人工处理；**不会自动删除任何用户数据**。
+- 迁移不硬编码账号。启动时 `EnsureAdmin` 用 `portal.username` / `portal.password` 创建或提升引导账号；已有 v2 账号若与配置的引导账号同名，则被提升为管理员，其余账号保留为 `user`。设备、凭据与应用都保留。
+- 修改已有表结构时必须新增迁移版本、在事务内执行 `ALTER TABLE` 或重建表、递增 `schemaVersion`，并保留“新库拒绝启动”的保护。
+
+WAL 模式下的备份：
+
+- 备份必须使用 SQLite 在线备份（`sqlite3 db ".backup 'backup.db'"`）或先正常停进程，不能只拷贝主文件，否则可能丢失 `-wal` 中尚未 checkpoint 的数据。
+- 平台密钥与用户服务 token 是密文，备份数据库时必须同时保留 `GATEWAY_SECRET_KEY` 或 `secret.key`，否则恢复后无法解密；反过来，只备份密钥而不备份数据库也恢复不了设置。
 
 ## 11. 容量与性能
 
@@ -331,15 +389,19 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 - 每次构建事件（`agent.message`、`agent.thinking`、`session.error`）都会把**整条应用快照**重新序列化并写入：高频思考事件会带来明显的写放大和 WAL 增长。
 - `ListApps` / `ListArtifacts` 是启动期全表扫描，当前数据量下没有问题；`ORDER BY updated_at` 使用文本排序，而 `RFC3339Nano` 的小数位长度可变，同一秒内"无小数"与"有小数"的字符串顺序不一定等于时间顺序。该顺序只影响启动加载次序，不影响业务。
 - 单连接串行化意味着一次锁等待会阻塞后续所有 SQL，也会拖慢 MCP 调用中的持久化步骤。`/healthz` 的 `Ping` 自带 2 秒超时，锁等待超过 2 秒时会直接返回 503。
+- 门户数据量按“一个用户一台虚拟设备”增长；用户列表分页查询（默认 50、上限 100），智能体列表最多返回 500 条，全局应用列表最多 200 条。注册、设置与绑定写入都不在应用构建的热路径上。
 
 ## 12. 安全
 
 - 数据库保存用户提示词、玩家姓名、设备 ID、智能体 ID、会话 ID、运行端口和产物下载令牌，属于需要按敏感数据对待的本地文件。
 - 数据库文件权限由进程 umask 决定，代码没有显式收紧；产物目录以 `0755` 创建，压缩包以 `0644` 写入。多用户主机上建议把数据库与产物目录放到仅服务账户可读的位置。
 - 下载令牌无过期时间；只有重新构建才会换令牌，重启不会更换。产物下载接口不经过 MCP Bearer 鉴权，令牌本身就是能力凭证。
-- 数据库没有加密，也没有字段级脱敏；日志里会打印应用 ID、会话短 ID 和工具调用摘要。
+- 密码只保存 PBKDF2-SHA256 哈希；会话只保存 token 的 SHA-256；设备 token 在 0600 凭证文件中，不入库。
+- 平台 API Key、平台默认服务 token、用户服务 token 以 AES-256-GCM 加密后入库，密文格式为 `enc:v1:<base64(nonce|ciphertext)>`，AAD 分别绑定 `platform:<key>` 与 `binding:<user_id>:<render|casting>`，防止密文在字段间搬运。
+- 主密钥来自 `GATEWAY_SECRET_KEY` 或 `{portal.data_dir}/secret.key`（0600）。Gateway 启动阶段会解密校验 `platform_settings` 与 `portal_service_bindings` 中的全部密文，任一失败则拒绝启动并提示恢复密钥；主密钥缺失或不匹配时不会静默重置，不要删除密钥或清空密文来“修复”，必须从备份恢复。
+- 数据库没有整体加密；未标记为秘密的字段（用户名、服务地址、时间、状态）仍是明文，日志里会打印应用 ID、会话短 ID 和工具调用摘要。
 
-## 13. 当前实现的缺口与建议
+## 13. 已知限制与建议
 
 以下按影响排序，均为**现状**，不是已实现行为：
 
@@ -349,7 +411,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 4. **`EventCursor` 只写不读**：与接口文档 3.7 的"按游标跳过已处理事件"不一致。要么在恢复时真正使用游标/事件 ID 集合，要么从 schema 与文档中移除该字段，避免误以为去重是跨重启的。
 5. **整快照高频写入**：构建过程中每个 thinking 事件都重写完整快照。建议把高频进度拆成独立小表或独立列，或按时间/事件数节流，降低 WAL 和磁盘压力。
 6. **跨表写入不是事务**：产物与应用快照、应用删除与产物删除分属不同语句。建议明确可接受的中间状态，并配合启动时的孤儿扫描；否则崩溃窗口会留下不一致。
-7. **历史上限是全局的**：一台设备产生 10 个应用后，其他设备的旧应用也可能被裁掉。如果产品语义是"每个设备 + 智能体保留 10 个"，需要把裁剪改成按所有者分组，并相应索引归属列。门户设计已确定改为按 owner 分组，待实现。
+7. **账号删除与资源回收缺失**：本期只有停用/启用，没有删除账号入口；停用会撤销会话并尽力停止应用，但不会删除灵矽智能体、设备凭证或数据库行。需要回收时只能按“停语音 → 解绑设备 → 删除智能体 → 删除凭证 → 删除用户行”人工处理。
 8. **缺少逐语句超时**：建议 CRUD 使用带超时的 `ExecContext/QueryContext`，避免锁等待把 `/healthz` 和 MCP 响应一起拖住。
 9. **不支持多副本**：`Revision` 只能防止同一数据库内的旧快照覆盖新快照，无法协调两个 Gateway 同时管理同一批应用。部署文档应明确"一个数据库一个进程"。
 
@@ -379,15 +441,33 @@ sqlite3 -header -column open-anywhere.gateway.db \
 sqlite3 open-anywhere.gateway.db \
   "SELECT a.app_id FROM artifacts a LEFT JOIN apps p ON p.id=a.app_id WHERE p.id IS NULL;"
 
-# 在线备份（WAL 模式下不要只拷主文件）
+# 门户账号与角色
+sqlite3 -header -column open-anywhere.gateway.db \
+  "SELECT id, username, role, status, created_at, last_login_at FROM portal_users ORDER BY created_at;"
+
+# 虚拟设备与开通状态
+sqlite3 -header -column open-anywhere.gateway.db \
+  "SELECT id, user_id, kind, mac, linx_agent_id, state, step, error FROM portal_devices ORDER BY created_at;"
+
+# 用户服务绑定（token 为 enc:v1: 密文，不要尝试在 SQL 中解密）
+sqlite3 -header -column open-anywhere.gateway.db \
+  "SELECT user_id, mode, render_url, casting_url, updated_at FROM portal_service_bindings;"
+
+# 平台设置（value 可能是密文）
+sqlite3 -header -column open-anywhere.gateway.db \
+  "SELECT key, is_secret, updated_at, updated_by FROM platform_settings ORDER BY key;"
+
+# 在线备份（WAL 模式下不要只拷主文件；备份必须与 secret.key/GATEWAY_SECRET_KEY 一起保存）
 sqlite3 open-anywhere.gateway.db ".backup 'gateway-backup.db'"
 ```
 
-## 15. 门户表（v2 设计，尚未实现）
+## 15. 门户表（v2 + v3）
 
-> 状态：设计稿，代码尚未落地。实现 Phase A 时，本节随建表语句一起改为“按当前实现整理”，并更新第 10 节的版本号。
+> 建表与迁移位于 `internal/gateway/store/db.go`，读写位于 `store/portal.go`、`store/platform.go`。
 
-门户与 Gateway 共用同一个 SQLite。v2 只新增表，不修改 `apps` 与 `artifacts`：
+门户与 Gateway 共用同一个 SQLite。v2 新增账号、会话、设备与旧版设置表；v3 在 v2 上增加角色/状态、约束与新表，不修改 `apps` 与 `artifacts`。
+
+### 15.1 v2 基础表
 
 ```sql
 CREATE TABLE IF NOT EXISTS portal_users (
@@ -435,11 +515,62 @@ CREATE TABLE IF NOT EXISTS portal_settings (
 );
 ```
 
-关系与约定：
+### 15.2 v3 变更
+
+```sql
+ALTER TABLE portal_users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'
+    CHECK (role IN ('admin','user'));
+ALTER TABLE portal_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','disabled'));
+ALTER TABLE portal_users ADD COLUMN last_login_at TEXT;
+
+CREATE INDEX IF NOT EXISTS portal_users_role ON portal_users(role, status);
+CREATE INDEX IF NOT EXISTS portal_sessions_expires ON portal_sessions(expires_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS portal_devices_one_virtual
+    ON portal_devices(user_id) WHERE kind = 'virtual';
+CREATE UNIQUE INDEX IF NOT EXISTS portal_devices_agent
+    ON portal_devices(linx_agent_id) WHERE linx_agent_id <> '';
+CREATE INDEX IF NOT EXISTS portal_devices_mac_agent
+    ON portal_devices(mac, linx_agent_id);
+
+CREATE TABLE IF NOT EXISTS portal_service_bindings (
+    user_id           TEXT PRIMARY KEY,
+    mode              TEXT NOT NULL DEFAULT 'managed'
+        CHECK (mode IN ('managed','custom')),
+    render_url        TEXT NOT NULL DEFAULT '',
+    casting_url       TEXT NOT NULL DEFAULT '',
+    render_token_enc  TEXT NOT NULL DEFAULT '',
+    casting_token_enc TEXT NOT NULL DEFAULT '',
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS platform_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    is_secret  INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT ''
+);
+```
+
+### 15.3 关系与约定
 
 - `portal_users` 1:N `portal_sessions` / `portal_devices`；外键依赖 DSN 里的 `foreign_keys(1)`。
+- `portal_users.role` 取 `admin` / `user`，`status` 取 `active` / `disabled`。v2 旧账号迁移后默认 `user`；启动时 `EnsureAdmin` 把配置文件声明的引导账号提升为 `admin` 并激活，不通过 SQL 批量提升所有旧账号。
+- `portal_users.last_login_at` 在成功登录时更新；会话过期或用户被停用时，`Authenticate` 会删除会话。
+- 一个用户最多一台 `kind='virtual'` 设备（`portal_devices_one_virtual`），非空 `linx_agent_id` 全局唯一（`portal_devices_agent`）。迁移前先预检重复数据，重复时拒绝升级。
 - `portal_devices.mac` 对应 `apps.data.Owner.device_id`，`linx_agent_id` 对应 `Owner.agent_id`。应用表不新增外键：应用由灵矽 MCP 写入，可能早于门户记录，归属过滤仍在内存完成。
 - `credential_path` 只是相对 `portal.data_dir` 的文件名，设备 token 不进数据库；凭证文件 `0600`，目录 `0700`。
 - `portal_sessions.token_hash` 存会话 token 的 SHA-256，不存明文；启动时清理 `expires_at < now` 的行。
-- `portal_settings` 保存平台侧的 MCP Server/实例 ID 等少量全局配置，不保存 API Key。
-- 容量很小（本期一个用户一台设备），不设归档策略；删除用户时需要先按“停语音 → 解绑设备 → 删除智能体 → 删除凭证”清理平台资源，再依赖 `ON DELETE CASCADE` 删除本地行。
+- `portal_settings` 只保存平台侧 MCP Server/实例 ID 等少量缓存，不保存 API Key。
+- `portal_service_bindings` 每个用户最多一行。`mode=managed` 时忽略用户地址，使用 `platform_settings` 的默认服务；`mode=custom` 时必须同时有 Render/Casting 地址。切换到 managed 不会删除已保存的自定义地址与 token。
+- `platform_settings` 是平台级键值表，`updated_by` 记录最后修改的管理员用户 ID（配置 seed 的值为 `bootstrap`）。键包括：
+  - `agentapi.base_url`、`agentapi.api_key`、`agentapi.agent_id`、`agentapi.agent_version`、`agentapi.environment_id`
+  - `linx.api_base`、`linx.ota_url`、`linx.api_key`
+  - `services.default_render_url`、`services.default_render_token`、`services.default_casting_url`、`services.default_casting_token`
+  - `registration.open`
+- 秘密键为 `agentapi.api_key`、`linx.api_key`、`services.default_render_token`、`services.default_casting_token`；值以 `enc:v1:` 开头，使用 AES-256-GCM 和 AAD `platform:<key>` 加密。用户服务 token 使用 AAD `binding:<user_id>:<render|casting>`。密文无法解密时读取设置会报错，不会回退或重置。
+- 容量随注册用户增长；用户列表分页读取，设备列表按用户索引读取。账号没有删除入口，停用只撤销会话并尽力停止资源，不删除行。

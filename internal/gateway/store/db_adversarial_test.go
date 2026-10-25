@@ -37,11 +37,16 @@ func TestOpenReportsASchemaThatCannotBeApplied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.Exec(`DROP TABLE apps`); err != nil {
+	// Rewind the recorded version and remove a table the v3 migration alters.
+	// The upgrade must then report the failing statement instead of pretending
+	// the schema is usable.
+	if _, err := raw.Exec(`DROP TABLE portal_sessions`); err != nil {
 		t.Fatal(err)
 	}
-	// An apps table without the indexed columns makes the schema migration fail.
-	if _, err := raw.Exec(`CREATE TABLE apps (id TEXT PRIMARY KEY)`); err != nil {
+	if _, err := raw.Exec(`DROP TABLE portal_users`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`PRAGMA user_version = 2`); err != nil {
 		t.Fatal(err)
 	}
 	if err := raw.Close(); err != nil {
@@ -53,6 +58,18 @@ func TestOpenReportsASchemaThatCannotBeApplied(t *testing.T) {
 			reopened.Close()
 		}
 		t.Fatalf("err = %v", err)
+	}
+	var version int
+	raw, err = sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if err := raw.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 {
+		t.Fatalf("a failed migration changed the recorded version to %d", version)
 	}
 }
 
@@ -145,8 +162,18 @@ func TestOpenReportsAReadOnlyDatabase(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// The database already has the current schema, so every CREATE statement
-	// is a no-op and only the schema version bump needs to write.
+	// Rewind the recorded version without changing the schema, so only the
+	// version write needs to touch the file after it becomes read-only.
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(path, 0o444); err != nil {
 		t.Fatal(err)
 	}

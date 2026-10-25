@@ -223,7 +223,6 @@ func encoderArgs(cfg Config, fps string) []string {
 		"-f", "mpegts", "pipe:1",
 	)
 }
-
 func startMedia(life, startup context.Context, cfg Config, url, logPath string, h *hub) (*media, error) {
 	hooks := cfg.browserHooks()
 	ctx, cancel := context.WithCancel(life)

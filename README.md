@@ -28,6 +28,8 @@ AI 就围绕这次聚会创造游戏，邀请大家加入，通过语音互动�
 
 聚会只是其中一种应用场景，更多场景与体验设计见[产品设计](docs/product.md)。
 
+商业规划见[商业策略](docs/business-strategy.md)：市场背景、产品定位、收费模式（小玩具、百变积分、云端运行时长、运行盒子、社区版与端侧 AI 高端线）与验证路径。
+
 ## 开发
 
 基于 Go 语言开发。
@@ -72,6 +74,23 @@ go run ./cmd/gateway -config gateway.yaml
 `gateway.example.yaml` 列出了全部配置项。配置优先级为命令行参数 > 环境变量 > YAML > 内置默认值；未指定 `-config` 时读取当前目录的 `gateway.yaml`。应用状态、构建进度和产物下载令牌保存在 SQLite（默认 `open-anywhere.gateway.db`），产物文件保存在 `artifacts/`。控制面重启后会恢复应用记录，并继续监听未完成的构建。表结构、持久化边界、恢复流程与已知缺口见 [控制面数据库设计](docs/gateway-database.md)。
 
 MCP 端点为 `GET /mcp` 和 `POST /mcp/message`，健康检查为 `GET /healthz`。
+
+运行用户门户（可选，多租户 SaaS 形态）：
+
+门户前端是 React + Vite，构建产物由 Gateway 直接从磁盘提供：
+
+```bash
+cd portal
+pnpm install
+pnpm build
+```
+
+在 `gateway.yaml` 中启用 `portal.enabled`，设置管理员引导账号 `portal.username` / `portal.password`，并填写灵矽云可访问的 `linx.public_mcp_url` 与 `mcp_token`（Portal 模式下必填）。启动 Gateway 后打开 <http://127.0.0.1:8090/> 查看 Home，登录后：
+
+- 管理员（配置的引导账号）默认进入 `/admin`，配置平台级 AgentAPI / Linx 密钥、默认 Render/Casting 与注册开关，并管理用户、智能体与全局应用；也可以进入 `/portal`。
+- 普通用户在 `/register` 自助注册（需管理员打开注册开关），系统自动创建一台虚拟智能体和对应 Linx 设备；登录后进入 `/portal`，可查看应用、屏幕、活动，绑定 Render/Casting 服务并发起浏览器语音通话。
+
+`linx.api_key` 与 AgentAPI 配置（Base URL、API Key、Agent ID、Environment ID）可以留空，由管理员在后台配置；`gateway.yaml` 中的值只在对应设置尚无值时 seed，已有设置不会被覆盖。平台 API Key 和用户服务 token 使用 AES-256-GCM 加密后入库，主密钥来自环境变量 `GATEWAY_SECRET_KEY`（base64 32 字节），否则自动生成 `portal-data/secret.key`（`0600`）。**丢失 `secret.key` / `GATEWAY_SECRET_KEY` 会导致已有密钥和 token 无法解密，必须与数据库一起备份。** 默认拒绝用户填写内网地址；本地调试需要填写 `127.0.0.1` 或局域网地址时，设置 `services.allow_private_targets: true`，仅限本地调试使用。设计、接口与安全边界见 [多租户用户 Portal 设计](docs/user-portal.md)。浏览器麦克风需要 HTTPS 或 `localhost`；局域网 IP 直接访问时只能接收字幕。
 
 运行现场语音入口（接入灵矽并提供本地 Web 控制台）：
 

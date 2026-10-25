@@ -190,6 +190,50 @@ timeouts:
 	}
 }
 
+func TestPortalCredentialsComeFromYAMLAndEnvironment(t *testing.T) {
+	path := writeConfig(t, `
+portal:
+  enabled: true
+  username: "owner"
+  password: "yaml-password"
+mcp_token: "test-token"
+linx:
+  api_key: "linx-key"
+  public_mcp_url: "https://example.com/mcp"
+`)
+	cfg, err := Parse([]string{"-config", path}, envLookup(fullEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !cfg.PortalEnabled || cfg.PortalUsername != "owner" || cfg.PortalPassword != "yaml-password" {
+		t.Fatalf("portal = %+v", cfg)
+	}
+
+	env := fullEnv()
+	env["PORTAL_USERNAME"] = "env-owner"
+	env["PORTAL_PASSWORD"] = "env-password"
+	cfg, err = Parse([]string{"-config", path}, envLookup(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PortalUsername != "env-owner" || cfg.PortalPassword != "env-password" {
+		t.Fatalf("environment should override YAML: %+v", cfg)
+	}
+
+	cfg.PortalUsername = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected a missing portal username to be rejected")
+	}
+	cfg.PortalUsername = "owner"
+	cfg.PortalPassword = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected a missing portal password to be rejected")
+	}
+}
+
 func TestConfigPrecedence(t *testing.T) {
 	path := writeConfig(t, `
 addr: ":7000"

@@ -1,8 +1,5 @@
 # 多应用并发构建与同会话更新
 
-> 状态：Proposal（供 PR 评审）
-> 版本：v0.2
-> 日期：2026-10-25
 > 关联：[应用管理 MCP](app-management-mcp.md)、[控制面与 AgentAPI 接口](gateway-agentapi-interface.md)、[系统架构](architecture.md)
 > Issue：[＃69 同时多个应用 / agent session](https://github.com/open-anywhere/open-anywhere/issues/69)、[＃68 update-app](https://github.com/open-anywhere/open-anywhere/issues/68)
 > AgentAPI 依据：仓库内 [agentapi-use](../.agents/skills/agentapi-use/SKILL.md) 离线镜像（会话、会话操作、事件、运行时）
@@ -234,7 +231,7 @@ sequenceDiagram
 5. `building` 时 `update-app` 返回 `APP_BUILDING`。
 6. 会话已归档或 `terminated`（含 `claudecode` 沙箱丢失）后 `update-app` 返回 `SESSION_UNAVAILABLE`，旧产物若存在仍可 `start-app`。
 7. 更新失败且曾有成功产物时，应用回到可 `start-app` 的 `idle`，仍是旧版。
-8. `idle` 后隔一段时间再 `update-app`：若会话仍为 `idle`，应能恢复沙箱并完成修订（依赖 AgentAPI 暂停/恢复；实现阶段用真实环境验证）。
+8. `idle` 后隔一段时间再 `update-app`：若会话仍为 `idle`，应能恢复沙箱并完成修订（依赖 AgentAPI 暂停/恢复）。
 
 ## 10. 文档与实现落点
 
@@ -247,4 +244,4 @@ sequenceDiagram
 | `internal/gateway/build` | 在已有 session 上提交一轮并 watch；保留旧产物直到新校验成功 |
 | `internal/gateway/mcp` | 注册 `update-app` 与工具描述 |
 
-实现前以本文与同步修订后的 MCP / AgentAPI 文档为准；产品话术见 [product.md](product.md) 中「需要重新构建的能力」分支。
+以本文与同步修订后的 MCP / AgentAPI 文档为准；产品话术见 [product.md](product.md) 中「需要重新构建的能力」分支。

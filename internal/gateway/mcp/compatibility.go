@@ -101,6 +101,9 @@ func (s *Server) StreamableHTTP(publicHost string, probe bool) http.Handler {
 		if identity.DeviceID == "" || identity.SessionID == "" {
 			return nil
 		}
+		if s.ownerValidator() != nil && identity.AgentID == "" {
+			return nil
+		}
 		tools := s.currentTools()
 		if tools == nil {
 			return nil
@@ -115,6 +118,20 @@ func (s *Server) StreamableHTTP(publicHost string, probe bool) http.Handler {
 		if publicHost != "" && r.Host != publicHost && !strings.HasPrefix(r.Host, "127.0.0.1:") && !strings.HasPrefix(r.Host, "localhost:") {
 			http.Error(w, "invalid host", 403)
 			return
+		}
+		// The SSE transport validates the owner once per connection. Streamable
+		// HTTP is stateless, so every request carries its own identity and must
+		// pass the same check before the SDK creates a server.
+		if validator := s.ownerValidator(); validator != nil {
+			identity := identityFrom(r)
+			if identity.DeviceID == "" || identity.AgentID == "" || identity.SessionID == "" {
+				writeIdentityFailure(w, "MISSING_IDENTITY", http.StatusBadRequest)
+				return
+			}
+			if err := validator.ValidateOwner(r.Context(), identity); err != nil {
+				writeIdentityError(w, err)
+				return
+			}
 		}
 		http.NewCrossOriginProtection().Handler(handler).ServeHTTP(w, r)
 	})

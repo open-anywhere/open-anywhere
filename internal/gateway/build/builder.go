@@ -16,10 +16,18 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/anthropics/anthropic-sdk-go"
+
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/artifact"
 	"github.com/open-anywhere/open-anywhere/pkg/agentapi"
 	"github.com/open-anywhere/open-anywhere/pkg/canvas"
+)
+
+// Sentinel errors for follow-up turns on an existing AgentAPI session.
+var (
+	ErrSessionUnavailable = errors.New("build session unavailable")
+	ErrSessionBusy        = errors.New("build session busy")
 )
 
 // Config is the deployment configuration for builds.
@@ -32,9 +40,21 @@ type Config struct {
 	ArtifactLimit  int64
 }
 
+// Platform is the AgentAPI deployment a build talks to. It is resolved for
+// every build so administrator changes take effect without a restart.
+type Platform struct {
+	Client        *agentapi.Client
+	AgentID       string
+	AgentVersion  int // 0 means "use the agent's latest version"
+	EnvironmentID string
+}
+
+// PlatformProvider returns the current AgentAPI configuration.
+type PlatformProvider func(ctx context.Context) (Platform, error)
+
 // Builder starts build sessions and watches them to completion.
 type Builder struct {
-	client   *agentapi.Client
+	platform PlatformProvider
 	store    *artifact.Store
 	registry *app.Registry
 	notifier app.Notifier
@@ -45,8 +65,22 @@ type Builder struct {
 	logf    func(string, ...any)
 }
 
-// New creates a builder.
+// New creates a builder for a fixed AgentAPI client. It keeps single-tenant
+// deployments and tests unchanged.
 func New(client *agentapi.Client, store *artifact.Store, registry *app.Registry, notifier app.Notifier, cfg Config) *Builder {
+	return NewWithProvider(func(context.Context) (Platform, error) {
+		return Platform{
+			Client:        client,
+			AgentID:       cfg.AgentID,
+			AgentVersion:  cfg.AgentVersion,
+			EnvironmentID: cfg.EnvironmentID,
+		}, nil
+	}, store, registry, notifier, cfg)
+}
+
+// NewWithProvider creates a builder that resolves AgentAPI credentials on
+// every build.
+func NewWithProvider(provider PlatformProvider, store *artifact.Store, registry *app.Registry, notifier app.Notifier, cfg Config) *Builder {
 	if cfg.BuildTimeout <= 0 {
 		cfg.BuildTimeout = 60 * time.Minute
 	}
@@ -57,7 +91,7 @@ func New(client *agentapi.Client, store *artifact.Store, registry *app.Registry,
 		cfg.ArtifactLimit = artifact.MaxSize
 	}
 	return &Builder{
-		client:   client,
+		platform: provider,
 		store:    store,
 		registry: registry,
 		notifier: notifier,
@@ -67,13 +101,30 @@ func New(client *agentapi.Client, store *artifact.Store, registry *app.Registry,
 	}
 }
 
+// platformFor resolves and validates the AgentAPI configuration for one build.
+func (b *Builder) platformFor(ctx context.Context) (Platform, error) {
+	if b.platform == nil {
+		return Platform{}, app.ErrPlatformNotConfigured
+	}
+	platform, err := b.platform(ctx)
+	if err != nil {
+		return Platform{}, err
+	}
+	if platform.Client == nil || platform.AgentID == "" || platform.EnvironmentID == "" {
+		return Platform{}, fmt.Errorf("%w: agent and environment are not configured", app.ErrPlatformNotConfigured)
+	}
+	return platform, nil
+}
+
 // Start creates the AgentAPI session, submits the build prompt, and begins
 // watching in the background. It returns once the task has been accepted.
 func (b *Builder) Start(ctx context.Context, value app.App) error {
-	if b.cfg.AgentID == "" || b.cfg.EnvironmentID == "" {
-		return fmt.Errorf("build: agent and environment are not configured")
+	platform, err := b.platformFor(ctx)
+	if err != nil {
+		return err
 	}
-	session, err := b.client.CreateSession(ctx, b.cfg.AgentID, b.cfg.AgentVersion, b.cfg.EnvironmentID, value.ID, map[string]string{"app_id": value.ID})
+	client := platform.Client
+	session, err := client.CreateSession(ctx, platform.AgentID, platform.AgentVersion, platform.EnvironmentID, value.ID, map[string]string{"app_id": value.ID})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -84,24 +135,74 @@ func (b *Builder) Start(ctx context.Context, value app.App) error {
 			a.BuildStartedAt = started
 			return nil
 		}); err != nil {
-			b.archive(session.ID)
+			b.archiveWith(client, session.ID)
 			return fmt.Errorf("persist build session: %w", err)
 		}
 	} else {
-		b.archive(session.ID)
+		b.archiveWith(client, session.ID)
 		return fmt.Errorf("application record disappeared before build submission")
 	}
-	if err := b.client.SubmitMessage(ctx, session.ID, BuildPrompt(value.Prompt, value.PlayerNames)); err != nil {
-		status := b.sessionStatus(session.ID)
+	if err := client.SubmitMessage(ctx, session.ID, BuildPrompt(value.Prompt, value.PlayerNames)); err != nil {
+		status := b.sessionStatusWith(client, session.ID)
 		if status == "running" || status == "rescheduling" {
 			b.logf("build %s: submit returned %v but session is %s; continuing", value.ID, err, status)
-			go b.watch(value.ID, session.ID)
+			go b.watchWith(client, value.ID, session.ID)
 			return nil
 		}
-		b.archive(session.ID)
+		b.archiveWith(client, session.ID)
 		return fmt.Errorf("submit build task: %w", err)
 	}
-	go b.watch(value.ID, session.ID)
+	go b.watchWith(client, value.ID, session.ID)
+	return nil
+}
+
+// Continue submits a revision turn on an existing AgentAPI session and watches
+// it in the background. The application must already be in building with the
+// previous artifact retained until the new package validates.
+func (b *Builder) Continue(ctx context.Context, value app.App) error {
+	if value.SessionID == "" {
+		return ErrSessionUnavailable
+	}
+	platform, err := b.platformFor(ctx)
+	if err != nil {
+		return err
+	}
+	client := platform.Client
+	session, err := client.GetSession(ctx, value.SessionID)
+	if err != nil {
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+			return ErrSessionUnavailable
+		}
+		return fmt.Errorf("%w: %v", ErrSessionUnavailable, err)
+	}
+	switch session.Status {
+	case "idle":
+		// ok
+	case "terminated":
+		return ErrSessionUnavailable
+	case "running", "rescheduling":
+		return ErrSessionBusy
+	default:
+		return ErrSessionUnavailable
+	}
+	if err := client.SubmitMessage(ctx, value.SessionID, UpdatePrompt(value.Prompt)); err != nil {
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 409 {
+			return ErrSessionBusy
+		}
+		status := b.sessionStatusWith(client, value.SessionID)
+		if status == "running" || status == "rescheduling" {
+			b.logf("build %s: update submit returned %v but session is %s; continuing", value.ID, err, status)
+			go b.watchWith(client, value.ID, value.SessionID)
+			return nil
+		}
+		if status == "terminated" || status == "" {
+			return ErrSessionUnavailable
+		}
+		return fmt.Errorf("submit update task: %w", err)
+	}
+	go b.watchWith(client, value.ID, value.SessionID)
 	return nil
 }
 
@@ -111,24 +212,60 @@ func (b *Builder) Resume(value app.App) {
 		b.fail(value.ID, "无法恢复构建", fmt.Errorf("missing session id"))
 		return
 	}
-	go b.watch(value.ID, value.SessionID)
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		b.fail(value.ID, "无法恢复构建", err)
+		return
+	}
+	go b.watchWith(platform.Client, value.ID, value.SessionID)
 }
 
+// sessionStatus is the single-tenant compatibility helper used by tests.
 func (b *Builder) sessionStatus(sessionID string) string {
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		return ""
+	}
+	return b.sessionStatusWith(platform.Client, sessionID)
+}
+
+func (b *Builder) sessionStatusWith(client *agentapi.Client, sessionID string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	session, err := b.client.GetSession(ctx, sessionID)
+	session, err := client.GetSession(ctx, sessionID)
 	if err != nil {
 		return ""
 	}
 	return session.Status
 }
 
+// watch is the single-tenant compatibility helper used by tests.
 func (b *Builder) watch(appID, sessionID string) {
-	deadline := b.now().Add(b.cfg.BuildTimeout)
-	if record, ok := b.registry.Get(appID); ok && !record.Snapshot().BuildStartedAt.IsZero() {
-		deadline = record.Snapshot().BuildStartedAt.Add(b.cfg.BuildTimeout)
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		b.fail(appID, "无法恢复构建", err)
+		return
 	}
+	b.watchWith(platform.Client, appID, sessionID)
+}
+
+func (b *Builder) watchWith(client *agentapi.Client, appID, sessionID string) {
+	deadline := b.now().Add(b.cfg.BuildTimeout)
+	afterCursor := ""
+	if record, ok := b.registry.Get(appID); ok {
+		snap := record.Snapshot()
+		if !snap.BuildStartedAt.IsZero() {
+			deadline = snap.BuildStartedAt.Add(b.cfg.BuildTimeout)
+		}
+		// AgentAPI replays the full event history on every connect. Continue and
+		// Resume must skip events already consumed or a prior turn's end_turn is
+		// treated as this turn finishing (false idle + stale artifact).
+		afterCursor = snap.EventCursor
+	}
+	// Continue / Resume / stale-retry already advanced past prior events. If the
+	// stream ends with the session idle and nothing new after the cursor, finish
+	// via complete() instead of spinning until BuildTimeout.
+	hadCursor := afterCursor != ""
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	seen := make(map[string]bool)
@@ -136,17 +273,17 @@ func (b *Builder) watch(appID, sessionID string) {
 	reconnects := 0
 	for {
 		if ctx.Err() != nil {
-			b.timeout(appID, sessionID)
+			b.timeoutWith(client, appID, sessionID)
 			return
 		}
-		stream := b.client.OpenEventStream(ctx, sessionID)
+		stream := client.OpenEventStream(ctx, sessionID)
 		received := false
 		for {
 			event, err := stream.Next()
 			if err != nil {
 				stream.Close()
 				if ctx.Err() != nil {
-					b.timeout(appID, sessionID)
+					b.timeoutWith(client, appID, sessionID)
 					return
 				}
 				if !errors.Is(err, io.EOF) {
@@ -165,6 +302,15 @@ func (b *Builder) watch(appID, sessionID string) {
 					continue
 				}
 				seen[event.ID] = true
+			}
+			if afterCursor != "" {
+				if event.ID == afterCursor {
+					afterCursor = ""
+					// Prior turn already ran; a following idle must complete even
+					// if this watch invocation never saw status_running again.
+					active = true
+				}
+				continue
 			}
 			if entry, ok := b.registry.Get(appID); ok {
 				if entry.Snapshot().State != app.StateBuilding {
@@ -200,21 +346,34 @@ func (b *Builder) watch(appID, sessionID string) {
 					reason = event.StopReason.Type
 				}
 				if reason != "end_turn" {
-					b.fail(appID, stopReasonMessage(reason), fmt.Errorf("stop_reason=%s", reason))
-					b.archive(sessionID)
+					kept := b.fail(appID, stopReasonMessage(reason), fmt.Errorf("stop_reason=%s", reason))
+					if !kept {
+						b.archiveWith(client, sessionID)
+					}
 					return
 				}
-				b.complete(appID, sessionID)
+				b.completeWith(client, appID, sessionID)
 				return
 			case "session.status_terminated":
 				stream.Close()
 				b.fail(appID, "构建会话已终止", fmt.Errorf("session terminated"))
-				b.archive(sessionID)
+				b.archiveWith(client, sessionID)
+				return
+			}
+		}
+		if hadCursor && afterCursor == "" {
+			switch status := b.sessionStatusWith(client, sessionID); status {
+			case "idle":
+				b.completeWith(client, appID, sessionID)
+				return
+			case "terminated", "archived":
+				b.fail(appID, "构建会话已终止", fmt.Errorf("session %s", status))
+				b.archiveWith(client, sessionID)
 				return
 			}
 		}
 		if !b.sleep(ctx, reconnectDelay(reconnects)) {
-			b.timeout(appID, sessionID)
+			b.timeoutWith(client, appID, sessionID)
 			return
 		}
 		reconnects++
@@ -268,18 +427,33 @@ func (b *Builder) recordStatus(appID, message string) {
 	}
 }
 
+// complete is the single-tenant compatibility helper used by tests.
 func (b *Builder) complete(appID, sessionID string) {
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		return
+	}
+	b.completeWith(platform.Client, appID, sessionID)
+}
+
+func (b *Builder) completeWith(client *agentapi.Client, appID, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	entry, ok := b.registry.Get(appID)
 	if !ok {
 		return
 	}
-	if entry.Snapshot().State != app.StateBuilding {
-		b.archive(sessionID)
+	snap := entry.Snapshot()
+	if snap.State != app.StateBuilding {
+		b.archiveWith(client, sessionID)
 		return
 	}
-	path, size, digest, err := b.collect(ctx, sessionID)
+	hadArtifact := hasStartableArtifact(snap)
+	opts := collectOpts{After: snap.BuildStartedAt}
+	if hadArtifact {
+		opts.PreviousSHA = snap.Artifact.SHA256
+	}
+	path, size, digest, err := b.collectWith(ctx, client, sessionID, opts)
 	if err == nil {
 		var result artifact.Result
 		result, err = artifact.Validate(path)
@@ -287,7 +461,7 @@ func (b *Builder) complete(appID, sessionID string) {
 			var item artifact.Item
 			item, err = b.store.SaveFile(appID, path, size, digest)
 			if err == nil {
-				b.register(entry, result, item)
+				b.register(entry, result, item, hadArtifact)
 				os.Remove(path)
 				// Keep a successful build session alive: AgentAPI pauses idle
 				// sandboxes, so the cost is negligible, and the session stays
@@ -297,11 +471,26 @@ func (b *Builder) complete(appID, sessionID string) {
 		}
 	}
 	os.Remove(path)
-	b.fail(appID, userMessage(err), err)
-	b.archive(sessionID)
+	// Premature end_turn can surface the previous turn's package. If the
+	// session is still running, keep watching for a real delivery; if it is
+	// already idle, the agent finished without a fresh artifact — fail (and
+	// keep the previous package on update) instead of looping forever.
+	if isStaleArtifact(err) && entry.Snapshot().State == app.StateBuilding {
+		status := b.sessionStatusWith(client, sessionID)
+		if status == "running" || status == "rescheduling" {
+			b.logf("build %s: %v (session %s); resume watch for a fresher artifact", appID, err, status)
+			go b.watchWith(client, appID, sessionID)
+			return
+		}
+		b.logf("build %s: %v (session %s); giving up without a fresher artifact", appID, err, status)
+	}
+	kept := b.fail(appID, userMessage(err), err)
+	if !kept {
+		b.archiveWith(client, sessionID)
+	}
 }
 
-func (b *Builder) register(entry *app.Record, result artifact.Result, item artifact.Item) {
+func (b *Builder) register(entry *app.Record, result artifact.Result, item artifact.Item, wasUpdate bool) {
 	finished := b.now()
 	applied := false
 	var snapshot app.App
@@ -336,27 +525,45 @@ func (b *Builder) register(entry *app.Record, result artifact.Result, item artif
 	if !applied {
 		return
 	}
+	message := "APP 创建完成"
+	if wasUpdate {
+		message = "APP 更新完成"
+	}
 	b.notifier.Notify(snapshot.Owner, app.Notification{
 		AppID:   snapshot.ID,
 		State:   app.StateIdle,
-		Message: "APP 创建完成",
+		Message: message,
 	})
 }
 
-func (b *Builder) fail(appID, message string, cause error) {
+// fail marks a building app as failed. If a previous startable artifact exists
+// (an update turn), the app returns to idle and keeps that package; the return
+// value is true so the caller can leave the AgentAPI session unarchived.
+// State changes go through Do so a disk write failure leaves memory unchanged.
+func (b *Builder) fail(appID, message string, cause error) bool {
 	entry, ok := b.registry.Get(appID)
 	if !ok {
-		return
+		return false
 	}
 	applied := false
+	keptPrevious := false
 	var snapshot app.App
-	entry.Update(func(a *app.App) {
+	err := entry.Do(func(a *app.App) error {
 		if a.State != app.StateBuilding {
-			return
+			return nil
 		}
 		applied = true
-		a.State = app.StateError
 		a.BuildFinishedAt = b.now()
+		if hasStartableArtifact(*a) {
+			keptPrevious = true
+			a.State = app.StateIdle
+			a.Error = nil
+			a.LastStatusMessage = message
+			a.LastProgress = ""
+			snapshot = *a
+			return nil
+		}
+		a.State = app.StateError
 		a.Error = &app.Error{
 			Stage:            app.StageBuilding,
 			Code:             "BUILD_FAILED",
@@ -364,26 +571,53 @@ func (b *Builder) fail(appID, message string, cause error) {
 			LastAgentMessage: a.LastAgentMessage,
 		}
 		snapshot = *a
+		return nil
 	})
+	if err != nil {
+		b.logf("build %s persist failure state failed: %v", appID, err)
+		return false
+	}
 	if !applied {
-		return
+		return false
 	}
 	b.logf("build %s failed: %s (%v)", appID, message, cause)
+	if keptPrevious {
+		b.notifier.Notify(snapshot.Owner, app.Notification{
+			AppID:   appID,
+			State:   app.StateIdle,
+			Message: "APP 更新失败，仍可使用上一版本：" + message,
+		})
+		return true
+	}
 	b.notifier.Notify(snapshot.Owner, app.Notification{
 		AppID:   appID,
 		State:   app.StateError,
 		Message: message,
 		Error:   snapshot.Error,
 	})
+	return false
 }
 
+func hasStartableArtifact(value app.App) bool {
+	return value.Artifact.SHA256 != "" && (value.Artifact.Path != "" || value.Artifact.DownloadURL != "")
+}
+
+// timeout is the single-tenant compatibility helper used by tests.
 func (b *Builder) timeout(appID, sessionID string) {
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		return
+	}
+	b.timeoutWith(platform.Client, appID, sessionID)
+}
+
+func (b *Builder) timeoutWith(client *agentapi.Client, appID, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	_ = b.client.Interrupt(ctx, sessionID)
+	_ = client.Interrupt(ctx, sessionID)
 	cancel()
 	deadline := time.Now().Add(b.cfg.InterruptGrace)
 	for time.Now().Before(deadline) {
-		status := b.sessionStatus(sessionID)
+		status := b.sessionStatusWith(client, sessionID)
 		if status == "idle" || status == "terminated" || status == "" {
 			break
 		}
@@ -391,33 +625,72 @@ func (b *Builder) timeout(appID, sessionID string) {
 			break
 		}
 	}
-	b.fail(appID, "构建超时", context.DeadlineExceeded)
-	b.archive(sessionID)
+	kept := b.fail(appID, "构建超时", context.DeadlineExceeded)
+	if !kept {
+		b.archiveWith(client, sessionID)
+	}
 }
 
+// archive is the single-tenant compatibility helper used by tests.
 func (b *Builder) archive(sessionID string) {
+	platform, err := b.platformFor(context.Background())
+	if err != nil {
+		return
+	}
+	b.archiveWith(platform.Client, sessionID)
+}
+
+func (b *Builder) archiveWith(client *agentapi.Client, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := b.client.ArchiveSession(ctx, sessionID); err != nil {
+	if err := client.ArchiveSession(ctx, sessionID); err != nil {
 		b.logf("archive session %s: %v", sessionID, err)
 	}
 }
 
-func (b *Builder) collect(ctx context.Context, sessionID string) (string, int64, string, error) {
+// collectOpts filters Files API candidates so an early end_turn cannot register
+// the previous turn's artifact.tar.gz as this turn's success.
+type collectOpts struct {
+	After       time.Time // require CreatedAt >= After (with small clock skew)
+	PreviousSHA string    // reject when the downloaded digest still matches
+}
+
+// collect is the single-tenant compatibility helper used by tests.
+func (b *Builder) collect(ctx context.Context, sessionID string, opts collectOpts) (string, int64, string, error) {
+	platform, err := b.platformFor(ctx)
+	if err != nil {
+		return "", 0, "", err
+	}
+	return b.collectWith(ctx, platform.Client, sessionID, opts)
+}
+
+func (b *Builder) collectWith(ctx context.Context, client *agentapi.Client, sessionID string, opts collectOpts) (string, int64, string, error) {
 	var chosen *agentapi.File
 	var lastErr error
+	var sawStale bool
+	// AgentAPI and local clocks can drift a little; still reject clearly older packages.
+	minCreated := time.Time{}
+	if !opts.After.IsZero() {
+		minCreated = opts.After.Add(-2 * time.Second)
+	}
 	for index, delay := range []time.Duration{0, 5 * time.Second, 15 * time.Second, 30 * time.Second} {
 		if index > 0 && !b.sleep(ctx, delay) {
 			return "", 0, "", ctx.Err()
 		}
-		files, err := b.client.ListFiles(ctx, sessionID)
+		files, err := client.ListFiles(ctx, sessionID)
 		if err != nil {
 			lastErr = err
 			continue
 		}
+		chosen = nil
+		sawStale = false
 		for i := range files {
 			file := files[i]
 			if file.Filename != "artifact.tar.gz" || !file.Downloadable {
+				continue
+			}
+			if !minCreated.IsZero() && file.CreatedAt.Before(minCreated) {
+				sawStale = true
 				continue
 			}
 			if chosen == nil || file.CreatedAt.After(chosen.CreatedAt) {
@@ -433,6 +706,9 @@ func (b *Builder) collect(ctx context.Context, sessionID string) (string, int64,
 		if lastErr != nil {
 			return "", 0, "", &stageError{Code: "OUTPUT_DOWNLOAD_FAILED", User: "构建产物下载失败", Cause: lastErr}
 		}
+		if sawStale {
+			return "", 0, "", &stageError{Code: "OUTPUT_STALE", User: "构建产物仍是上一轮结果"}
+		}
 		return "", 0, "", &stageError{Code: "OUTPUT_MISSING", User: "构建产物缺失"}
 	}
 	temp, err := os.CreateTemp("", "open-anywhere-artifact-*.tar.gz")
@@ -442,7 +718,7 @@ func (b *Builder) collect(ctx context.Context, sessionID string) (string, int64,
 	name := temp.Name()
 	hash := sha256.New()
 	downloadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	size, err := b.client.DownloadFile(downloadCtx, chosen.ID, io.MultiWriter(temp, hash), b.cfg.ArtifactLimit)
+	size, err := client.DownloadFile(downloadCtx, chosen.ID, io.MultiWriter(temp, hash), b.cfg.ArtifactLimit)
 	cancel()
 	temp.Close()
 	if err != nil {
@@ -456,7 +732,20 @@ func (b *Builder) collect(ctx context.Context, sessionID string) (string, int64,
 		os.Remove(name)
 		return "", 0, "", &stageError{Code: "ARTIFACT_CORRUPT", User: "构建产物损坏", Cause: fmt.Errorf("size %d, expected %d", size, chosen.SizeBytes)}
 	}
-	return name, size, hex.EncodeToString(hash.Sum(nil)), nil
+	digest := hex.EncodeToString(hash.Sum(nil))
+	if opts.PreviousSHA != "" && digest == opts.PreviousSHA {
+		os.Remove(name)
+		return "", 0, "", &stageError{Code: "OUTPUT_UNCHANGED", User: "构建产物未更新"}
+	}
+	return name, size, digest, nil
+}
+
+func isStaleArtifact(err error) bool {
+	var staged *stageError
+	if !errors.As(err, &staged) {
+		return false
+	}
+	return staged.Code == "OUTPUT_STALE" || staged.Code == "OUTPUT_UNCHANGED"
 }
 
 func (b *Builder) sleep(ctx context.Context, delay time.Duration) bool {
@@ -570,4 +859,11 @@ func BuildPrompt(requirement string, playerNames []string) string {
 	}
 	prompt += "\n\n渲染画布：" + canvas.Description() + "。页面必须在画布内完整显示，不允许页面滚动；关键内容距边缘至少 5%。"
 	return prompt + "\n\n请按系统提示词和 app-builder 技能完成构建。"
+}
+
+// UpdatePrompt is the follow-up user.message for update-app on an existing session.
+func UpdatePrompt(requirement string) string {
+	return "请根据以下修改要求更新应用，并重新交付完整的 artifact.tar.gz。\n\n修改要求：\n" +
+		strings.TrimSpace(requirement) +
+		"\n\n按系统提示词和 app-builder 技能完成构建。"
 }

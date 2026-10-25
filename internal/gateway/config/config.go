@@ -48,6 +48,32 @@ type Config struct {
 	MonitorInterval   time.Duration
 	CallTimeout       time.Duration
 	HTTPTimeout       time.Duration
+
+	PortalEnabled           bool
+	PortalDataDir           string
+	PortalWebDir            string
+	PortalWebEmbedded       bool
+	PortalUsername          string
+	PortalPassword          string
+	PortalSessionTTL        time.Duration
+	PortalCookieSecure      bool
+	PortalAllowRegistration bool
+
+	AllowPrivateTargets bool
+
+	LinxAPIBase           string
+	LinxOTAURL            string
+	LinxAPIKey            string
+	LinxPublicMCPURL      string
+	LinxMCPName           string
+	LinxAssistantName     string
+	LinxLLMModelID        string
+	LinxMemModelID        string
+	LinxIntentModelID     string
+	LinxSystemPromptFile  string
+	LinxProvisionTimeout  time.Duration
+	LinxTokenPollInterval time.Duration
+	LinxTokenPollAttempts int
 }
 
 // fileConfig mirrors the YAML configuration file. Zero values mean "not set"
@@ -70,6 +96,9 @@ type fileConfig struct {
 	Casting struct {
 		BaseURL string `yaml:"base_url"`
 	} `yaml:"casting"`
+	Services struct {
+		AllowPrivateTargets bool `yaml:"allow_private_targets"`
+	} `yaml:"services"`
 	Screens   string `yaml:"screens"`
 	Artifacts struct {
 		Dir     string `yaml:"dir"`
@@ -90,6 +119,32 @@ type fileConfig struct {
 		Call            string `yaml:"call"`
 		HTTP            string `yaml:"http"`
 	} `yaml:"timeouts"`
+	Portal struct {
+		Enabled           bool   `yaml:"enabled"`
+		DataDir           string `yaml:"data_dir"`
+		WebDir            string `yaml:"web_dir"`
+		WebEmbedded       bool   `yaml:"web_embedded"`
+		Username          string `yaml:"username"`
+		Password          string `yaml:"password"`
+		SessionTTL        string `yaml:"session_ttl"`
+		CookieSecure      bool   `yaml:"cookie_secure"`
+		AllowRegistration bool   `yaml:"allow_registration"`
+	} `yaml:"portal"`
+	Linx struct {
+		APIBase           string `yaml:"api_base"`
+		OTAURL            string `yaml:"ota_url"`
+		APIKey            string `yaml:"api_key"`
+		PublicMCPURL      string `yaml:"public_mcp_url"`
+		MCPName           string `yaml:"mcp_name"`
+		AssistantName     string `yaml:"assistant_name"`
+		LLMModelID        string `yaml:"llm_model_id"`
+		MemModelID        string `yaml:"mem_model_id"`
+		IntentModelID     string `yaml:"intent_model_id"`
+		SystemPromptFile  string `yaml:"system_prompt_file"`
+		ProvisionTimeout  string `yaml:"provision_timeout"`
+		TokenPollInterval string `yaml:"token_poll_interval"`
+		TokenPollAttempts int    `yaml:"token_poll_attempts"`
+	} `yaml:"linx"`
 }
 
 // Parse reads YAML, environment and flag configuration. Precedence is
@@ -116,6 +171,20 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 		MonitorInterval:   5 * time.Second,
 		CallTimeout:       2 * time.Minute,
 		HTTPTimeout:       30 * time.Second,
+
+		PortalDataDir:         "portal-data",
+		PortalWebDir:          "portal/dist",
+		PortalSessionTTL:      720 * time.Hour,
+		LinxAPIBase:           "https://xrobo.qiniu.com",
+		LinxOTAURL:            "https://xrobo.qiniuapi.com/v1/ota/",
+		LinxMCPName:           "Open Anywhere",
+		LinxAssistantName:     "小灵",
+		LinxLLMModelID:        "f3626c105383d71654a57f2bb8a973f3",
+		LinxMemModelID:        "Memory_nomem",
+		LinxIntentModelID:     "Intent_function_call",
+		LinxProvisionTimeout:  60 * time.Second,
+		LinxTokenPollInterval: 2 * time.Second,
+		LinxTokenPollAttempts: 10,
 	}
 	if err := applyFile(&base, file); err != nil {
 		return Config{}, err
@@ -151,30 +220,64 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	flags.DurationVar(&cfg.MonitorInterval, "monitor-interval", envDuration(getenv, "MONITOR_INTERVAL", base.MonitorInterval), "running application poll interval")
 	flags.DurationVar(&cfg.CallTimeout, "call-timeout", envDuration(getenv, "CALL_TIMEOUT", base.CallTimeout), "MCP tool call timeout")
 	flags.DurationVar(&cfg.HTTPTimeout, "http-timeout", envDuration(getenv, "HTTP_TIMEOUT", base.HTTPTimeout), "ordinary outbound HTTP timeout")
+	flags.BoolVar(&cfg.PortalEnabled, "portal", envBool(getenv, "PORTAL_ENABLED", base.PortalEnabled), "serve the user portal")
+	flags.StringVar(&cfg.PortalDataDir, "portal-data-dir", env(getenv, "PORTAL_DATA_DIR", base.PortalDataDir), "portal credential and runtime directory")
+	flags.StringVar(&cfg.PortalWebDir, "portal-web-dir", env(getenv, "PORTAL_WEB_DIR", base.PortalWebDir), "built portal frontend directory")
+	flags.BoolVar(&cfg.PortalWebEmbedded, "portal-web-embedded", envBool(getenv, "PORTAL_WEB_EMBEDDED", base.PortalWebEmbedded), "serve the portal frontend embedded in the binary (requires -tags portalembed)")
+	flags.DurationVar(&cfg.PortalSessionTTL, "portal-session-ttl", envDuration(getenv, "PORTAL_SESSION_TTL", base.PortalSessionTTL), "portal session lifetime")
+	flags.BoolVar(&cfg.PortalCookieSecure, "portal-cookie-secure", envBool(getenv, "PORTAL_COOKIE_SECURE", base.PortalCookieSecure), "mark portal cookies Secure (HTTPS)")
+	flags.BoolVar(&cfg.PortalAllowRegistration, "portal-allow-registration", envBool(getenv, "PORTAL_ALLOW_REGISTRATION", base.PortalAllowRegistration), "seed open registration for a fresh database")
+	flags.BoolVar(&cfg.AllowPrivateTargets, "allow-private-targets", envBool(getenv, "ALLOW_PRIVATE_TARGETS", base.AllowPrivateTargets), "allow loopback and private Render/Casting addresses (debug only)")
+	flags.StringVar(&cfg.LinxAPIBase, "linx-api-base", env(getenv, "LINX_API_BASE", base.LinxAPIBase), "Linx management API base URL")
+	flags.StringVar(&cfg.LinxOTAURL, "linx-ota-url", env(getenv, "LINX_OTA_URL", base.LinxOTAURL), "Linx OTA endpoint")
+	flags.StringVar(&cfg.LinxAPIKey, "linx-api-key", env(getenv, "LINX_API_KEY", base.LinxAPIKey), "Linx platform account API key")
+	flags.StringVar(&cfg.LinxPublicMCPURL, "linx-public-mcp-url", env(getenv, "LINX_PUBLIC_MCP_URL", base.LinxPublicMCPURL), "public SSE URL of the gateway MCP")
+	flags.StringVar(&cfg.LinxMCPName, "linx-mcp-name", env(getenv, "LINX_MCP_NAME", base.LinxMCPName), "MCP server name on the Linx platform")
+	flags.StringVar(&cfg.LinxAssistantName, "linx-assistant-name", env(getenv, "LINX_ASSISTANT_NAME", base.LinxAssistantName), "assistant nickname for created agents")
+	flags.StringVar(&cfg.LinxLLMModelID, "linx-llm-model-id", env(getenv, "LINX_LLM_MODEL_ID", base.LinxLLMModelID), "LLM model id for created agents")
+	flags.StringVar(&cfg.LinxMemModelID, "linx-mem-model-id", env(getenv, "LINX_MEM_MODEL_ID", base.LinxMemModelID), "memory model id for created agents")
+	flags.StringVar(&cfg.LinxIntentModelID, "linx-intent-model-id", env(getenv, "LINX_INTENT_MODEL_ID", base.LinxIntentModelID), "intent model id for created agents")
+	flags.StringVar(&cfg.LinxSystemPromptFile, "linx-system-prompt-file", env(getenv, "LINX_SYSTEM_PROMPT_FILE", base.LinxSystemPromptFile), "agent system prompt override file")
+	flags.DurationVar(&cfg.LinxProvisionTimeout, "linx-provision-timeout", envDuration(getenv, "LINX_PROVISION_TIMEOUT", base.LinxProvisionTimeout), "device provisioning timeout")
+	flags.DurationVar(&cfg.LinxTokenPollInterval, "linx-token-poll-interval", envDuration(getenv, "LINX_TOKEN_POLL_INTERVAL", base.LinxTokenPollInterval), "OTA token poll interval")
+	flags.IntVar(&cfg.LinxTokenPollAttempts, "linx-token-poll-attempts", envInt(getenv, "LINX_TOKEN_POLL_ATTEMPTS", base.LinxTokenPollAttempts), "OTA token poll attempts")
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
 	}
 	if flags.NArg() != 0 {
 		return Config{}, fmt.Errorf("gateway does not accept positional arguments")
 	}
+	// The portal account is deployment configuration, not a command-line
+	// argument: keeping the password out of argv avoids leaking it through the
+	// process list and shell history.
+	cfg.PortalUsername = env(getenv, "PORTAL_USERNAME", base.PortalUsername)
+	cfg.PortalPassword = env(getenv, "PORTAL_PASSWORD", base.PortalPassword)
 	return cfg, nil
 }
 
-// Validate checks that required deployment settings are present.
+// Validate checks that required deployment settings are present. In portal
+// mode the upstream AgentAPI, Linx, Render and Casting credentials are
+// platform settings an administrator can fill in after first start, so only
+// the gateway's own deployment values are required.
 func (c Config) Validate() error {
-	required := []struct {
+	type requiredSetting struct {
 		name  string
 		value string
-	}{
-		{"agentapi-url", c.AgentAPIURL},
-		{"agentapi-key", c.AgentAPIKey},
-		{"agent-id", c.AgentID},
-		{"environment-id", c.EnvironmentID},
-		{"render-url", c.RenderURL},
-		{"casting-url", c.CastingURL},
+	}
+	required := []requiredSetting{
 		{"artifact-base-url", c.ArtifactBaseURL},
 		{"artifacts-dir", c.ArtifactsDir},
 		{"db", c.DBPath},
+	}
+	if !c.PortalEnabled {
+		required = append(required,
+			requiredSetting{"agentapi-url", c.AgentAPIURL},
+			requiredSetting{"agentapi-key", c.AgentAPIKey},
+			requiredSetting{"agent-id", c.AgentID},
+			requiredSetting{"environment-id", c.EnvironmentID},
+			requiredSetting{"render-url", c.RenderURL},
+			requiredSetting{"casting-url", c.CastingURL},
+		)
 	}
 	for _, item := range required {
 		if item.value == "" {
@@ -202,6 +305,30 @@ func (c Config) Validate() error {
 	parsed, err := url.Parse(c.ArtifactBaseURL)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("gateway: -artifact-base-url must be an absolute HTTP(S) URL")
+	}
+	if c.PortalEnabled {
+		if c.MCPToken == "" {
+			return fmt.Errorf("gateway: -mcp-token is required when the portal is enabled")
+		}
+		if c.LinxPublicMCPURL == "" {
+			return fmt.Errorf("gateway: -linx-public-mcp-url is required when the portal is enabled")
+		}
+		mcpURL, err := url.Parse(c.LinxPublicMCPURL)
+		if err != nil || mcpURL.Host == "" || (mcpURL.Scheme != "http" && mcpURL.Scheme != "https") {
+			return fmt.Errorf("gateway: -linx-public-mcp-url must be an absolute HTTP(S) URL")
+		}
+		if c.PortalDataDir == "" {
+			return fmt.Errorf("gateway: portal data directory is required")
+		}
+		if strings.TrimSpace(c.PortalUsername) == "" || c.PortalPassword == "" {
+			return fmt.Errorf("gateway: portal username and password are required when the portal is enabled")
+		}
+		if c.PortalSessionTTL <= 0 {
+			return fmt.Errorf("gateway: -portal-session-ttl must be positive")
+		}
+		if c.LinxProvisionTimeout <= 0 || c.LinxTokenPollInterval <= 0 || c.LinxTokenPollAttempts < 1 {
+			return fmt.Errorf("gateway: portal provisioning timeouts must be positive")
+		}
 	}
 	return nil
 }
@@ -316,6 +443,9 @@ func applyFile(cfg *Config, file fileConfig) error {
 		{"timeouts.monitor_interval", file.Timeouts.MonitorInterval, &cfg.MonitorInterval},
 		{"timeouts.call", file.Timeouts.Call, &cfg.CallTimeout},
 		{"timeouts.http", file.Timeouts.HTTP, &cfg.HTTPTimeout},
+		{"portal.session_ttl", file.Portal.SessionTTL, &cfg.PortalSessionTTL},
+		{"linx.provision_timeout", file.Linx.ProvisionTimeout, &cfg.LinxProvisionTimeout},
+		{"linx.token_poll_interval", file.Linx.TokenPollInterval, &cfg.LinxTokenPollInterval},
 	} {
 		if item.value == "" {
 			continue
@@ -325,6 +455,69 @@ func applyFile(cfg *Config, file fileConfig) error {
 			return fmt.Errorf("gateway: invalid %s duration %q", item.name, item.value)
 		}
 		*item.target = parsed
+	}
+	if file.Portal.Enabled {
+		cfg.PortalEnabled = true
+	}
+	if file.Portal.DataDir != "" {
+		cfg.PortalDataDir = file.Portal.DataDir
+	}
+	if file.Portal.WebDir != "" {
+		cfg.PortalWebDir = file.Portal.WebDir
+	}
+	if file.Portal.WebEmbedded {
+		cfg.PortalWebEmbedded = true
+	}
+	if file.Portal.Username != "" {
+		cfg.PortalUsername = file.Portal.Username
+	}
+	if file.Portal.Password != "" {
+		cfg.PortalPassword = file.Portal.Password
+	}
+	if file.Portal.CookieSecure {
+		cfg.PortalCookieSecure = true
+	}
+	if file.Portal.AllowRegistration {
+		cfg.PortalAllowRegistration = true
+	}
+	if file.Services.AllowPrivateTargets {
+		cfg.AllowPrivateTargets = true
+	}
+	if file.Linx.APIBase != "" {
+		cfg.LinxAPIBase = file.Linx.APIBase
+	}
+	if file.Linx.OTAURL != "" {
+		cfg.LinxOTAURL = file.Linx.OTAURL
+	}
+	if file.Linx.APIKey != "" {
+		cfg.LinxAPIKey = file.Linx.APIKey
+	}
+	if file.Linx.PublicMCPURL != "" {
+		cfg.LinxPublicMCPURL = file.Linx.PublicMCPURL
+	}
+	if file.Linx.MCPName != "" {
+		cfg.LinxMCPName = file.Linx.MCPName
+	}
+	if file.Linx.AssistantName != "" {
+		cfg.LinxAssistantName = file.Linx.AssistantName
+	}
+	if file.Linx.LLMModelID != "" {
+		cfg.LinxLLMModelID = file.Linx.LLMModelID
+	}
+	if file.Linx.MemModelID != "" {
+		cfg.LinxMemModelID = file.Linx.MemModelID
+	}
+	if file.Linx.IntentModelID != "" {
+		cfg.LinxIntentModelID = file.Linx.IntentModelID
+	}
+	if file.Linx.SystemPromptFile != "" {
+		cfg.LinxSystemPromptFile = file.Linx.SystemPromptFile
+	}
+	if file.Linx.TokenPollAttempts < 0 {
+		return fmt.Errorf("gateway: linx.token_poll_attempts must not be negative")
+	}
+	if file.Linx.TokenPollAttempts > 0 {
+		cfg.LinxTokenPollAttempts = file.Linx.TokenPollAttempts
 	}
 	return nil
 }
@@ -354,6 +547,18 @@ func envDuration(getenv func(string) string, key string, fallback time.Duration)
 		return fallback
 	}
 	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envBool(getenv func(string) string, key string, fallback bool) bool {
+	value := strings.TrimSpace(getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return fallback
 	}

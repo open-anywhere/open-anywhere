@@ -1,3 +1,4 @@
+bin/
 coverage.out
 coverage.html
 .render-data/
@@ -9,3 +10,7 @@ open-anywhere.gateway.db
 open-anywhere.gateway.db-*
 artifacts/
 .device.json
+portal/node_modules/
+portal/dist/
+portal-data/
+internal/gateway/portal/webdist/
