@@ -39,3 +39,5 @@ bash <skill-dir>/scripts/self-test.sh /mnt/session/outputs \
 5. **打包**：`--package` 时生成 `artifact.tar.gz` 并再次运行 `validate-artifact.sh` 检查归档。
 
 失败时脚本打印 FAIL 行和应用日志尾部，按输出修复后重跑整个脚本；必须看到 `self-test passed` 才能结束。脚本不测试 SIGTERM、退出码或残留进程，测试进程由脚本在结束时清理；沙箱结束时会自动清理。
+
+`self-test.sh` 不启动浏览器，也不检查页面布局。画布适配（1280×720、一屏放下、无页面滚动）按 `artifact-contract.md` 的“渲染画布”和模板实现；不要用额外浏览器截图代替这一步。

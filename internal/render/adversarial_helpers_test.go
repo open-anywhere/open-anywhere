@@ -169,6 +169,9 @@ func fakeBrowserHooks() browserHooks {
 		},
 		run:     func(context.Context, ...chromedp.Action) error { return nil },
 		capture: func(context.Context) ([]byte, error) { return []byte("frame"), nil },
+		layout: func(context.Context) (layoutMetrics, error) {
+			return layoutMetrics{Width: 1280, Height: 720, ViewportWidth: 1280, ViewportHeight: 720}, nil
+		},
 	}
 }
 

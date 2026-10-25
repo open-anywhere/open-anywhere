@@ -21,9 +21,13 @@
     * {
       box-sizing: border-box;
     }
+    html {
+      height: 100%;
+    }
     body {
       margin: 0;
-      min-height: 100vh;
+      height: 100%;
+      overflow: hidden;
       background:
         radial-gradient(circle at 12% -10%, rgb(217 154 78 / 16%), transparent 45%),
         radial-gradient(circle at 92% 8%, rgb(217 154 78 / 8%), transparent 40%),
@@ -32,16 +36,20 @@
       font-family: var(--sans);
     }
     .stage {
-      width: min(920px, calc(100vw - 32px));
-      margin: 0 auto;
-      padding: 48px 0 64px;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 24px 48px 20px;
+      display: grid;
+      grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+      gap: 10px 16px;
     }
     .masthead {
       display: flex;
       align-items: flex-end;
       justify-content: space-between;
       gap: 16px;
-      padding-bottom: 20px;
+      padding-bottom: 8px;
       border-bottom: 1px solid var(--line);
     }
     .kicker {
@@ -53,9 +61,9 @@
     h1 {
       margin: 0;
       font-family: var(--serif);
-      font-size: clamp(40px, 8vw, 72px);
+      font-size: clamp(30px, 3.4vw, 44px);
       font-weight: 600;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.04em;
       line-height: 1;
     }
     .round {
@@ -67,31 +75,31 @@
       white-space: nowrap;
     }
     .message {
-      min-height: 24px;
-      margin: 18px 0 24px;
+      min-height: 20px;
+      margin: 0;
       color: var(--muted);
-      line-height: 1.6;
+      line-height: 1.4;
     }
     .message.error {
       color: var(--bad);
     }
     .clue-panel {
-      padding: 20px 24px;
+      padding: 12px 16px;
       border: 1px solid var(--line);
       border-left: 3px solid var(--accent);
       background: var(--surface);
     }
     .clue-panel h2,
     .panel h2 {
-      margin: 0 0 14px;
+      margin: 0 0 8px;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       letter-spacing: 0.08em;
     }
     .clue-panel ol {
       display: grid;
-      gap: 12px;
+      gap: 4px;
       margin: 0;
       padding: 0;
       list-style: none;
@@ -109,27 +117,31 @@
     .clue-panel p {
       margin: 0;
       font-family: var(--serif);
-      font-size: 20px;
-      line-height: 1.6;
+      font-size: 15px;
+      line-height: 1.4;
     }
     .columns {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 16px;
-      margin-top: 16px;
+      gap: 12px;
+      margin-top: 0;
+      min-height: 0;
     }
     .panel {
-      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      padding: 12px 14px;
       border: 1px solid var(--line);
       background: linear-gradient(180deg, rgb(255 255 255 / 2.5%), transparent), var(--surface);
     }
     form {
       display: grid;
-      gap: 10px;
+      gap: 6px;
     }
     .field {
       display: grid;
-      gap: 6px;
+      gap: 2px;
     }
     .field span {
       color: var(--muted);
@@ -143,7 +155,7 @@
     input,
     select {
       width: 100%;
-      padding: 11px 12px;
+      padding: 7px 10px;
       border: 1px solid var(--line);
       border-radius: 2px;
       background: #120f0c;
@@ -156,7 +168,7 @@
       outline-offset: 2px;
     }
     button {
-      padding: 11px 16px;
+      padding: 8px 12px;
       border: 1px solid var(--accent);
       border-radius: 2px;
       background: var(--accent);
@@ -173,17 +185,28 @@
     .scoreboard,
     .recent {
       display: grid;
-      gap: 8px;
+      gap: 2px;
+      min-height: 0;
+      overflow: hidden;
       margin: 0;
       padding: 0;
       list-style: none;
+    }
+    .scoreboard {
+      grid-template-columns: 1fr 1fr;
+      column-gap: 24px;
+      font-size: 15px;
+    }
+    .scoreboard .empty {
+      grid-column: 1 / -1;
     }
     .scoreboard li {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
       gap: 12px;
-      padding-bottom: 8px;
+      line-height: 1.2;
+      padding-bottom: 2px;
       border-bottom: 1px dotted var(--line);
     }
     .scoreboard li:last-child {
@@ -193,7 +216,7 @@
     .score {
       color: var(--accent);
       font-family: var(--serif);
-      font-size: 24px;
+      font-size: 18px;
       font-variant-numeric: tabular-nums;
     }
     .recent li {
@@ -201,7 +224,7 @@
       align-items: baseline;
       gap: 8px;
       color: var(--muted);
-      font-size: 14px;
+      font-size: 12px;
     }
     .recent-round {
       color: var(--accent);
@@ -224,28 +247,13 @@
     }
     .empty {
       color: var(--muted);
-      font-size: 14px;
+      font-size: 13px;
     }
     footer {
-      margin-top: 24px;
+      margin-top: 0;
       color: var(--muted);
-      font-size: 12px;
-      line-height: 1.6;
-    }
-    @media (max-width: 720px) {
-      .stage {
-        padding-top: 32px;
-      }
-      .columns {
-        grid-template-columns: 1fr;
-      }
-      .masthead {
-        align-items: flex-start;
-        flex-direction: column;
-      }
-      .clue-panel p {
-        font-size: 18px;
-      }
+      font-size: 11px;
+      line-height: 1.3;
     }
   </style>
 </head>
@@ -323,6 +331,8 @@
     const guessButtonEl = document.getElementById('guess-button');
 
     let selectedName = '';
+    // 画布固定为一屏；计分板用两列展示，超出部分用提示行说明。
+    const SCOREBOARD_LIMIT = 8;
 
     async function api(path, options) {
       const response = await fetch(path, options);
@@ -377,7 +387,7 @@
       if (players.length === 0) {
         playersEl.replaceChildren(emptyItem('还没有玩家'));
       } else {
-        const items = players.map((player) => {
+        const items = players.slice(0, SCOREBOARD_LIMIT).map((player) => {
           const item = document.createElement('li');
           const name = document.createElement('span');
           name.textContent = player.user_name;
@@ -387,6 +397,12 @@
           item.append(name, score);
           return item;
         });
+        if (players.length > SCOREBOARD_LIMIT) {
+          const more = document.createElement('li');
+          more.className = 'empty';
+          more.textContent = `还有 ${players.length - SCOREBOARD_LIMIT} 位玩家`;
+          items.push(more);
+        }
         playersEl.replaceChildren(...items);
       }
 
