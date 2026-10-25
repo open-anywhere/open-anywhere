@@ -15,11 +15,7 @@
   <a href="https://github.com/open-anywhere/open-anywhere/releases/download/v1.0.0/open-anywhere-demo-1080p.mp4"><img src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD_Demo_%E8%A7%86%E9%A2%91-2EA44F?style=for-the-badge" alt="下载 Demo 视频" height="36"></a>
   <a href="https://www.bilibili.com/video/BV1AznU6YELm/"><img src="https://img.shields.io/badge/%E8%A7%82%E7%9C%8B_Demo_%E8%A7%86%E9%A2%91-Bilibili-FB7299?style=for-the-badge&amp;logo=bilibili&amp;logoColor=white" alt="观看 Demo 视频（Bilibili，4K）" height="36"></a>
   <a href="https://www.bilibili.com/video/BV1AznU6YELm/"><img src="https://img.shields.io/badge/4K-2160p-6C5CE7?style=for-the-badge" alt="4K" height="36"></a>
-  <a href="https://xhslink.cn/o/8ql3TpfRwkE"><img src="https://img.shields.io/badge/%E8%A7%82%E7%9C%8B_Demo_%E8%A7%86%E9%A2%91-%E5%B0%8F%E7%BA%A2%E4%B9%A6%C2%B7%E5%AE%A1%E6%A0%B8%E4%B8%AD-FF2442?style=for-the-badge&amp;logo=xiaohongshu&amp;logoColor=white" alt="观看 Demo 视频（小红书，审核中）" height="36"></a>
-</p>
-
-<p align="center">
-  <sub>Bilibili 视频可直接观看。小红书视频发布时仍在审核中，你看到这里时可能已经审核通过；若暂时打不开，请稍后再试。</sub>
+  <a href="https://xhslink.cn/o/8ql3TpfRwkE"><img src="https://img.shields.io/badge/%E8%A7%82%E7%9C%8B_Demo_%E8%A7%86%E9%A2%91-%E5%B0%8F%E7%BA%A2%E4%B9%A6-FF2442?style=for-the-badge&amp;logo=xiaohongshu&amp;logoColor=white" alt="观看 Demo 视频（小红书）" height="36"></a>
 </p>
 
 <p align="center">
