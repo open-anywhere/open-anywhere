@@ -114,7 +114,7 @@ export function AgentSettingsModal({ deviceId, onClose }: Props) {
   const save = useMutation({
     mutationFn: (input: Partial<AgentSettings>) => api.updateAgentSettings(deviceId as string, input),
     onSuccess: () => {
-      message.success('智能体设置已保存，下一次对话开始生效')
+      message.success('智能体设置已保存。要让新设置生效，请重新连接智能体，硬件设备需要重启')
       queryClient.invalidateQueries({ queryKey: ['agent-settings', deviceId] })
       onClose()
     },
