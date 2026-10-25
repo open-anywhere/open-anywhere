@@ -190,6 +190,10 @@ func (b *Builder) watch(appID, sessionID string) {
 		// treated as this turn finishing (false idle + stale artifact).
 		afterCursor = snap.EventCursor
 	}
+	// Continue / Resume / stale-retry already advanced past prior events. If the
+	// stream ends with the session idle and nothing new after the cursor, finish
+	// via complete() instead of spinning until BuildTimeout.
+	hadCursor := afterCursor != ""
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	seen := make(map[string]bool)
@@ -230,6 +234,9 @@ func (b *Builder) watch(appID, sessionID string) {
 			if afterCursor != "" {
 				if event.ID == afterCursor {
 					afterCursor = ""
+					// Prior turn already ran; a following idle must complete even
+					// if this watch invocation never saw status_running again.
+					active = true
 				}
 				continue
 			}
@@ -278,6 +285,22 @@ func (b *Builder) watch(appID, sessionID string) {
 			case "session.status_terminated":
 				stream.Close()
 				b.fail(appID, "构建会话已终止", fmt.Errorf("session terminated"))
+				b.archive(sessionID)
+				return
+			}
+		}
+		// Continue / Resume / stale-retry already had a cursor. After catch-up
+		// the stream may end with the session idle and no further status_idle
+		// event to observe — collect once and settle instead of spinning.
+		// (Do not use this on a fresh Start: mid-build stream drops still need
+		// reconnect while the session may briefly report idle.)
+		if hadCursor && afterCursor == "" {
+			switch status := b.sessionStatus(sessionID); status {
+			case "idle":
+				b.complete(appID, sessionID)
+				return
+			case "terminated", "archived":
+				b.fail(appID, "构建会话已终止", fmt.Errorf("session %s", status))
 				b.archive(sessionID)
 				return
 			}
