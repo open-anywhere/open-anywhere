@@ -323,13 +323,13 @@ func TestWatchIgnoresReplayedPriorTurnWhenCursorSet(t *testing.T) {
 			io.WriteString(w, `{"id":"ses_1","status":"idle"}`)
 		case "/v1/files":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"data": []map[string]any{{
-					"id": "file_new", "filename": "artifact.tar.gz", "downloadable": true,
-					"size_bytes": len(archive), "created_at": "2026-10-25T07:30:00Z",
-				}},
-				"has_more": false,
-			})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{
+				"id": "file_new", "filename": "artifact.tar.gz", "downloadable": true,
+				"size_bytes": len(archive), "created_at": freshArtifactCreatedAt(),
+			}},
+			"has_more": false,
+		})
 		case "/v1/files/file_new/content":
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Write(archive)
@@ -604,7 +604,7 @@ func newAgentServerWithGate(t *testing.T, mode string, archive []byte, rec *reco
 				"filename":     "artifact.tar.gz",
 				"downloadable": true,
 				"size_bytes":   len(archive),
-				"created_at":   "2026-01-02T03:04:05Z",
+				"created_at":   freshArtifactCreatedAt(),
 			}},
 			"has_more": false,
 		})
@@ -619,6 +619,12 @@ func newAgentServerWithGate(t *testing.T, mode string, archive []byte, rec *reco
 		io.WriteString(w, `{"id":"ses_1","status":"terminated"}`)
 	})
 	return httptest.NewServer(mux)
+}
+
+// freshArtifactCreatedAt is after any BuildStartedAt used in tests so the
+// stale-artifact guard in collect does not reject fixture packages.
+func freshArtifactCreatedAt() string {
+	return time.Now().UTC().Add(time.Minute).Format(time.RFC3339)
 }
 
 func testArtifact(t *testing.T) []byte {

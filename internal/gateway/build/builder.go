@@ -344,12 +344,17 @@ func (b *Builder) complete(appID, sessionID string) {
 	if !ok {
 		return
 	}
-	if entry.Snapshot().State != app.StateBuilding {
+	snap := entry.Snapshot()
+	if snap.State != app.StateBuilding {
 		b.archive(sessionID)
 		return
 	}
-	hadArtifact := hasStartableArtifact(entry.Snapshot())
-	path, size, digest, err := b.collect(ctx, sessionID)
+	hadArtifact := hasStartableArtifact(snap)
+	opts := collectOpts{After: snap.BuildStartedAt}
+	if hadArtifact {
+		opts.PreviousSHA = snap.Artifact.SHA256
+	}
+	path, size, digest, err := b.collect(ctx, sessionID, opts)
 	if err == nil {
 		var result artifact.Result
 		result, err = artifact.Validate(path)
@@ -367,6 +372,13 @@ func (b *Builder) complete(appID, sessionID string) {
 		}
 	}
 	os.Remove(path)
+	// Premature end_turn can surface the previous turn's package. Stay in
+	// building and keep watching so a later real delivery can still register.
+	if isStaleArtifact(err) && entry.Snapshot().State == app.StateBuilding {
+		b.logf("build %s: %v; resume watch for a fresher artifact", appID, err)
+		go b.watch(appID, sessionID)
+		return
+	}
 	kept := b.fail(appID, userMessage(err), err)
 	if !kept {
 		b.archive(sessionID)
@@ -513,9 +525,22 @@ func (b *Builder) archive(sessionID string) {
 	}
 }
 
-func (b *Builder) collect(ctx context.Context, sessionID string) (string, int64, string, error) {
+// collectOpts filters Files API candidates so an early end_turn cannot register
+// the previous turn's artifact.tar.gz as this turn's success.
+type collectOpts struct {
+	After       time.Time // require CreatedAt >= After (with small clock skew)
+	PreviousSHA string    // reject when the downloaded digest still matches
+}
+
+func (b *Builder) collect(ctx context.Context, sessionID string, opts collectOpts) (string, int64, string, error) {
 	var chosen *agentapi.File
 	var lastErr error
+	var sawStale bool
+	// AgentAPI and local clocks can drift a little; still reject clearly older packages.
+	minCreated := time.Time{}
+	if !opts.After.IsZero() {
+		minCreated = opts.After.Add(-2 * time.Second)
+	}
 	for index, delay := range []time.Duration{0, 5 * time.Second, 15 * time.Second, 30 * time.Second} {
 		if index > 0 && !b.sleep(ctx, delay) {
 			return "", 0, "", ctx.Err()
@@ -525,9 +550,15 @@ func (b *Builder) collect(ctx context.Context, sessionID string) (string, int64,
 			lastErr = err
 			continue
 		}
+		chosen = nil
+		sawStale = false
 		for i := range files {
 			file := files[i]
 			if file.Filename != "artifact.tar.gz" || !file.Downloadable {
+				continue
+			}
+			if !minCreated.IsZero() && file.CreatedAt.Before(minCreated) {
+				sawStale = true
 				continue
 			}
 			if chosen == nil || file.CreatedAt.After(chosen.CreatedAt) {
@@ -542,6 +573,9 @@ func (b *Builder) collect(ctx context.Context, sessionID string) (string, int64,
 	if chosen == nil {
 		if lastErr != nil {
 			return "", 0, "", &stageError{Code: "OUTPUT_DOWNLOAD_FAILED", User: "构建产物下载失败", Cause: lastErr}
+		}
+		if sawStale {
+			return "", 0, "", &stageError{Code: "OUTPUT_STALE", User: "构建产物仍是上一轮结果"}
 		}
 		return "", 0, "", &stageError{Code: "OUTPUT_MISSING", User: "构建产物缺失"}
 	}
@@ -566,7 +600,20 @@ func (b *Builder) collect(ctx context.Context, sessionID string) (string, int64,
 		os.Remove(name)
 		return "", 0, "", &stageError{Code: "ARTIFACT_CORRUPT", User: "构建产物损坏", Cause: fmt.Errorf("size %d, expected %d", size, chosen.SizeBytes)}
 	}
-	return name, size, hex.EncodeToString(hash.Sum(nil)), nil
+	digest := hex.EncodeToString(hash.Sum(nil))
+	if opts.PreviousSHA != "" && digest == opts.PreviousSHA {
+		os.Remove(name)
+		return "", 0, "", &stageError{Code: "OUTPUT_UNCHANGED", User: "构建产物未更新"}
+	}
+	return name, size, digest, nil
+}
+
+func isStaleArtifact(err error) bool {
+	var staged *stageError
+	if !errors.As(err, &staged) {
+		return false
+	}
+	return staged.Code == "OUTPUT_STALE" || staged.Code == "OUTPUT_UNCHANGED"
 }
 
 func (b *Builder) sleep(ctx context.Context, delay time.Duration) bool {

@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -96,7 +99,7 @@ func builderTestServer(t *testing.T, stream http.HandlerFunc, archive []byte, st
 			return
 		}
 		io.WriteString(w, `{"data":[{"id":"file_1","filename":"artifact.tar.gz","downloadable":true,"size_bytes":`+
-			strconv.Itoa(len(archive))+`,"created_at":"2026-01-02T03:04:05Z"}],"has_more":false}`)
+			strconv.Itoa(len(archive))+`,"created_at":"`+freshArtifactCreatedAt()+`"}],"has_more":false}`)
 	})
 	mux.HandleFunc("GET /v1/files/file_1/content", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -606,7 +609,7 @@ func TestCollectRetriesAndGivesUpWhenSleepIsCanceled(t *testing.T) {
 	defer server.Close()
 	builder, _, _ := newTestBuilder(t, server.URL, &fakeNotifier{})
 	builder.sleepFn = func(context.Context, time.Duration) bool { return false }
-	path, size, digest, err := builder.collect(context.Background(), "ses_1")
+	path, size, digest, err := builder.collect(context.Background(), "ses_1", collectOpts{})
 	if path != "" || size != 0 || digest != "" || err != nil {
 		t.Fatalf("collect = %q %d %q %v", path, size, digest, err)
 	}
@@ -629,7 +632,7 @@ func TestCollectSkipsUnrelatedFiles(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	builder, _, _ := newTestBuilder(t, server.URL, &fakeNotifier{})
-	path, size, digest, err := builder.collect(context.Background(), "ses_1")
+	path, size, digest, err := builder.collect(context.Background(), "ses_1", collectOpts{})
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -640,14 +643,74 @@ func TestCollectSkipsUnrelatedFiles(t *testing.T) {
 }
 
 func TestCollectReportsWhenNoTempFileCanBeCreated(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("os.CreateTemp ignores TMPDIR on Windows")
+	}
 	archive := testArtifact(t)
 	server := newAgentServer(t, "complete", archive, &recorder{})
 	defer server.Close()
 	builder, _, _ := newTestBuilder(t, server.URL, &fakeNotifier{})
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing", "dir"))
-	if _, _, _, err := builder.collect(context.Background(), "ses_1"); err == nil {
+	if _, _, _, err := builder.collect(context.Background(), "ses_1", collectOpts{}); err == nil {
 		t.Fatal("collect succeeded without a temp directory")
 	}
+}
+
+func TestCollectRejectsStaleOrUnchangedPackages(t *testing.T) {
+	archive := testArtifact(t)
+	digest := fmt.Sprintf("%x", sha256.Sum256(archive))
+	t.Run("created before this build", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /v1/files", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{
+					"id": "file_old", "filename": "artifact.tar.gz", "downloadable": true,
+					"size_bytes": len(archive), "created_at": "2026-01-02T03:00:00Z",
+				}},
+				"has_more": false,
+			})
+		})
+		server := httptest.NewServer(mux)
+		defer server.Close()
+		builder, _, _ := newTestBuilder(t, server.URL, &fakeNotifier{})
+		builder.sleepFn = func(context.Context, time.Duration) bool { return true }
+		_, _, _, err := builder.collect(context.Background(), "ses_1", collectOpts{
+			After: time.Date(2026, 1, 2, 4, 0, 0, 0, time.UTC),
+		})
+		if err == nil || !strings.Contains(err.Error(), "OUTPUT_STALE") {
+			t.Fatalf("error = %v", err)
+		}
+		if !isStaleArtifact(err) {
+			t.Fatalf("expected recoverable stale: %v", err)
+		}
+	})
+	t.Run("digest matches previous artifact", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /v1/files", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{
+					"id": "file_1", "filename": "artifact.tar.gz", "downloadable": true,
+					"size_bytes": len(archive), "created_at": "2026-01-02T05:00:00Z",
+				}},
+				"has_more": false,
+			})
+		})
+		mux.HandleFunc("GET /v1/files/file_1/content", func(w http.ResponseWriter, r *http.Request) {
+			w.Write(archive)
+		})
+		server := httptest.NewServer(mux)
+		defer server.Close()
+		builder, _, _ := newTestBuilder(t, server.URL, &fakeNotifier{})
+		_, _, _, err := builder.collect(context.Background(), "ses_1", collectOpts{
+			After:       time.Date(2026, 1, 2, 4, 0, 0, 0, time.UTC),
+			PreviousSHA: digest,
+		})
+		if err == nil || !strings.Contains(err.Error(), "OUTPUT_UNCHANGED") {
+			t.Fatalf("error = %v", err)
+		}
+	})
 }
 
 func TestUserMessageMapsArtifactCodes(t *testing.T) {
