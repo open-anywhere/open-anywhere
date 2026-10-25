@@ -32,6 +32,9 @@ func (a *API) AdminHandler() http.Handler {
 	mux.HandleFunc("GET /api/admin/settings", a.withAdmin(a.adminGetSettings))
 	mux.HandleFunc("PUT /api/admin/settings", a.withAdmin(a.adminUpdateSettings))
 	mux.HandleFunc("POST /api/admin/settings/test", a.withAdmin(a.adminTestSettings))
+	mux.HandleFunc("GET /api/admin/mcp", a.withAdmin(a.adminGetMCP))
+	mux.HandleFunc("PUT /api/admin/mcp/shared", a.withAdmin(a.adminSetSharedMCP))
+	mux.HandleFunc("POST /api/admin/mcp/sync", a.withAdmin(a.adminSyncMCP))
 	mux.Handle("/api/admin/", http.NotFoundHandler())
 	return a.guard(mux)
 }

@@ -216,6 +216,8 @@ sequenceDiagram
 | `GET` | `/api/portal/agent-options` | 用户可选项：音色、语言、公开大模型、记忆模式，以及新智能体默认的角色介绍 `default_system_prompt` |
 | `GET` | `/api/portal/devices/{id}/agent` | 读取设备所属智能体的名称与音色 |
 | `PUT` | `/api/portal/devices/{id}/agent` | 修改智能体：`assistant_name`（1–20 字符）、`system_prompt`（完整角色介绍，1–6000 字符）、`tts_voice_id`、`lang_code`、`llm_model_id`、`mem_model_id`、`chat_history`（聊天保存：0 不记录、1 仅文本、2 文本加语音）、`voice_volume`（0–100）、`voice_speed`（0.5–2.0）、`llm_temperature`（0–1.9）、`llm_max_tokens`（1–8192）、`idle_timeout_seconds`（60–3600）、`disable_greeting`。只提交变化的字段；音色、语言、模型必须在可选项里，私有模型不开放。意图识别模型不开放，它决定智能体能否调用工具。角色介绍可以整段修改，界面提供“恢复平台默认”；改动它可能让智能体无法正确制作或控制应用 |
+| `GET` | `/api/portal/devices/{id}/mcps` | 智能体的 MCP 服务：`required`（网关自己的服务，始终启用）和 `available`（管理员开放的服务，带 `selected`）。不返回任何连接地址或 token |
+| `PUT` | `/api/portal/devices/{id}/mcps` | `{ids}` 整体替换可选服务。只能选管理员开放的；网关自己的服务始终保留；它尚未创建时返回 409 `MCP_NOT_READY` |
 | `DELETE` | `/api/portal/devices/{id}` | 移除设备，`?force=true` 在灵矽解绑失败时仍移除；返回 `204` |
 | `GET` | `/api/portal/devices/{id}` | 设备开通详情与语音状态 |
 | `POST` | `/api/portal/devices/{id}/retry` | 重试开通；已注册设备则重启语音 |
@@ -257,6 +259,9 @@ POST /voice/{device_id}/abort
 | `GET` | `/api/admin/settings` | 平台设置（秘密脱敏） |
 | `PUT` | `/api/admin/settings` | 保存平台设置；默认服务变更受 `APPS_RUNNING` 保护 |
 | `POST` | `/api/admin/settings/test` | 测试 Linx/Render/Casting；限流 20 次/分钟 |
+| `GET` | `/api/admin/mcp` | 灵矽账号下全部 MCP 服务，网关自己的排在最前，并标出已开放给用户的 |
+| `PUT` | `/api/admin/mcp/shared` | `{ids}` 选择开放给用户的 MCP 服务；未知服务或网关自己的服务返回 400 |
+| `POST` | `/api/admin/mcp/sync` | 把当前 MCP 地址与 token 同步到灵矽上网关自己的服务 |
 
 ### 6.3 错误码
 

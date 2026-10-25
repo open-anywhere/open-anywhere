@@ -11,6 +11,7 @@ import {
   Space,
   Spin,
   Switch,
+  Tabs,
   Tag,
 } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -26,6 +27,7 @@ import {
 import { adminSettingsQueryOptions } from '../../api/queries'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { PageHeader } from '../portal/components/PageHeader'
+import { AdminMcpPanel } from './AdminMcpPanel'
 
 interface SettingsFormValues {
   agentapi_base_url?: string
@@ -347,302 +349,358 @@ export function AdminSettingsPage() {
         />
       ) : settingsData ? (
         <Form form={form} layout="vertical" requiredMark={false}>
-          <section className="surface settings-section">
-            <div className="section-header">
-              <div>
-                <h2>AgentAPI</h2>
-                <p>用于云端编码智能体的构建。修改后新构建立即生效。</p>
-              </div>
-              {statusTag(settingsData.ready.agentapi)}
-            </div>
-            <Descriptions
-              size="small"
-              column={1}
-              items={[
-                {
-                  key: 'key',
-                  label: 'API Key',
-                  children: settingsData.agentapi.api_key.configured ? (
-                    <Tag color="green">已配置</Tag>
-                  ) : (
-                    <Tag color="orange">未配置</Tag>
-                  ),
-                },
-              ]}
-            />
-            <Form.Item
-              label="Base URL"
-              name="agentapi_base_url"
-              extra={
-                <Source href="https://portal.qiniu.com/agentapi">
-                  AgentAPI 服务地址：华东 https://agent.qiniuapi.com，美西 https://agent.sufy.com。
-                  资源按区域隔离，地址要与下面的 Agent、环境同一区域。控制台：
-                </Source>
-              }
-            >
-              <Input placeholder="https://agent.qiniuapi.com" autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="API Key"
-              name="agentapi_api_key"
-              extra={
-                <Source href="https://portal.qiniu.com/agentapi">
-                  {settingsData.agentapi.api_key.configured
-                    ? '已保存 API Key；留空保持不变。'
-                    : '未保存 API Key。'}
-                  在七牛控制台创建 MaaS API Key，会自动绑定到 AgentAPI 账户。
-                </Source>
-              }
-            >
-              <Input.Password
-                placeholder={
-                  settingsData.agentapi.api_key.configured ? '已保存，留空保持不变' : '输入 API Key'
-                }
-                autoComplete="new-password"
-              />
-            </Form.Item>
-            {settingsData.agentapi.api_key.configured ? (
-              <Form.Item name="agentapi_clear_key" valuePropName="checked">
-                <Checkbox>清除已保存的 AgentAPI API Key</Checkbox>
-              </Form.Item>
-            ) : null}
-            <Form.Item
-              label="Agent ID"
-              name="agentapi_agent_id"
-              extra="负责生成应用的构建智能体 ID（形如 agt_…）。在 AgentAPI 控制台创建 app-builder 智能体后复制。"
-            >
-              <Input autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="Agent 版本"
-              name="agentapi_agent_version"
-              extra="可选。固定使用某个智能体版本；填 0 表示每次使用最新版本。"
-            >
-              <InputNumber min={0} style={{ width: 180 }} />
-            </Form.Item>
-            <Form.Item
-              label="环境 ID"
-              name="agentapi_environment_id"
-              extra="构建会话运行的云端环境 ID（形如 env_…）。在 AgentAPI 控制台的“环境”里创建后复制。"
-            >
-              <Input autoComplete="off" />
-            </Form.Item>
-          </section>
-
-          <section className="surface settings-section">
-            <div className="section-header">
-              <div>
-                <h2>Linx</h2>
-                <p>用于创建用户智能体、挂载 MCP 与设备绑定。</p>
-              </div>
-              {statusTag(settingsData.ready.linx)}
-            </div>
-            <Descriptions
-              size="small"
-              column={1}
-              items={[
-                {
-                  key: 'key',
-                  label: 'API Key',
-                  children: settingsData.linx.api_key.configured ? (
-                    <Tag color="green">已配置</Tag>
-                  ) : (
-                    <Tag color="orange">未配置</Tag>
-                  ),
-                },
-              ]}
-            />
-            <Form.Item
-              label="API Base"
-              name="linx_api_base"
-              extra="灵矽开放 API 地址，一般保持 https://xrobo.qiniu.com。"
-            >
-              <Input placeholder="https://xrobo.qiniu.com" autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="OTA 地址"
-              name="linx_ota_url"
-              extra="虚拟设备上报并领取激活码、设备 Token 的地址，一般保持 https://xrobo.qiniuapi.com/v1/ota/。"
-            >
-              <Input placeholder="https://xrobo.qiniuapi.com/v1/ota/" autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="API Key"
-              name="linx_api_key"
-              extra={
-                <Source href="https://xrobo.qiniu.com/">
-                  {settingsData.linx.api_key.configured
-                    ? '已保存 API Key；留空保持不变。修改地址或 Key 后，下一次开通会重建 MCP Server。'
-                    : '未保存 API Key。'}
-                  在灵矽智控台“API Key 管理”创建，用它为每位用户创建智能体。
-                </Source>
-              }
-            >
-              <Input.Password
-                placeholder={
-                  settingsData.linx.api_key.configured ? '已保存，留空保持不变' : '输入 API Key'
-                }
-                autoComplete="new-password"
-              />
-            </Form.Item>
-            {settingsData.linx.api_key.configured ? (
-              <Form.Item name="linx_clear_key" valuePropName="checked">
-                <Checkbox>清除已保存的 Linx API Key</Checkbox>
-              </Form.Item>
-            ) : null}
-          </section>
-
-          <section className="surface settings-section">
-            <div className="section-header">
-              <div>
-                <h2>灵矽 MCP 与智能体模板</h2>
-                <p>灵矽云通过 MCP 控制应用；新用户的智能体按下面的参数创建。已创建的智能体不受影响。</p>
-              </div>
-              {statusTag(
-                Boolean(settingsData.linx.public_mcp_url) && settingsData.linx.mcp_token.configured,
-              )}
-            </div>
-            <Form.Item
-              label="公网 MCP 地址"
-              name="linx_public_mcp_url"
-              extra="灵矽云访问本网关 MCP 的公网地址，必须以 /mcp 结尾（Streamable HTTP），例如 https://gateway.example.com/mcp。局域网地址灵矽云访问不到。修改后下一次开通会重建 MCP。"
-            >
-              <Input placeholder="https://gateway.example.com/mcp" autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="MCP 名称"
-              name="linx_mcp_name"
-              extra="在灵矽平台创建的 MCP 服务名称，同一个平台账号下需要唯一。"
-            >
-              <Input placeholder="Open Anywhere" autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="MCP Token"
-              extra={
-                settingsData.linx.mcp_token.configured
-                  ? '已自动生成并加密保存，灵矽云用它访问本网关 MCP，不会显示明文。'
-                  : '首次启动会自动生成。'
-              }
-            >
-              <Form.Item name="linx_rotate_mcp_token" valuePropName="checked" noStyle>
-                <Checkbox>保存时重新生成，并同步到灵矽 MCP（旧 Token 立即失效）</Checkbox>
-              </Form.Item>
-            </Form.Item>
-            <Form.Item
-              label="助手名称"
-              name="linx_assistant_name"
-              extra="新建智能体里的助手昵称，对应灵矽 assistantName。"
-            >
-              <Input placeholder="小灵" autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="大模型 ID"
-              name="linx_llm_model_id"
-              extra={
-                <Source href="https://linx.qiniu.com/docs/xrobot/">
-                  对应灵矽 llmModelId，默认 DeepSeek V4 Flash。其他可选模型见开放 API
-                  GET /v1/agents/models/llm，文档：
-                </Source>
-              }
-            >
-              <Input autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="记忆模型 ID"
-              name="linx_mem_model_id"
-              extra="对应灵矽 memModelId：Memory_nomem 为无记忆，Memory_long_term_memory 为长期记忆。"
-            >
-              <Input autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="意图模型 ID"
-              name="linx_intent_model_id"
-              extra="对应灵矽 intentModelId：Intent_function_call 为统一意图识别（调用 MCP 必须使用它），Intent_nointent 为无意图识别。"
-            >
-              <Input autoComplete="off" />
-            </Form.Item>
-          </section>
-
-          <section className="surface settings-section">
-            <div className="section-header">
-              <div>
-                <h2>默认屏幕服务</h2>
-                <p>平台托管用户的 Render 与 Casting。仍有应用占用这些服务时不能修改。</p>
-              </div>
-              {statusTag(settingsData.ready.services)}
-            </div>
-            <Form.Item label="Render 地址" name="render_url">
-              <Input placeholder="https://render.example.com" autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="Render Token"
-              name="render_token"
-              extra={
-                settingsData.services.render_token.configured
-                  ? '已保存 Token；留空保持不变。'
-                  : '可选。'
-              }
-            >
-              <Input.Password
-                placeholder={
-                  settingsData.services.render_token.configured ? '已保存，留空保持不变' : '可选'
-                }
-                autoComplete="new-password"
-              />
-            </Form.Item>
-            {settingsData.services.render_token.configured ? (
-              <Form.Item name="clear_render_token" valuePropName="checked">
-                <Checkbox>清除已保存的 Render Token</Checkbox>
-              </Form.Item>
-            ) : null}
-            <Form.Item label="Casting 地址" name="casting_url">
-              <Input placeholder="https://casting.example.com" autoComplete="off" />
-            </Form.Item>
-            <Form.Item
-              label="Casting Token"
-              name="casting_token"
-              extra={
-                settingsData.services.casting_token.configured
-                  ? '已保存 Token；留空保持不变。'
-                  : '可选。'
-              }
-            >
-              <Input.Password
-                placeholder={
-                  settingsData.services.casting_token.configured ? '已保存，留空保持不变' : '可选'
-                }
-                autoComplete="new-password"
-              />
-            </Form.Item>
-            {settingsData.services.casting_token.configured ? (
-              <Form.Item name="clear_casting_token" valuePropName="checked">
-                <Checkbox>清除已保存的 Casting Token</Checkbox>
-              </Form.Item>
-            ) : null}
-          </section>
-
-          <section className="surface settings-section">
-            <div className="section-header">
-              <div>
-                <h2>注册</h2>
-                <p>关闭时注册接口拒绝新账号；已有账号不受影响。</p>
-              </div>
-              {settingsData.registration.open ? (
-                <Tag color="green">开放</Tag>
-              ) : (
-                <Tag>关闭</Tag>
-              )}
-            </div>
-            <Form.Item name="registration_open" valuePropName="checked">
-              <Switch checkedChildren="开放注册" unCheckedChildren="关闭注册" />
-            </Form.Item>
-            <Alert
-              type="warning"
-              showIcon
-              message="确认租户隔离已验证再开放注册"
-              description="开放后任何人都可以创建账号并获得智能体。"
-            />
-          </section>
+          <Tabs
+            className="settings-tabs"
+            defaultActiveKey="agentapi"
+            items={[
+              {
+                key: 'agentapi',
+                label: '构建（AgentAPI）',
+                forceRender: true,
+                children: (
+                  <>
+                  <section className="surface settings-section">
+                    <div className="section-header">
+                      <div>
+                        <h2>AgentAPI</h2>
+                        <p>用于云端编码智能体的构建。修改后新构建立即生效。</p>
+                      </div>
+                      {statusTag(settingsData.ready.agentapi)}
+                    </div>
+                    <Descriptions
+                      size="small"
+                      column={1}
+                      items={[
+                        {
+                          key: 'key',
+                          label: 'API Key',
+                          children: settingsData.agentapi.api_key.configured ? (
+                            <Tag color="green">已配置</Tag>
+                          ) : (
+                            <Tag color="orange">未配置</Tag>
+                          ),
+                        },
+                      ]}
+                    />
+                    <Form.Item
+                      label="Base URL"
+                      name="agentapi_base_url"
+                      extra={
+                        <Source href="https://portal.qiniu.com/agentapi">
+                          AgentAPI 服务地址：华东 https://agent.qiniuapi.com，美西 https://agent.sufy.com。
+                          资源按区域隔离，地址要与下面的 Agent、环境同一区域。控制台：
+                        </Source>
+                      }
+                    >
+                      <Input placeholder="https://agent.qiniuapi.com" autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="API Key"
+                      name="agentapi_api_key"
+                      extra={
+                        <Source href="https://portal.qiniu.com/agentapi">
+                          {settingsData.agentapi.api_key.configured
+                            ? '已保存 API Key；留空保持不变。'
+                            : '未保存 API Key。'}
+                          在七牛控制台创建 MaaS API Key，会自动绑定到 AgentAPI 账户。
+                        </Source>
+                      }
+                    >
+                      <Input.Password
+                        placeholder={
+                          settingsData.agentapi.api_key.configured ? '已保存，留空保持不变' : '输入 API Key'
+                        }
+                        autoComplete="new-password"
+                      />
+                    </Form.Item>
+                    {settingsData.agentapi.api_key.configured ? (
+                      <Form.Item name="agentapi_clear_key" valuePropName="checked">
+                        <Checkbox>清除已保存的 AgentAPI API Key</Checkbox>
+                      </Form.Item>
+                    ) : null}
+                    <Form.Item
+                      label="Agent ID"
+                      name="agentapi_agent_id"
+                      extra="负责生成应用的构建智能体 ID（形如 agt_…）。在 AgentAPI 控制台创建 app-builder 智能体后复制。"
+                    >
+                      <Input autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="Agent 版本"
+                      name="agentapi_agent_version"
+                      extra="可选。固定使用某个智能体版本；填 0 表示每次使用最新版本。"
+                    >
+                      <InputNumber min={0} style={{ width: 180 }} />
+                    </Form.Item>
+                    <Form.Item
+                      label="环境 ID"
+                      name="agentapi_environment_id"
+                      extra="构建会话运行的云端环境 ID（形如 env_…）。在 AgentAPI 控制台的“环境”里创建后复制。"
+                    >
+                      <Input autoComplete="off" />
+                    </Form.Item>
+                  </section>
+                  </>
+                ),
+              },
+              {
+                key: 'linx',
+                label: '灵矽平台',
+                forceRender: true,
+                children: (
+                  <>
+                  <section className="surface settings-section">
+                    <div className="section-header">
+                      <div>
+                        <h2>Linx</h2>
+                        <p>用于创建用户智能体、挂载 MCP 与设备绑定。</p>
+                      </div>
+                      {statusTag(settingsData.ready.linx)}
+                    </div>
+                    <Descriptions
+                      size="small"
+                      column={1}
+                      items={[
+                        {
+                          key: 'key',
+                          label: 'API Key',
+                          children: settingsData.linx.api_key.configured ? (
+                            <Tag color="green">已配置</Tag>
+                          ) : (
+                            <Tag color="orange">未配置</Tag>
+                          ),
+                        },
+                      ]}
+                    />
+                    <Form.Item
+                      label="API Base"
+                      name="linx_api_base"
+                      extra="灵矽开放 API 地址，一般保持 https://xrobo.qiniu.com。"
+                    >
+                      <Input placeholder="https://xrobo.qiniu.com" autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="OTA 地址"
+                      name="linx_ota_url"
+                      extra="虚拟设备上报并领取激活码、设备 Token 的地址，一般保持 https://xrobo.qiniuapi.com/v1/ota/。"
+                    >
+                      <Input placeholder="https://xrobo.qiniuapi.com/v1/ota/" autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="API Key"
+                      name="linx_api_key"
+                      extra={
+                        <Source href="https://xrobo.qiniu.com/">
+                          {settingsData.linx.api_key.configured
+                            ? '已保存 API Key；留空保持不变。修改地址或 Key 后，下一次开通会重建 MCP Server。'
+                            : '未保存 API Key。'}
+                          在灵矽智控台“API Key 管理”创建，用它为每位用户创建智能体。
+                        </Source>
+                      }
+                    >
+                      <Input.Password
+                        placeholder={
+                          settingsData.linx.api_key.configured ? '已保存，留空保持不变' : '输入 API Key'
+                        }
+                        autoComplete="new-password"
+                      />
+                    </Form.Item>
+                    {settingsData.linx.api_key.configured ? (
+                      <Form.Item name="linx_clear_key" valuePropName="checked">
+                        <Checkbox>清除已保存的 Linx API Key</Checkbox>
+                      </Form.Item>
+                    ) : null}
+                  </section>
+                  <section className="surface settings-section">
+                    <div className="section-header">
+                      <div>
+                        <h2>新智能体的默认参数</h2>
+                        <p>新用户的智能体按下面的参数创建，已创建的智能体不受影响。用户之后可以在自己的“智能体设置”里调整。</p>
+                      </div>
+                    </div>
+                    <Form.Item
+                      label="助手名称"
+                      name="linx_assistant_name"
+                      extra="新建智能体里的助手昵称，对应灵矽 assistantName。"
+                    >
+                      <Input placeholder="小灵" autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="大模型 ID"
+                      name="linx_llm_model_id"
+                      extra={
+                        <Source href="https://linx.qiniu.com/docs/xrobot/">
+                          对应灵矽 llmModelId，默认 DeepSeek V4 Flash。其他可选模型见开放 API
+                          GET /v1/agents/models/llm，文档：
+                        </Source>
+                      }
+                    >
+                      <Input autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="记忆模型 ID"
+                      name="linx_mem_model_id"
+                      extra="对应灵矽 memModelId：Memory_nomem 为无记忆，Memory_long_term_memory 为长期记忆。"
+                    >
+                      <Input autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="意图模型 ID"
+                      name="linx_intent_model_id"
+                      extra="对应灵矽 intentModelId：Intent_function_call 为统一意图识别（调用 MCP 必须使用它），Intent_nointent 为无意图识别。"
+                    >
+                      <Input autoComplete="off" />
+                    </Form.Item>
+                  </section>
+                  </>
+                ),
+              },
+              {
+                key: 'mcp',
+                label: 'MCP 服务',
+                forceRender: true,
+                children: (
+                  <>
+                  <section className="surface settings-section">
+                    <div className="section-header">
+                      <div>
+                        <h2>网关 MCP 连接</h2>
+                        <p>灵矽云通过这个 MCP 控制应用。地址和 Token 保存后会同步到灵矽。</p>
+                      </div>
+                      {statusTag(
+                        Boolean(settingsData.linx.public_mcp_url) && settingsData.linx.mcp_token.configured,
+                      )}
+                    </div>
+                    <Form.Item
+                      label="公网 MCP 地址"
+                      name="linx_public_mcp_url"
+                      extra="灵矽云访问本网关 MCP 的公网地址，必须以 /mcp 结尾（Streamable HTTP），例如 https://gateway.example.com/mcp。局域网地址灵矽云访问不到。修改后下一次开通会重建 MCP。"
+                    >
+                      <Input placeholder="https://gateway.example.com/mcp" autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="MCP 名称"
+                      name="linx_mcp_name"
+                      extra="在灵矽平台创建的 MCP 服务名称，同一个平台账号下需要唯一。"
+                    >
+                      <Input placeholder="Open Anywhere" autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="MCP Token"
+                      extra={
+                        settingsData.linx.mcp_token.configured
+                          ? '已自动生成并加密保存，灵矽云用它访问本网关 MCP，不会显示明文。'
+                          : '首次启动会自动生成。'
+                      }
+                    >
+                      <Form.Item name="linx_rotate_mcp_token" valuePropName="checked" noStyle>
+                        <Checkbox>保存时重新生成，并同步到灵矽 MCP（旧 Token 立即失效）</Checkbox>
+                      </Form.Item>
+                    </Form.Item>
+                  </section>
+                      <AdminMcpPanel />
+                  </>
+                ),
+              },
+              {
+                key: 'services',
+                label: '屏幕服务',
+                forceRender: true,
+                children: (
+                  <>
+                  <section className="surface settings-section">
+                    <div className="section-header">
+                      <div>
+                        <h2>默认屏幕服务</h2>
+                        <p>平台托管用户的 Render 与 Casting。仍有应用占用这些服务时不能修改。</p>
+                      </div>
+                      {statusTag(settingsData.ready.services)}
+                    </div>
+                    <Form.Item label="Render 地址" name="render_url">
+                      <Input placeholder="https://render.example.com" autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="Render Token"
+                      name="render_token"
+                      extra={
+                        settingsData.services.render_token.configured
+                          ? '已保存 Token；留空保持不变。'
+                          : '可选。'
+                      }
+                    >
+                      <Input.Password
+                        placeholder={
+                          settingsData.services.render_token.configured ? '已保存，留空保持不变' : '可选'
+                        }
+                        autoComplete="new-password"
+                      />
+                    </Form.Item>
+                    {settingsData.services.render_token.configured ? (
+                      <Form.Item name="clear_render_token" valuePropName="checked">
+                        <Checkbox>清除已保存的 Render Token</Checkbox>
+                      </Form.Item>
+                    ) : null}
+                    <Form.Item label="Casting 地址" name="casting_url">
+                      <Input placeholder="https://casting.example.com" autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item
+                      label="Casting Token"
+                      name="casting_token"
+                      extra={
+                        settingsData.services.casting_token.configured
+                          ? '已保存 Token；留空保持不变。'
+                          : '可选。'
+                      }
+                    >
+                      <Input.Password
+                        placeholder={
+                          settingsData.services.casting_token.configured ? '已保存，留空保持不变' : '可选'
+                        }
+                        autoComplete="new-password"
+                      />
+                    </Form.Item>
+                    {settingsData.services.casting_token.configured ? (
+                      <Form.Item name="clear_casting_token" valuePropName="checked">
+                        <Checkbox>清除已保存的 Casting Token</Checkbox>
+                      </Form.Item>
+                    ) : null}
+                  </section>
+                  </>
+                ),
+              },
+              {
+                key: 'registration',
+                label: '注册',
+                forceRender: true,
+                children: (
+                  <>
+                  <section className="surface settings-section">
+                    <div className="section-header">
+                      <div>
+                        <h2>注册</h2>
+                        <p>关闭时注册接口拒绝新账号；已有账号不受影响。</p>
+                      </div>
+                      {settingsData.registration.open ? (
+                        <Tag color="green">开放</Tag>
+                      ) : (
+                        <Tag>关闭</Tag>
+                      )}
+                    </div>
+                    <Form.Item name="registration_open" valuePropName="checked">
+                      <Switch checkedChildren="开放注册" unCheckedChildren="关闭注册" />
+                    </Form.Item>
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="确认租户隔离已验证再开放注册"
+                      description="开放后任何人都可以创建账号并获得智能体。"
+                    />
+                  </section>
+                  </>
+                ),
+              },
+            ]}
+          />
 
           <section className="surface settings-section">
             <Space wrap>

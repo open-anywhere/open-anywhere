@@ -535,9 +535,43 @@ type platformServer struct {
 }
 
 type platformInstance struct {
-	ID    string `json:"id"`
-	MCPID string `json:"mcp_id"`
-	Name  string `json:"name"`
+	ID        string `json:"id"`
+	MCPID     string `json:"mcp_id"`
+	Name      string `json:"name"`
+	Desc      string `json:"desc"`
+	LogoURL   string `json:"logo_url"`
+	IsPrivate bool   `json:"is_private"`
+}
+
+// MCPInstance is one MCP service opened on the platform account. Its ID is
+// what an agent binds to. The connection config, which holds the bearer
+// token, is deliberately not decoded.
+type MCPInstance = platformInstance
+
+// MCPInstances lists the MCP services opened on the platform account.
+func (c *Client) MCPInstances(ctx context.Context) ([]MCPInstance, error) {
+	return c.listInstances(ctx)
+}
+
+// AgentMCPs returns the instance IDs currently bound to an agent.
+func (c *Client) AgentMCPs(ctx context.Context, agentID string) ([]string, error) {
+	if strings.TrimSpace(agentID) == "" {
+		return nil, errors.New("linx: agent id is required")
+	}
+	var data struct {
+		Selected []struct {
+			ID string `json:"mcp_id"`
+		} `json:"selecteds"`
+	}
+	path := "/v1/agents/" + url.PathEscape(agentID) + "/mcps?include_unselected=true"
+	if err := c.do(ctx, http.MethodGet, path, nil, &data); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(data.Selected))
+	for _, item := range data.Selected {
+		ids = append(ids, item.ID)
+	}
+	return ids, nil
 }
 
 func (c *Client) listServers(ctx context.Context) ([]platformServer, error) {

@@ -16,6 +16,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { ApiError, api, type AgentSettings, type Voice } from '../../../api'
+import { AgentMcpGroup } from './AgentMcpGroup'
 
 interface Props {
   /** The device whose agent is edited; the dialog is closed when empty. */
@@ -332,6 +333,8 @@ export function AgentSettingsModal({ deviceId, onClose }: Props) {
           <Form.Item label="唤醒后问候" name="greet" valuePropName="checked" extra="听到唤醒词后先打招呼。">
             <Switch />
           </Form.Item>
+
+          <AgentMcpGroup deviceId={deviceId as string} />
 
           <p className="muted-text" style={{ marginTop: 12 }}>
             如果这个智能体上绑了硬件设备，修改会同时作用在这些设备上。意图识别由平台管理，这里不能修改。

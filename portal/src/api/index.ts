@@ -63,6 +63,21 @@ export interface AgentOption {
   comment?: string
 }
 
+/** One MCP service on the Linx platform account. */
+export interface McpService {
+  id: string
+  name: string
+  desc?: string
+  logo_url?: string
+  private: boolean
+  /** The gateway's own service. Every agent keeps it. */
+  required: boolean
+  /** Offered by the administrator for users to add. */
+  shared: boolean
+  /** Only set on a user's view of their own agent. */
+  selected?: boolean
+}
+
 export interface AgentOptions {
   voices: Voice[]
   languages: AgentOption[]
@@ -452,6 +467,15 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(input),
     }),
+  getDeviceMcps: (deviceId: string) =>
+    request<{ required: McpService | null; available: McpService[] }>(
+      `/devices/${encodeURIComponent(deviceId)}/mcps`,
+    ),
+  setDeviceMcps: (deviceId: string, ids: string[]) =>
+    request<{ ids: string[] }>(`/devices/${encodeURIComponent(deviceId)}/mcps`, {
+      method: 'PUT',
+      body: JSON.stringify({ ids }),
+    }),
   deleteDevice: (id: string, force = false) =>
     request<void>(`/devices/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, {
       method: 'DELETE',
@@ -501,6 +525,10 @@ export const api = {
 
 export const adminApi = {
   overview: () => adminRequest<AdminOverview>('/overview'),
+  mcp: () => adminRequest<{ provisioned: boolean; services: McpService[] }>('/mcp'),
+  setSharedMcp: (ids: string[]) =>
+    adminRequest<{ ids: string[] }>('/mcp/shared', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  syncMcp: () => adminRequest<{ synced: boolean }>('/mcp/sync', { method: 'POST', body: '{}' }),
   users: (params: { query?: string; status?: string; limit?: number; offset?: number }) => {
     const search = new URLSearchParams()
     if (params.query) search.set('query', params.query)

@@ -20,6 +20,9 @@ type fakeAgentPlatform struct {
 	agent   map[string]any
 	updates []map[string]any
 	fail    bool
+	// mcpBound is what GET /v1/agents/agent_1/mcps reports; mcpPuts records every replacement.
+	mcpBound []string
+	mcpPuts  [][]string
 }
 
 func (f *fakeAgentPlatform) handler() http.Handler {
@@ -32,6 +35,27 @@ func (f *fakeAgentPlatform) handler() http.Handler {
 			_, _ = w.Write([]byte(`{"code":0,"data":{"voices":[
 				{"id":"voice_a","name":"小雅","demo":"https://example.com/a.mp3","tags":{"gender":"female","age":"young","styles":["温柔"]}},
 				{"id":"voice_b","name":"阿伟","tags":{"gender":"male"}}]}}`))
+		case r.URL.Path == "/v1/mcps":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"mcps":[
+				{"id":"mcp_ours","mcp_id":"srv_1","name":"Open-anywhere","desc":"应用管理","is_private":true,"config":{"sse":{"header":{"Authorization":"Bearer secret-token"}}}},
+				{"id":"mcp_weather","mcp_id":"srv_2","name":"天气","desc":"查天气","is_private":false},
+				{"id":"mcp_music","mcp_id":"srv_3","name":"音乐","is_private":false}]}}`))
+		case r.URL.Path == "/v1/agents/agent_1/mcps" && r.Method == http.MethodGet:
+			selected := make([]map[string]any, 0, len(f.mcpBound))
+			for _, id := range f.mcpBound {
+				selected = append(selected, map[string]any{"mcp_id": id})
+			}
+			body, _ := json.Marshal(map[string]any{"code": 0, "data": map[string]any{"selecteds": selected}})
+			_, _ = w.Write(body)
+		case r.URL.Path == "/v1/agents/agent_1/mcps" && r.Method == http.MethodPut:
+			raw, _ := io.ReadAll(r.Body)
+			var put struct {
+				IDs []string `json:"mcp_ids"`
+			}
+			_ = json.Unmarshal(raw, &put)
+			f.mcpPuts = append(f.mcpPuts, put.IDs)
+			f.mcpBound = put.IDs
+			_, _ = w.Write([]byte(`{"code":0,"msg":"success","data":null}`))
 		case r.URL.Path == "/v1/languages":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"languages":[{"language":"中文","lang_code":"zh"},{"language":"英文","lang_code":"en"}]}}`))
 		case r.URL.Path == "/v1/agents/models/llm":
