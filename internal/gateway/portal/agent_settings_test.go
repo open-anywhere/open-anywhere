@@ -62,7 +62,7 @@ func (f *fakeAgentPlatform) handler() http.Handler {
 func newAgentEnv(t *testing.T) (*portalHTTPEnv, *fakeAgentPlatform) {
 	t.Helper()
 	env := newPortalHTTPEnv(t)
-	platform := &fakeAgentPlatform{agent: map[string]any{"assistantName": "小灵", "ttsVoiceId": "voice_a", "langCode": "zh", "llmModelId": "llm_a", "memModelId": "Memory_nomem", "systemPrompt": "平台提示词"}}
+	platform := &fakeAgentPlatform{agent: map[string]any{"assistantName": "小灵", "ttsVoiceId": "voice_a", "langCode": "zh", "llmModelId": "llm_a", "memModelId": "Memory_nomem", "systemPrompt": "平台提示词", "chatHistoryConf": float64(2)}}
 	server := httptest.NewServer(platform.handler())
 	t.Cleanup(server.Close)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -155,6 +155,7 @@ func TestAgentSettingsRejectBadInput(t *testing.T) {
 		{"temperature too high", "dev_base", `{"llm_temperature":2}`, "INVALID_ARGUMENT", http.StatusBadRequest},
 		{"reply too long", "dev_base", `{"llm_max_tokens":9000}`, "INVALID_ARGUMENT", http.StatusBadRequest},
 		{"idle too short", "dev_base", `{"idle_timeout_seconds":30}`, "INVALID_ARGUMENT", http.StatusBadRequest},
+		{"chat history out of range", "dev_base", `{"chat_history":3}`, "INVALID_ARGUMENT", http.StatusBadRequest},
 		{"empty prompt", "dev_base", `{"system_prompt":"   "}`, "INVALID_ARGUMENT", http.StatusBadRequest},
 		{"prompt too long", "dev_base", `{"system_prompt":"` + strings.Repeat("字", 6001) + `"}`, "INVALID_ARGUMENT", http.StatusBadRequest},
 		{"prompt with control character", "dev_base", `{"system_prompt":"a\u0007b"}`, "INVALID_ARGUMENT", http.StatusBadRequest},
@@ -252,5 +253,24 @@ func TestOtherChangesNeverTouchThePrompt(t *testing.T) {
 	defer platform.mu.Unlock()
 	if _, ok := platform.updates[0]["systemPrompt"]; ok {
 		t.Fatalf("systemPrompt was sent: %v", platform.updates[0])
+	}
+}
+
+func TestUserChoosesWhatChatsAreSaved(t *testing.T) {
+	env, platform := newAgentEnv(t)
+	origin := map[string]string{"Origin": env.server.URL}
+	response, payload := env.do(t, http.MethodGet, "/api/portal/devices/dev_base/agent", "", nil)
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(payload), `"chat_history":2`) {
+		t.Fatalf("read status=%d body=%s", response.StatusCode, payload)
+	}
+	// Zero is a real choice (no chat log), not "unset".
+	response, payload = env.do(t, http.MethodPut, "/api/portal/devices/dev_base/agent", `{"chat_history":0}`, origin)
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(payload), `"chat_history":0`) {
+		t.Fatalf("update status=%d body=%s", response.StatusCode, payload)
+	}
+	platform.mu.Lock()
+	defer platform.mu.Unlock()
+	if len(platform.updates) != 1 || platform.updates[0]["chatHistoryConf"] != float64(0) || len(platform.updates[0]) != 1 {
+		t.Fatalf("platform updates = %v", platform.updates)
 	}
 }

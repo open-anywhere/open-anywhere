@@ -331,7 +331,9 @@ type AgentInfo struct {
 	MemModelID    string     `json:"memModelId"`
 	LangCode      string     `json:"langCode"`
 	SystemPrompt  string     `json:"systemPrompt"`
-	Extra         AgentExtra `json:"extra"`
+	// ChatHistoryConf is 0 for no chat log, 1 for text only, 2 for text and audio.
+	ChatHistoryConf *int       `json:"chatHistoryConf"`
+	Extra           AgentExtra `json:"extra"`
 }
 
 // GetAgent reads an agent's configuration.
@@ -354,8 +356,9 @@ type AgentPatch struct {
 	LLMModelID    *string
 	MemModelID    *string
 	LangCode      *string
-	SystemPrompt *string
-	Extra        *AgentExtra
+	SystemPrompt    *string
+	ChatHistoryConf *int
+	Extra           *AgentExtra
 }
 
 func (p AgentPatch) body() map[string]any {
@@ -371,6 +374,9 @@ func (p AgentPatch) body() map[string]any {
 	set("memModelId", p.MemModelID)
 	set("langCode", p.LangCode)
 	set("systemPrompt", p.SystemPrompt)
+	if p.ChatHistoryConf != nil {
+		body["chatHistoryConf"] = *p.ChatHistoryConf
+	}
 	if p.Extra != nil {
 		extra := map[string]any{}
 		llm := map[string]any{}

@@ -91,6 +91,7 @@ export function AgentSettingsModal({ deviceId, onClose }: Props) {
         idle_timeout_seconds: current.idle_timeout_seconds ?? defaults.idle_timeout_seconds,
         greet: !current.disable_greeting,
         system_prompt: current.system_prompt ?? '',
+        chat_history: current.chat_history,
       })
     }
   }, [agent.data, form])
@@ -107,6 +108,9 @@ export function AgentSettingsModal({ deviceId, onClose }: Props) {
     if (values.lang_code && values.lang_code !== current?.lang_code) input.lang_code = values.lang_code
     if (values.llm_model_id && values.llm_model_id !== current?.llm_model_id) input.llm_model_id = values.llm_model_id
     if (values.mem_model_id && values.mem_model_id !== current?.mem_model_id) input.mem_model_id = values.mem_model_id
+    if (values.chat_history !== undefined && values.chat_history !== current?.chat_history) {
+      input.chat_history = values.chat_history
+    }
     for (const key of optionalNumbers) {
       const value = values[key]
       if (value === undefined || value === null) continue
@@ -294,8 +298,25 @@ export function AgentSettingsModal({ deviceId, onClose }: Props) {
           >
             <InputNumber min={1} max={8192} step={50} style={{ width: 160 }} />
           </Form.Item>
+
+          <Divider titlePlacement="start" plain>
+            记忆与隐私
+          </Divider>
           <Form.Item label="记忆" name="mem_model_id" extra="长期记忆会从交流中提取偏好，供之后的对话参考。">
             <Select options={memoryOptions} />
+          </Form.Item>
+          <Form.Item
+            label="聊天保存"
+            name="chat_history"
+            extra="决定平台保存哪些聊天记录。它和记忆是两项独立的设置，选择“不记录”不会删除已经保存的内容，也不会关闭长期记忆。"
+          >
+            <Select
+              options={[
+                { value: 0, label: '不记录' },
+                { value: 1, label: '仅文本' },
+                { value: 2, label: '文本 + 语音' },
+              ]}
+            />
           </Form.Item>
 
           <Divider titlePlacement="start" plain>

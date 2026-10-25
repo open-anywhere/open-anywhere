@@ -88,6 +88,8 @@ type AgentSettingsView struct {
 	DisableGreeting    *bool    `json:"disable_greeting,omitempty"`
 	// SystemPrompt is the full role description of the agent.
 	SystemPrompt string `json:"system_prompt"`
+	// ChatHistory is 0 for no chat log, 1 for text only, 2 for text and audio.
+	ChatHistory *int `json:"chat_history,omitempty"`
 }
 
 type updateAgentRequest struct {
@@ -103,6 +105,7 @@ type updateAgentRequest struct {
 	IdleTimeoutSeconds *int     `json:"idle_timeout_seconds"`
 	DisableGreeting    *bool    `json:"disable_greeting"`
 	SystemPrompt       *string  `json:"system_prompt"`
+	ChatHistory        *int     `json:"chat_history"`
 }
 
 func agentSettingsView(info linx.AgentInfo) AgentSettingsView {
@@ -119,6 +122,7 @@ func agentSettingsView(info linx.AgentInfo) AgentSettingsView {
 		IdleTimeoutSeconds: info.Extra.Goodbye.IdleTimeoutSeconds,
 		DisableGreeting:    info.Extra.DisableGreeting,
 		SystemPrompt:       info.SystemPrompt,
+		ChatHistory:        info.ChatHistoryConf,
 	}
 }
 
@@ -222,7 +226,7 @@ func hasChange(in updateAgentRequest) bool {
 	return in.AssistantName != nil || in.TTSVoiceID != nil || in.LangCode != nil ||
 		in.LLMModelID != nil || in.MemModelID != nil || in.VoiceVolume != nil ||
 		in.VoiceSpeed != nil || in.LLMTemperature != nil || in.LLMMaxTokens != nil ||
-		in.IdleTimeoutSeconds != nil || in.DisableGreeting != nil || in.SystemPrompt != nil
+		in.IdleTimeoutSeconds != nil || in.DisableGreeting != nil || in.SystemPrompt != nil || in.ChatHistory != nil
 }
 
 // inList reports whether id is one of options. Only values the platform
@@ -328,6 +332,13 @@ func (a *API) buildPatch(ctx context.Context, in updateAgentRequest) (linx.Agent
 			return patch, invalidArgument("没有这种记忆模式")
 		}
 		patch.MemModelID = id
+	}
+
+	if v := in.ChatHistory; v != nil {
+		if *v < 0 || *v > 2 {
+			return patch, invalidArgument("聊天保存只能是不记录、仅文本或文本加语音")
+		}
+		patch.ChatHistoryConf = v
 	}
 
 	var extra linx.AgentExtra

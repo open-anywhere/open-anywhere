@@ -86,6 +86,8 @@ export interface AgentSettings {
   disable_greeting?: boolean
   /** The agent's full role description. */
   system_prompt?: string
+  /** 0 no chat log, 1 text only, 2 text and audio. */
+  chat_history?: number
 }
 
 export type AppState = 'building' | 'idle' | 'running' | 'error'
