@@ -195,3 +195,13 @@ Gateway 的内置默认值仍是 `:8090`，与 Render 冲突；示例配置已�
 | 张之阳 [@luoliwoshang](https://github.com/luoliwoshang) | 架构设计、产品设计、商业规划、品牌与视觉、视频剪辑、Render 技术实现、Cast 端技术实现、E2E 与持续集成 |
 | 邓军辉 [@minorcell](https://github.com/minorcell) | 架构设计、Gateway 技术、控制面业务架构、Portal 设计、质量保障 |
 | 韩鲁鹏 [@LUPENGHAN](https://github.com/LUPENGHAN) | 灵矽技术实现、Portal 技术实现、测试环境搭建、架构设计、质量保障 |
+
+## 开发记录
+
+以下是我们开发过程中的现场记录，不是作品 Demo；正式演示见页首的 Demo 视频。
+
+| 记录 | 内容 |
+| --- | --- |
+| [第一次跑通 MVP](https://www.bilibili.com/video/BV1xknD6uEt9) | 5 分 36 秒。语音描述需求、云端生成应用、投到电视上，这条链路第一次跑通的现场。 |
+| [MVP 第二轮测试](https://www.bilibili.com/video/BV1K6nD66Egj) | 9 分 52 秒。连续体验多个当场生成的应用，中途切换过场景。 |
+| [一句话生成春节小游戏](https://www.bilibili.com/video/BV1NknD6uEjt) | 1 分 07 秒。春节主题小游戏从生成到投屏的片段。 |
