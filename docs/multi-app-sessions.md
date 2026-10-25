@@ -1,8 +1,5 @@
 # 多应用并发构建与同会话更新
 
-> 状态：Proposal（供 PR 评审）
-> 版本：v0.2
-> 日期：2026-10-25
 > 关联：[应用管理 MCP](app-management-mcp.md)、[控制面与 AgentAPI 接口](gateway-agentapi-interface.md)、[系统架构](architecture.md)
 > Issue：[＃69 同时多个应用 / agent session](https://github.com/open-anywhere/open-anywhere/issues/69)、[＃68 update-app](https://github.com/open-anywhere/open-anywhere/issues/68)
 > AgentAPI 依据：仓库内 [agentapi-use](../.agents/skills/agentapi-use/SKILL.md) 离线镜像（会话、会话操作、事件、运行时）

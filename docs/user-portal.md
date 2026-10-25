@@ -1,8 +1,5 @@
 # 用户管理端设计
 
-> 状态：Proposal（供评审）
-> 版本：v0.1
-> 日期：2026-10-25
 > 相关文档：[架构设计](architecture.md)、[控制面数据库设计](gateway-database.md)、[现场语音入口](voice-entry.md)、[应用管理 MCP](app-management-mcp.md)
 
 ## 1. 背景与目标

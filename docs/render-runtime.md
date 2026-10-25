@@ -1,6 +1,6 @@
 # 运行 Render 与视频 E2E
 
-Render 的第一期实现位于 `cmd/render`、`internal/render` 和 `pkg/render`。HTTP 字段及生命周期见[控制面与 Render 接口](gateway-render-interface.md)。支持 macOS 和 Linux，应用运行时为 Node.js。
+Render 的实现位于 `cmd/render`、`internal/render` 和 `pkg/render`。HTTP 字段及生命周期见[控制面与 Render 接口](gateway-render-interface.md)。支持 macOS 和 Linux，应用运行时为 Node.js。
 
 ## 依赖与启动
 

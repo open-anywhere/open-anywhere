@@ -1,7 +1,6 @@
 # 控制面与 Render 接口设计
 
-> 状态：一期接口已实现；运行方法及实现边界见 [Render 运行说明](render-runtime.md)
-> 日期：2026-10-24
+> 运行方法与实现边界见 [Render 运行说明](render-runtime.md)。
 
 Render 接收控制面分配的应用 ID、应用包下载地址和运行端口，下载并启动 Node.js 应用，用 Chromium 持续渲染页面，再将画面编码为可通过 HTTP 拉取的实时媒体流。控制面将该流交给独立的 Casting 服务播放。
 

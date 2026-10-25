@@ -1,9 +1,5 @@
 # 应用管理 MCP
 
-> 状态：Proposal（供 PR 评审）
-> 版本：v0.3
-> 日期：2026-10-25
->
 > 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)。
 
 ## 1. 范围

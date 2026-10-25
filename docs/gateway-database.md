@@ -1,7 +1,5 @@
 # 控制面数据库设计
 
-> 状态：按当前实现整理（以代码为准）
-> 日期：2026-10-25
 > 代码位置：`internal/gateway/store/db.go`、`internal/gateway/app/app.go`、`internal/gateway/artifact/store.go`、`internal/gateway/service/`、`cmd/gateway/main.go`
 
 ## 1. 定位与边界
@@ -322,7 +320,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
   3. 递增 `schemaVersion`；
   4. 保留"新库拒绝启动"的保护，避免旧程序写入不认识的 schema。
 
-门户设计会引入 v2：只新增 `portal_users`、`portal_sessions`、`portal_devices`、`portal_settings` 四张表，不修改现有表；实现时递增 `schemaVersion`，并把第 15 节改为“按当前实现整理”。
+门户设计引入 v2：只新增 `portal_users`、`portal_sessions`、`portal_devices`、`portal_settings` 四张表，不修改现有表；实现时同步递增 `schemaVersion`。
 
 ## 11. 容量与性能
 
@@ -383,9 +381,9 @@ sqlite3 open-anywhere.gateway.db \
 sqlite3 open-anywhere.gateway.db ".backup 'gateway-backup.db'"
 ```
 
-## 15. 门户表（v2 设计，尚未实现）
+## 15. 门户表
 
-> 状态：设计稿，代码尚未落地。实现 Phase A 时，本节随建表语句一起改为“按当前实现整理”，并更新第 10 节的版本号。
+以下表结构尚未落地，实现时与建表语句同步更新本节。
 
 门户与 Gateway 共用同一个 SQLite。v2 只新增表，不修改 `apps` 与 `artifacts`：
 
