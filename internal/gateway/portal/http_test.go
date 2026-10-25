@@ -279,6 +279,95 @@ func TestHTTPRetryRestartsARegisteredDevicesVoiceRuntime(t *testing.T) {
 	}
 }
 
+func TestHTTPDisconnectAndReconnectControlTheVoiceRuntime(t *testing.T) {
+	env := newPortalHTTPEnv(t)
+	origin := map[string]string{"Origin": env.server.URL}
+	env.login(t)
+	user, err := env.db.PortalUserByUsername(context.Background(), testPortalUsername)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	registered := store.PortalDevice{
+		ID: "dev_voice", UserID: user.ID, Kind: store.PortalDeviceVirtual,
+		MAC: "AA:BB:CC:DD:EE:01", ClientID: "client-voice",
+		State: store.PortalDeviceRegistered, Step: stepDone, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := env.db.CreatePortalDevice(context.Background(), registered); err != nil {
+		t.Fatal(err)
+	}
+	credential := filepath.Join(env.dataDir, "devices", "dev_voice.json")
+	if err := os.MkdirAll(filepath.Dir(credential), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"mac":"AA:BB:CC:DD:EE:01","clientId":"client-voice","token":"secret","wsUrl":"ws://127.0.0.1:1/"}`
+	if err := os.WriteFile(credential, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	voiceState := func(path string) string {
+		t.Helper()
+		response, payload := env.do(t, http.MethodPost, path, `{}`, origin)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, response.StatusCode, payload)
+		}
+		var out struct {
+			Device DeviceView `json:"device"`
+		}
+		if err := json.Unmarshal(payload, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Device.Voice.State
+	}
+
+	if state := voiceState("/api/portal/devices/dev_voice/reconnect"); state == "offline" {
+		t.Fatal("reconnect did not start the voice runtime")
+	}
+	if state := voiceState("/api/portal/devices/dev_voice/disconnect"); state != "offline" {
+		t.Fatalf("voice state after disconnect = %q", state)
+	}
+	// Disconnecting twice is not an error; the device is simply offline.
+	if state := voiceState("/api/portal/devices/dev_voice/disconnect"); state != "offline" {
+		t.Fatalf("voice state after second disconnect = %q", state)
+	}
+	if state := voiceState("/api/portal/devices/dev_voice/reconnect"); state == "offline" {
+		t.Fatal("reconnect did not bring the device back")
+	}
+	// Reconnecting a healthy device replaces its connection.
+	if state := voiceState("/api/portal/devices/dev_voice/reconnect"); state == "offline" {
+		t.Fatal("reconnecting a connected device left it offline")
+	}
+
+	response, payload := env.do(t, http.MethodPost, "/api/portal/devices/dev_missing/disconnect", `{}`, origin)
+	if response.StatusCode != http.StatusNotFound || errorCode(t, payload) != "NOT_FOUND" {
+		t.Fatalf("unknown device status=%d body=%s", response.StatusCode, payload)
+	}
+
+	// A user has one virtual device, so the same device is moved back to
+	// provisioning to cover the unregistered case.
+	registered.State, registered.Step = store.PortalDeviceProvisioning, "create_agent"
+	if err := env.db.UpdatePortalDevice(context.Background(), registered); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"disconnect", "reconnect"} {
+		response, payload = env.do(t, http.MethodPost, "/api/portal/devices/dev_voice/"+action, `{}`, origin)
+		if response.StatusCode != http.StatusConflict || errorCode(t, payload) != "DEVICE_NOT_READY" {
+			t.Fatalf("%s on an unregistered device status=%d body=%s", action, response.StatusCode, payload)
+		}
+	}
+}
+
+func TestHTTPDisconnectAndReconnectRequireLogin(t *testing.T) {
+	env := newPortalHTTPEnv(t)
+	origin := map[string]string{"Origin": env.server.URL}
+	for _, action := range []string{"disconnect", "reconnect"} {
+		response, payload := env.do(t, http.MethodPost, "/api/portal/devices/dev_voice/"+action, `{}`, origin)
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s without a session status=%d body=%s", action, response.StatusCode, payload)
+		}
+	}
+}
+
 func TestVoiceHandlerOnlyExposesCallControlEndpoints(t *testing.T) {
 	env := newPortalHTTPEnv(t)
 	env.login(t)

@@ -14,6 +14,7 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { ApiError, api } from '../../api'
 import { appsQueryOptions, meQueryOptions, screensQueryOptions, servicesQueryOptions } from '../../api/queries'
 import { EmptyState } from '../../components/EmptyState'
+import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { primaryDevice } from '../../lib/device'
 import { AppRow } from './components/AppRow'
@@ -63,6 +64,8 @@ export function OverviewPage() {
       message.error(error instanceof ApiError ? error.message : '重试失败')
     },
   })
+
+  const { disconnect, reconnect } = useDeviceConnection()
 
   const devices = me.data?.devices ?? []
   const appList = apps.data?.apps ?? []
@@ -201,6 +204,10 @@ export function OverviewPage() {
             retrying={retryDevice.isPending}
             onCreate={() => createDevice.mutate()}
             onRetry={() => device && retryDevice.mutate(device.id)}
+            disconnecting={disconnect.isPending}
+            reconnecting={reconnect.isPending}
+            onDisconnect={() => device && disconnect.mutate(device.id)}
+            onReconnect={() => device && reconnect.mutate(device.id)}
             onCall={() => call(device?.id)}
           />
         </section>

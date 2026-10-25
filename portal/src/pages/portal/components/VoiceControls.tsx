@@ -11,6 +11,8 @@ import { Button, Slider, Space } from 'antd'
 
 interface Props {
   supported: boolean
+  /** The agent's connection to Linx is down, so a call cannot start. */
+  offline?: boolean
   micActive: boolean
   playbackActive: boolean
   starting: boolean
@@ -28,6 +30,7 @@ interface Props {
 
 export function VoiceControls({
   supported,
+  offline,
   micActive,
   playbackActive,
   starting,
@@ -48,16 +51,18 @@ export function VoiceControls({
     return (
       <div className="voice-controls">
         <div className="voice-controls-note">
-          {supported
-            ? '开口就好。浏览器会请求麦克风权限。'
-            : '当前浏览器不支持语音对话，请使用最新版 Chrome 或 Edge 打开。'}
+          {!supported
+            ? '当前浏览器不支持语音对话，请使用最新版 Chrome 或 Edge 打开。'
+            : offline
+              ? '智能体已断开连接，重新连接后才能对话。'
+              : '开口就好。浏览器会请求麦克风权限。'}
         </div>
         <Button
           type="primary"
           size="large"
           icon={<PhoneOutlined />}
           loading={starting}
-          disabled={!supported}
+          disabled={!supported || offline}
           onClick={onStart}
         >
           开始对话

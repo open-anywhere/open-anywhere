@@ -330,7 +330,8 @@ export function useVoiceSession(deviceId: string) {
       sampleRate: voiceSampleRate,
       numberOfChannels: 1,
       bitrate: 24_000,
-      opus: { frameDuration: voiceFrameDurationMs * 1000 },
+      // `application` is in the WebCodecs spec but not yet in lib.dom's typings.
+      opus: { frameDuration: voiceFrameDurationMs * 1000, application: 'voip' } as OpusEncoderConfig,
     })
     micEncoderRef.current = encoder
 

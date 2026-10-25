@@ -211,6 +211,8 @@ sequenceDiagram
 | `POST` | `/api/portal/devices` | 补建虚拟设备（旧账号兼容），返回 `202` |
 | `GET` | `/api/portal/devices/{id}` | 设备开通详情与语音状态 |
 | `POST` | `/api/portal/devices/{id}/retry` | 重试开通；已注册设备则重启语音 |
+| `POST` | `/api/portal/devices/{id}/disconnect` | 断开已注册设备与灵矽的连接；设备保持离线，凭证与注册不变，直到重新连接或网关重启 |
+| `POST` | `/api/portal/devices/{id}/reconnect` | 重建连接，连接正常时也会替换为新连接；设备未注册返回 `DEVICE_NOT_READY` |
 | `GET` | `/api/portal/services` | 当前服务绑定；秘密只返回 `configured` |
 | `PUT` | `/api/portal/services` | 保存 managed/custom、地址与可选 token |
 | `POST` | `/api/portal/services/test` | 测试当前或待保存绑定；返回 Render/Casting 状态与屏幕数 |

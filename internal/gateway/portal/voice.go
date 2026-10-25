@@ -37,7 +37,13 @@ type voiceRuntime struct {
 	app    *voiceentry.App
 	cancel context.CancelFunc
 	err    string
+	// done is closed once app.Run has returned, so a restart can wait for the
+	// old connection to close before opening the next one.
+	done chan struct{}
 }
+
+// voiceStopWait bounds how long Restart waits for the old runtime to exit.
+const voiceStopWait = 5 * time.Second
 
 // NewVoiceManager returns a manager whose runtimes stop when ctx is canceled.
 func NewVoiceManager(ctx context.Context) *VoiceManager {
@@ -50,14 +56,8 @@ func (m *VoiceManager) Start(device store.PortalDevice) error {
 	if device.Kind != store.PortalDeviceVirtual {
 		return nil
 	}
-	if device.State != store.PortalDeviceRegistered {
-		return fmt.Errorf("portal: device %s is not registered", device.ID)
-	}
-	if device.CredentialPath == "" {
-		return fmt.Errorf("portal: device %s has no credential file", device.ID)
-	}
-	if _, err := os.Stat(device.CredentialPath); err != nil {
-		return fmt.Errorf("portal: device credential: %w", err)
+	if err := checkStartable(device); err != nil {
+		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -75,9 +75,10 @@ func (m *VoiceManager) Start(device store.PortalDevice) error {
 		return fmt.Errorf("portal: create voice runtime: %w", err)
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
-	runtime := &voiceRuntime{app: app, cancel: cancel}
+	runtime := &voiceRuntime{app: app, cancel: cancel, done: make(chan struct{})}
 	m.apps[device.ID] = runtime
 	go func() {
+		defer close(runtime.done)
 		err := app.Run(ctx)
 		m.mu.Lock()
 		if err != nil && ctx.Err() == nil {
@@ -89,16 +90,59 @@ func (m *VoiceManager) Start(device store.PortalDevice) error {
 	return nil
 }
 
+// checkStartable reports why a device cannot run a voice runtime.
+func checkStartable(device store.PortalDevice) error {
+	if device.State != store.PortalDeviceRegistered {
+		return fmt.Errorf("portal: device %s is not registered", device.ID)
+	}
+	if device.CredentialPath == "" {
+		return fmt.Errorf("portal: device %s has no credential file", device.ID)
+	}
+	if _, err := os.Stat(device.CredentialPath); err != nil {
+		return fmt.Errorf("portal: device credential: %w", err)
+	}
+	return nil
+}
+
+// Restart drops the device's current connection and opens a new one, even when
+// the old runtime is healthy. The device is checked first so a device that
+// cannot start again is not disconnected for nothing.
+func (m *VoiceManager) Restart(device store.PortalDevice) error {
+	if device.Kind != store.PortalDeviceVirtual {
+		return nil
+	}
+	if err := checkStartable(device); err != nil {
+		return err
+	}
+	if done := m.stop(device.ID); done != nil {
+		select {
+		case <-done:
+		case <-time.After(voiceStopWait):
+			m.logf("portal: voice runtime for %s did not exit within %s; starting anyway", device.ID, voiceStopWait)
+		}
+	}
+	return m.Start(device)
+}
+
 // Stop cancels a device's runtime. Logging out or closing a tab does not call
-// this: the runtime is meant to stay online like real hardware.
+// this: the runtime is meant to stay online like real hardware. The user's
+// explicit disconnect does, and the device stays offline until reconnected.
 func (m *VoiceManager) Stop(deviceID string) {
+	m.stop(deviceID)
+}
+
+// stop cancels a device's runtime and returns a channel that closes once it
+// has exited, or nil when the device had no runtime.
+func (m *VoiceManager) stop(deviceID string) <-chan struct{} {
 	m.mu.Lock()
 	runtime, ok := m.apps[deviceID]
 	delete(m.apps, deviceID)
 	m.mu.Unlock()
-	if ok {
-		runtime.cancel()
+	if !ok {
+		return nil
 	}
+	runtime.cancel()
+	return runtime.done
 }
 
 // StopAll cancels every runtime.

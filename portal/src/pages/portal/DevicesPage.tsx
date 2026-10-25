@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { ApiError, api } from '../../api'
 import { meQueryOptions } from '../../api/queries'
+import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { DevicePanel } from './components/DevicePanel'
 import { PageHeader } from './components/PageHeader'
@@ -41,6 +42,8 @@ export function DevicesPage() {
       message.error(error instanceof ApiError ? error.message : '重试失败')
     },
   })
+
+  const { disconnect, reconnect } = useDeviceConnection()
 
   const devices = me.data?.devices ?? []
 
@@ -82,6 +85,10 @@ export function DevicesPage() {
               retrying={retryDevice.isPending && retryDevice.variables === device.id}
               onCreate={() => createDevice.mutate()}
               onRetry={() => retryDevice.mutate(device.id)}
+              disconnecting={disconnect.isPending && disconnect.variables === device.id}
+              reconnecting={reconnect.isPending && reconnect.variables === device.id}
+              onDisconnect={() => disconnect.mutate(device.id)}
+              onReconnect={() => reconnect.mutate(device.id)}
               onCall={() => navigate({ to: '/portal/call', search: { device: device.id } })}
             />
           </section>

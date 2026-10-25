@@ -1,16 +1,19 @@
 import {
   ArrowLeftOutlined,
   AudioOutlined,
+  DisconnectOutlined,
   PhoneOutlined,
+  ReloadOutlined,
   RobotOutlined,
 } from '@ant-design/icons'
-import { Alert, Button, Result, Spin } from 'antd'
+import { Alert, Button, Popconfirm, Result, Space, Spin } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearch } from '@tanstack/react-router'
 import type { Device } from '../../api'
 import { ApiError } from '../../api'
 import { meQueryOptions } from '../../api/queries'
 import { VoiceTag } from '../../components/Tags'
+import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { useVoiceSession } from '../../hooks/useVoiceSession'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { findDevice } from '../../lib/device'
@@ -107,6 +110,8 @@ export function CallPage() {
 
 function CallSession({ device }: { device: Device }) {
   const session = useVoiceSession(device.id)
+  const { disconnect, reconnect } = useDeviceConnection()
+  const offline = device.voice.state === 'offline'
   const voiceState = session.status?.state ?? device.voice.state
   const connected = session.status?.connected ?? device.voice.connected
   const paused = voiceState === 'idle'
@@ -130,6 +135,35 @@ function CallSession({ device }: { device: Device }) {
           <div className="call-status">
             <VoiceTag state={voiceState} connected={connected} />
             <span className="muted-text">{connected ? '已连接' : '未连接'}</span>
+            <Space size="small">
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={reconnect.isPending}
+                onClick={() => {
+                  session.stop()
+                  reconnect.mutate(device.id)
+                }}
+              >
+                重新连接
+              </Button>
+              {!offline ? (
+                <Popconfirm
+                  title="断开与灵矽的连接？"
+                  description="正在进行的对话会中断，之后可以随时重新连接。"
+                  okText="断开"
+                  cancelText="取消"
+                  onConfirm={() => {
+                    session.stop()
+                    disconnect.mutate(device.id)
+                  }}
+                >
+                  <Button size="small" icon={<DisconnectOutlined />} loading={disconnect.isPending}>
+                    断开连接
+                  </Button>
+                </Popconfirm>
+              ) : null}
+            </Space>
           </div>
         </header>
 
@@ -142,7 +176,16 @@ function CallSession({ device }: { device: Device }) {
           />
         ) : null}
 
-        {session.statusError ? (
+        {offline ? (
+          <Alert
+            type="info"
+            showIcon
+            message="智能体已断开连接"
+            description="需要时点右上角的“重新连接”，之后就能继续对话。"
+          />
+        ) : null}
+
+        {session.statusError && !offline ? (
           <Alert
             type="warning"
             showIcon
@@ -168,6 +211,7 @@ function CallSession({ device }: { device: Device }) {
 
         <VoiceControls
           supported={session.supported}
+          offline={offline}
           micActive={session.micActive}
           playbackActive={session.playbackActive}
           starting={session.starting}

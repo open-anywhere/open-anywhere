@@ -373,6 +373,10 @@ export const api = {
   getDevice: (id: string) => request<{ device: Device }>(`/devices/${encodeURIComponent(id)}`),
   retryDevice: (id: string) =>
     postJSON<{ device: Device }>(`/devices/${encodeURIComponent(id)}/retry`),
+  disconnectDevice: (id: string) =>
+    postJSON<{ device: Device }>(`/devices/${encodeURIComponent(id)}/disconnect`),
+  reconnectDevice: (id: string) =>
+    postJSON<{ device: Device }>(`/devices/${encodeURIComponent(id)}/reconnect`),
   services: () => request<ServiceBindingState>('/services'),
   updateServices: (input: ServiceBindingInput) =>
     request<ServiceBindingState>('/services', { method: 'PUT', body: JSON.stringify(input) }),
