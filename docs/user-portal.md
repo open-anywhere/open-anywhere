@@ -126,7 +126,7 @@ flowchart LR
 
 ### 4.1 新增模块
 
-| 模块 | 位置（计划） | 职责 |
+| 模块 | 位置 | 职责 |
 | --- | --- | --- |
 | 门户 HTTP 与页面 | `internal/gateway/portal` | 路由、鉴权中间件、单页 HTML、JSON API |
 | 账号与会话 | `internal/gateway/portal/auth.go` | PBKDF2 密码、Cookie 会话、登录限流 |

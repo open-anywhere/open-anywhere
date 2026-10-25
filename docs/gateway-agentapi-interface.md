@@ -90,7 +90,7 @@ skills/app-builder/
     └── validate-artifact.sh     # 归档结构和启动契约的静态检查
 ```
 
-`references/app-template/` 是可直接复制的最小 Node.js 应用，当前实现了一个猜电影示例：玩家加入、根据线索提交电影名、答对得分并进入下一轮。构建时由 `scripts/init-template.sh` 一条命令复制模板，由 `scripts/self-test.sh` 一条命令完成静态检查、启动验证、业务操作抽查、打包和归档校验，避免智能体逐个读文件搬运或分步手工验证。`SKILL.md` 要求先复制模板再按需求修改，避免智能体从零搭建；实际业务替换模板中的电影玩法和接口，但保留产物与身份约定。模板放在 `references/` 而不是 `assets/`：`assets/` 容易被当作仅供展示的素材，智能体不保证读取和使用。模板内容跟随 [app-artifact.md](app-artifact.md) 更新。
+`references/app-template/` 是可直接复制的最小 Node.js 应用，内置一个猜电影示例：玩家加入、根据线索提交电影名、答对得分并进入下一轮。构建时由 `scripts/init-template.sh` 一条命令复制模板，由 `scripts/self-test.sh` 一条命令完成静态检查、启动验证、业务操作抽查、打包和归档校验，避免智能体逐个读文件搬运或分步手工验证。`SKILL.md` 要求先复制模板再按需求修改，避免智能体从零搭建；实际业务替换模板中的电影玩法和接口，但保留产物与身份约定。模板放在 `references/` 而不是 `assets/`：`assets/` 容易被当作仅供展示的素材，智能体不保证读取和使用。模板内容跟随 [app-artifact.md](app-artifact.md) 更新。
 
 上传技能：
 
@@ -660,10 +660,3 @@ MVP 不做自动修复轮次。构建失败后由用户重新发起 `create-app`
 - 会话 `metadata` 只包含 `app_id`；不放设备标识、声纹或用户隐私数据。
 - 构建产物视为不可信输入：控制面在交给 Render 前完成归档结构和启动契约校验；Render 会再次校验摘要和归档。
 - 成功的构建会话保持 `idle`；失败、超时或设备会话清理时归档，事件和文件保留用于审计。按保留策略删除会话或文件对象，不影响已注册应用。
-
-## 8. 验证状态
-
-已按 AgentAPI 文档核对：智能体、技能和环境资源，会话创建，`user.message`，SSE 事件类型与停止原因，Files API 的产物收集与 100 MiB 限制，会话归档。
-
-尚未在真实 AgentAPI 上验证：`claudecode` 加载自定义技能后的实际行为、构建期依赖安装与整体耗时、产物文件在 `idle` 后的出现延迟、SSE 断线回放与去重、60 分钟构建超时是否适合实际模型速度。
-

@@ -231,7 +231,7 @@ sequenceDiagram
 5. `building` 时 `update-app` 返回 `APP_BUILDING`。
 6. 会话已归档或 `terminated`（含 `claudecode` 沙箱丢失）后 `update-app` 返回 `SESSION_UNAVAILABLE`，旧产物若存在仍可 `start-app`。
 7. 更新失败且曾有成功产物时，应用回到可 `start-app` 的 `idle`，仍是旧版。
-8. `idle` 后隔一段时间再 `update-app`：若会话仍为 `idle`，应能恢复沙箱并完成修订（依赖 AgentAPI 暂停/恢复；实现阶段用真实环境验证）。
+8. `idle` 后隔一段时间再 `update-app`：若会话仍为 `idle`，应能恢复沙箱并完成修订（依赖 AgentAPI 暂停/恢复）。
 
 ## 10. 文档与实现落点
 
@@ -244,15 +244,4 @@ sequenceDiagram
 | `internal/gateway/build` | 在已有 session 上提交一轮并 watch；保留旧产物直到新校验成功 |
 | `internal/gateway/mcp` | 注册 `update-app` 与工具描述 |
 
-实现前以本文与同步修订后的 MCP / AgentAPI 文档为准；产品话术见 [product.md](product.md) 中「需要重新构建的能力」分支。
-
-## 11. 验证状态
-
-| 项 | 状态 |
-| --- | --- |
-| P1 并发 `create-app`（去掉 `FindBuilding`） | 单测覆盖：同 owner 两次 create 得到两个 `app_id` |
-| P2 Builder `Continue` + 保留旧产物失败回退 | 单测覆盖：`Continue` 成功更新通知「APP 更新完成」；busy/terminated；`fail` 保留旧包回 `idle` |
-| P3 MCP `update-app` + Service 状态机 | 单测覆盖：idle/building/running/error/无会话/rollback |
-| 验收场景 1–7 | 由上述单测覆盖 |
-| 验收场景 8（长 idle 后真实沙箱恢复） | **未在真实 AgentAPI 上冒烟**；部署后需手工验证 |
-| SQLite schema | 未改；绑定仍为 `apps.data.SessionID` |
+以本文与同步修订后的 MCP / AgentAPI 文档为准；产品话术见 [product.md](product.md) 中「需要重新构建的能力」分支。
