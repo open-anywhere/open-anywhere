@@ -99,6 +99,11 @@ func serve(ctx context.Context, cfg config.Config) error {
 		if err := seedPlatformSettings(ctx, platform, cfg); err != nil {
 			return err
 		}
+		// The MCP bearer token lives in the database: generated on first start,
+		// or adopted once from a legacy mcp_token in gateway.yaml.
+		if err := platform.EnsureMCPToken(ctx, cfg.MCPToken); err != nil {
+			return err
+		}
 		// Fail at startup, not on the first request, when stored ciphertext
 		// cannot be opened with the configured master key. Silently generating
 		// a new key would make the administrator's credentials unusable.
@@ -225,14 +230,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 			Password:          cfg.PortalPassword,
 			SessionTTL:        cfg.PortalSessionTTL,
 			CookieSecure:      cfg.PortalCookieSecure,
-			LinxPublicMCPURL:  cfg.LinxPublicMCPURL,
-			LinxMCPName:       cfg.LinxMCPName,
-			LinxAssistantName: cfg.LinxAssistantName,
-			LinxLLMModelID:    cfg.LinxLLMModelID,
-			LinxMemModelID:    cfg.LinxMemModelID,
-			LinxIntentModelID: cfg.LinxIntentModelID,
 			SystemPrompt:      cfg.LinxSystemPromptFile,
-			MCPToken:          cfg.MCPToken,
 			ProvisionTimeout:  cfg.LinxProvisionTimeout,
 			TokenPollInterval: cfg.LinxTokenPollInterval,
 			TokenPollAttempts: cfg.LinxTokenPollAttempts,
@@ -249,7 +247,8 @@ func serve(ctx context.Context, cfg config.Config) error {
 		mux.Handle("/api/admin/", portalService.API.AdminHandler())
 		mux.Handle("/", portalService.API.WebHandler())
 		mux.Handle("/voice/", portalService.API.VoiceHandler())
-		if strings.HasSuffix(strings.TrimRight(cfg.LinxPublicMCPURL, "/"), "/sse") {
+		if snapshot, err := platform.Snapshot(ctx); err == nil &&
+			strings.HasSuffix(strings.TrimRight(snapshot.Linx.PublicMCPURL, "/"), "/sse") {
 			log.Printf("warning: linx.public_mcp_url ends with /sse; new Linx MCP servers use Streamable HTTP, configure .../mcp")
 		}
 		log.Printf("portal enabled at /portal")
@@ -257,7 +256,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           mcpAuth(cfg.MCPToken, mux),
+		Handler:           mcpAuthFunc(mcpTokenSource(cfg, platform), mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
@@ -293,6 +292,14 @@ func seedPlatformSettings(ctx context.Context, provider *settings.Provider, cfg 
 		{Key: settings.KeyLinxAPIKey, Value: cfg.LinxAPIKey},
 		{Key: settings.KeyDefaultRenderURL, Value: cfg.RenderURL},
 		{Key: settings.KeyDefaultCastingURL, Value: cfg.CastingURL},
+		// Agent template and MCP address are managed in the admin page; these
+		// legacy gateway.yaml values only seed a database that has none yet.
+		{Key: settings.KeyLinxPublicMCPURL, Value: cfg.LinxPublicMCPURL},
+		{Key: settings.KeyLinxMCPName, Value: cfg.LinxMCPName},
+		{Key: settings.KeyLinxAssistantName, Value: cfg.LinxAssistantName},
+		{Key: settings.KeyLinxLLMModelID, Value: cfg.LinxLLMModelID},
+		{Key: settings.KeyLinxMemModelID, Value: cfg.LinxMemModelID},
+		{Key: settings.KeyLinxIntentModelID, Value: cfg.LinxIntentModelID},
 	}
 	if cfg.AgentVersion > 0 {
 		seeds = append(seeds, settings.Seed{Key: settings.KeyAgentAPIAgentVersion, Value: strconv.Itoa(cfg.AgentVersion)})
@@ -322,15 +329,35 @@ func healthHandler(database *store.DB) http.HandlerFunc {
 
 // mcpAuth requires the bearer token on MCP endpoints when one is configured.
 func mcpAuth(token string, next http.Handler) http.Handler {
+	return mcpAuthFunc(func(context.Context) (string, error) { return token, nil }, next)
+}
+
+// mcpAuthFunc reads the token on every MCP request, so a token rotated in the
+// admin page applies immediately. A failed lookup denies the request.
+func mcpAuthFunc(token func(context.Context) (string, error), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/mcp" || r.URL.Path == "/mcp/message" || r.URL.Path == "/sse" {
-			if token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+			want, err := token(r.Context())
+			if err != nil {
+				http.Error(w, "Unauthorized", 401)
+				return
+			}
+			if want != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+want)) != 1 {
 				http.Error(w, "Unauthorized", 401)
 				return
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// mcpTokenSource is the database token in portal mode and the configured one
+// otherwise.
+func mcpTokenSource(cfg config.Config, platform *settings.Provider) func(context.Context) (string, error) {
+	if cfg.PortalEnabled && platform != nil {
+		return platform.MCPToken
+	}
+	return func(context.Context) (string, error) { return cfg.MCPToken, nil }
 }
 
 // awaitShutdown waits for cancellation or a serve failure and drains cleanly.

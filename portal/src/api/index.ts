@@ -197,6 +197,13 @@ export interface PlatformSettings {
     api_base: string
     ota_url: string
     api_key: SecretState
+    public_mcp_url: string
+    mcp_name: string
+    mcp_token: SecretState
+    assistant_name: string
+    llm_model_id: string
+    mem_model_id: string
+    intent_model_id: string
   }
   services: {
     render_url: string
@@ -225,6 +232,13 @@ export interface PlatformSettingsPatch {
     api_base?: string
     ota_url?: string
     api_key?: SecretPatch
+    public_mcp_url?: string
+    mcp_name?: string
+    assistant_name?: string
+    llm_model_id?: string
+    mem_model_id?: string
+    intent_model_id?: string
+    rotate_mcp_token?: boolean
   }
   services?: {
     render_url?: string
@@ -454,7 +468,7 @@ export const adminApi = {
   },
   settings: () => adminRequest<{ settings: PlatformSettings }>('/settings'),
   updateSettings: (patch: PlatformSettingsPatch) =>
-    adminRequest<{ settings: PlatformSettings }>('/settings', {
+    adminRequest<{ settings: PlatformSettings; warning?: string }>('/settings', {
       method: 'PUT',
       body: JSON.stringify(patch),
     }),

@@ -285,7 +285,7 @@ POST /voice/{device_id}/abort
 | `INVALID_CONTENT_TYPE` | 415 | 写请求不是 JSON |
 | `INTERNAL` | 500 | 未分类内部错误，响应不包含内部细节 |
 
-MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MISSING_IDENTITY` 400、`IDENTITY_MISMATCH` 403、`OWNER_NOT_FOUND` / `IDENTITY_NOT_REGISTERED` / `USER_DISABLED` 403。Portal 模式下 `mcp_token` 必填；为空时 Gateway 拒绝启动。
+MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MISSING_IDENTITY` 400、`IDENTITY_MISMATCH` 403、`OWNER_NOT_FOUND` / `IDENTITY_NOT_REGISTERED` / `USER_DISABLED` 403。Portal 模式下 MCP Token 始终存在：首次启动自动生成，加密保存在平台设置里。
 
 ## 7. 数据模型与迁移摘要
 
@@ -311,12 +311,12 @@ MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MIS
 
 - **RBAC**：`/api/admin/*` 全部经过 `withAdmin`；用户端接口不接受 `user_id` / `role` 参数；管理员操作只按目标 ID。
 - **归属**：设备、应用、屏幕、语音都按登录用户或 MCP `(DeviceID, AgentID)` 校验；跨用户访问一律 404，不暴露资源是否存在。
-- **MCP 身份**：Portal 模式要求 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id` 三头齐全，每次 POST 都与 SSE 会话精确一致，并查库确认设备存在、已注册、用户 active。`mcp_token` 在 Portal 模式必填。
+- **MCP 身份**：Portal 模式要求 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id` 三头齐全，每次 POST 都与 SSE 会话精确一致，并查库确认设备存在、已注册、用户 active。MCP Token 在 Portal 模式下由平台生成。
 - **SSRF**：用户填写的 Render/Casting 地址、平台默认地址、连接测试、`SendRequest` 与 `AppBaseURL` 都走同一套 netguard 策略；DNS 与重定向在 dial 时复核，禁用环境代理。`services.allow_private_targets` 仅用于本地调试。
 - **密钥脱敏**：平台 API Key、用户服务 token、设备 token、`password_hash`、会话 hash、`credential_path`、`target_id`、`projection_session_id` 不出现在 API 响应、页面或日志中；秘密字段只返回是否已配置（平台设置另带更新时间/修改人），不回显明文。
 - **管理端 DTO 边界**：管理端用户/应用响应与页面不包含屏幕字段、用户服务绑定地址/token、prompt 正文或任何密钥；管理端没有屏幕接口。
 - **请求防护**：沿用同源检查 + JSON Content-Type；SQL 全部参数绑定；登录与注册限流；停用用户立即失效会话并拒绝 MCP。
-- **已知取舍**：MCP 仍使用全局 `mcp_token`；拿到 token 的人若能猜到已知 `(MAC, AgentID)` 仍可能冒充设备，当前没有 per-agent MCP 凭证。
+- **已知取舍**：MCP 仍使用全局 MCP Token；拿到 token 的人若能猜到已知 `(MAC, AgentID)` 仍可能冒充设备，当前没有 per-agent MCP 凭证。
 
 ## 9. 非目标
 
@@ -344,16 +344,14 @@ portal:
 services:
   allow_private_targets: false   # 仅本地调试设为 true
 
-# Portal 模式下 mcp_token 必填；Linx api_key 可留空，由管理后台配置
-mcp_token: "<随机 token>"
-linx:
-  public_mcp_url: "https://<gateway 公网地址>/mcp"
+# MCP Token、Linx、AgentAPI、默认 Render/Casting 都在管理后台 /admin/settings 配置，
+# 配置文件里不需要再写（旧配置里已有的值只在数据库为空时写入一次）。
 ```
 
 - 先构建前端：`cd portal && pnpm install && pnpm build`；未构建时 `/` 返回 503。
 - 单文件部署：`make build-gateway-embed`（等价于 `go build -tags portalembed`）。`pnpm build` 会把 `portal/dist` 同步到 `internal/gateway/portal/webdist` 供 `go:embed` 使用，运行时把 `portal.web_embedded` 设为 `true`。未带 tag 的二进制配置该项会启动失败，避免误以为前端已内嵌。
-- 灵矽云必须能访问 `linx.public_mcp_url`；局域网地址不可达。新建 MCP 使用 Streamable HTTP，地址应以 `/mcp` 结尾；`/sse` 是旧版 Legacy SSE 端点，仅已有服务继续使用。
+- 灵矽云必须能访问管理后台里填写的“公网 MCP 地址”；局域网地址不可达。新建 MCP 使用 Streamable HTTP，地址应以 `/mcp` 结尾；`/sse` 是旧版 Legacy SSE 端点，仅已有服务继续使用。
 - 浏览器麦克风要求 HTTPS 或 `localhost`。
 - 单进程、单 SQLite；一个数据库只对应一个 Gateway。
 - 备份时必须同时保留数据库与 `secret.key`（或 `GATEWAY_SECRET_KEY`）；WAL 模式下数据库用 SQLite `.backup`，不能只拷贝主文件。
-- 平台 AgentAPI/Linx/默认 Render/Casting 可以在管理后台配置；`gateway.yaml` 中的对应值只在设置尚无值时 seed，已有设置不会被覆盖。
+- 平台 AgentAPI/Linx（公网 MCP 地址、MCP 名称、助手名称、模型）/默认 Render/Casting 都在管理后台配置，字段下方说明了数据来源；MCP Token 首次启动自动生成，可在后台重新生成并同步到灵矽 MCP。`gateway.yaml` 中的对应值只在设置尚无值时 seed 一次，已有设置不会被覆盖，可以从文件里删除。

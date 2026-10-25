@@ -624,7 +624,19 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 		return
 	}
 	a.logf("admin: %s updated platform settings", actor.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"settings": masked})
+	response := map[string]any{"settings": masked}
+	// A rotated token must also reach the MCP instance Linx already holds,
+	// otherwise Linx keeps calling the gateway with the old one.
+	if patch.Linx != nil && patch.Linx.RotateMCPToken && a.provision != nil {
+		syncCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		syncErr := a.provision.SyncMCP(syncCtx)
+		cancel()
+		if syncErr != nil {
+			a.logf("admin: sync rotated MCP token to Linx: %v", syncErr)
+			response["warning"] = "新的 MCP Token 已保存，但同步到灵矽失败，请检查 Linx 配置后重新生成"
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (a *API) adminTestSettings(w http.ResponseWriter, r *http.Request, actor store.PortalUser) {

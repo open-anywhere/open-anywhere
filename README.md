@@ -103,9 +103,9 @@ pnpm install
 pnpm build
 ```
 
-在 `gateway.yaml` 中启用 `portal.enabled`，设置管理员引导账号 `portal.username` / `portal.password`，并填写灵矽云可访问的 `linx.public_mcp_url` 与 `mcp_token`（Portal 模式下必填）。启动 Gateway 后打开 <http://127.0.0.1:8090/> 查看 Home，登录后：
+在 `gateway.yaml` 中启用 `portal.enabled`，设置管理员引导账号 `portal.username` / `portal.password`，启动 Gateway 后打开 <http://127.0.0.1:8090/> 查看 Home，登录后：
 
-- 管理员（配置的引导账号）默认进入 `/admin`，配置平台级 AgentAPI / Linx 密钥、默认 Render/Casting 与注册开关，并管理用户、智能体与全局应用；也可以进入 `/portal`。
+- 管理员（配置的引导账号）默认进入 `/admin`，在平台设置里配置 AgentAPI、Linx（含灵矽云可访问的公网 MCP 地址与智能体模板）、默认 Render/Casting 与注册开关，并管理用户、智能体与全局应用；也可以进入 `/portal`。
 - 普通用户在 `/register` 自助注册（需管理员打开注册开关），系统自动创建一台虚拟智能体和对应 Linx 设备；登录后进入 `/portal`，可查看应用、屏幕、活动，绑定 Render/Casting 服务并发起浏览器语音通话。
 
 `linx.api_key` 与 AgentAPI 配置（Base URL、API Key、Agent ID、Environment ID）可以留空，由管理员在后台配置；`gateway.yaml` 中的值只在对应设置尚无值时 seed，已有设置不会被覆盖。平台 API Key 和用户服务 token 使用 AES-256-GCM 加密后入库，主密钥来自环境变量 `GATEWAY_SECRET_KEY`（base64 32 字节），否则自动生成 `portal-data/secret.key`（`0600`）。**丢失 `secret.key` / `GATEWAY_SECRET_KEY` 会导致已有密钥和 token 无法解密，必须与数据库一起备份。** 默认拒绝用户填写内网地址；本地调试需要填写 `127.0.0.1` 或局域网地址时，设置 `services.allow_private_targets: true`，仅限本地调试使用。设计、接口与安全边界见 [多租户用户 Portal 设计](docs/user-portal.md)。浏览器麦克风需要 HTTPS 或 `localhost`；局域网 IP 直接访问时只能接收字幕。

@@ -5,6 +5,8 @@ package settings
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -28,6 +30,14 @@ const (
 	KeyLinxOTAURL  = "linx.ota_url"
 	KeyLinxAPIKey  = "linx.api_key"
 
+	KeyLinxPublicMCPURL  = "linx.public_mcp_url"
+	KeyLinxMCPName       = "linx.mcp_name"
+	KeyLinxMCPToken      = "linx.mcp_token"
+	KeyLinxAssistantName = "linx.assistant_name"
+	KeyLinxLLMModelID    = "linx.llm_model_id"
+	KeyLinxMemModelID    = "linx.mem_model_id"
+	KeyLinxIntentModelID = "linx.intent_model_id"
+
 	KeyDefaultRenderURL    = "services.default_render_url"
 	KeyDefaultRenderToken  = "services.default_render_token"
 	KeyDefaultCastingURL   = "services.default_casting_url"
@@ -40,6 +50,7 @@ const (
 var secretKeys = map[string]bool{
 	KeyAgentAPIKey:         true,
 	KeyLinxAPIKey:          true,
+	KeyLinxMCPToken:        true,
 	KeyDefaultRenderToken:  true,
 	KeyDefaultCastingToken: true,
 }
@@ -65,7 +76,44 @@ type Linx struct {
 	APIBase string
 	OTAURL  string
 	APIKey  string
+
+	// PublicMCPURL is the address Linx cloud uses to reach the gateway MCP.
+	PublicMCPURL string
+	MCPName      string
+	// MCPToken is the bearer token Linx presents to the gateway MCP.
+	MCPToken      string
+	AssistantName string
+	LLMModelID    string
+	MemModelID    string
+	IntentModelID string
 }
+
+// Defaults for agent creation parameters an administrator has not set.
+const (
+	DefaultLinxMCPName       = "Open Anywhere"
+	DefaultLinxAssistantName = "小灵"
+	DefaultLinxLLMModelID    = "f3626c105383d71654a57f2bb8a973f3"
+	DefaultLinxMemModelID    = "Memory_nomem"
+	DefaultLinxIntentModelID = "Intent_function_call"
+)
+
+// withDefaults fills agent-creation parameters that were never configured.
+func (l Linx) withDefaults() Linx {
+	fill := func(target *string, value string) {
+		if *target == "" {
+			*target = value
+		}
+	}
+	fill(&l.MCPName, DefaultLinxMCPName)
+	fill(&l.AssistantName, DefaultLinxAssistantName)
+	fill(&l.LLMModelID, DefaultLinxLLMModelID)
+	fill(&l.MemModelID, DefaultLinxMemModelID)
+	fill(&l.IntentModelID, DefaultLinxIntentModelID)
+	return l
+}
+
+// MCPReady reports whether provisioning can register the gateway MCP with Linx.
+func (l Linx) MCPReady() bool { return l.PublicMCPURL != "" && l.MCPToken != "" }
 
 // Ready reports whether provisioning can talk to Linx.
 func (l Linx) Ready() bool { return l.APIBase != "" && l.APIKey != "" }
@@ -114,6 +162,14 @@ type LinxMasked struct {
 	APIBase string      `json:"api_base"`
 	OTAURL  string      `json:"ota_url"`
 	APIKey  SecretState `json:"api_key"`
+
+	PublicMCPURL  string      `json:"public_mcp_url"`
+	MCPName       string      `json:"mcp_name"`
+	MCPToken      SecretState `json:"mcp_token"`
+	AssistantName string      `json:"assistant_name"`
+	LLMModelID    string      `json:"llm_model_id"`
+	MemModelID    string      `json:"mem_model_id"`
+	IntentModelID string      `json:"intent_model_id"`
 }
 
 // ServicesMasked is the admin-visible default service configuration.
@@ -244,6 +300,13 @@ func (p *Provider) Snapshot(ctx context.Context) (Snapshot, error) {
 		{KeyLinxAPIBase, &snapshot.Linx.APIBase},
 		{KeyLinxOTAURL, &snapshot.Linx.OTAURL},
 		{KeyLinxAPIKey, &snapshot.Linx.APIKey},
+		{KeyLinxPublicMCPURL, &snapshot.Linx.PublicMCPURL},
+		{KeyLinxMCPName, &snapshot.Linx.MCPName},
+		{KeyLinxMCPToken, &snapshot.Linx.MCPToken},
+		{KeyLinxAssistantName, &snapshot.Linx.AssistantName},
+		{KeyLinxLLMModelID, &snapshot.Linx.LLMModelID},
+		{KeyLinxMemModelID, &snapshot.Linx.MemModelID},
+		{KeyLinxIntentModelID, &snapshot.Linx.IntentModelID},
 		{KeyDefaultRenderURL, &snapshot.Services.RenderURL},
 		{KeyDefaultRenderToken, &snapshot.Services.RenderToken},
 		{KeyDefaultCastingURL, &snapshot.Services.CastingURL},
@@ -255,6 +318,7 @@ func (p *Provider) Snapshot(ctx context.Context) (Snapshot, error) {
 		}
 		*item.target = value
 	}
+	snapshot.Linx = snapshot.Linx.withDefaults()
 	version, err := read(KeyAgentAPIAgentVersion)
 	if err != nil {
 		return Snapshot{}, err
@@ -335,6 +399,14 @@ func (p *Provider) Masked(ctx context.Context) (Masked, error) {
 			APIBase: plain(KeyLinxAPIBase),
 			OTAURL:  plain(KeyLinxOTAURL),
 			APIKey:  state(KeyLinxAPIKey),
+
+			PublicMCPURL:  plain(KeyLinxPublicMCPURL),
+			MCPName:       snapshot.Linx.MCPName,
+			MCPToken:      state(KeyLinxMCPToken),
+			AssistantName: snapshot.Linx.AssistantName,
+			LLMModelID:    snapshot.Linx.LLMModelID,
+			MemModelID:    snapshot.Linx.MemModelID,
+			IntentModelID: snapshot.Linx.IntentModelID,
 		},
 		Services: ServicesMasked{
 			RenderURL:    plain(KeyDefaultRenderURL),
@@ -372,6 +444,15 @@ type LinxPatch struct {
 	APIBase *string      `json:"api_base"`
 	OTAURL  *string      `json:"ota_url"`
 	APIKey  *SecretValue `json:"api_key"`
+
+	PublicMCPURL  *string `json:"public_mcp_url"`
+	MCPName       *string `json:"mcp_name"`
+	AssistantName *string `json:"assistant_name"`
+	LLMModelID    *string `json:"llm_model_id"`
+	MemModelID    *string `json:"mem_model_id"`
+	IntentModelID *string `json:"intent_model_id"`
+	// RotateMCPToken replaces the MCP bearer token with a new random value.
+	RotateMCPToken bool `json:"rotate_mcp_token"`
 }
 
 // ServicesPatch updates the platform default services.
@@ -426,6 +507,13 @@ func linxCredentialsChanged(current Linx, patch *LinxPatch) bool {
 		return false
 	}
 	if patch.APIBase != nil && strings.TrimSpace(*patch.APIBase) != current.APIBase {
+		return true
+	}
+	// The cached server and instance describe one address and one name.
+	if patch.PublicMCPURL != nil && strings.TrimSpace(*patch.PublicMCPURL) != current.PublicMCPURL {
+		return true
+	}
+	if patch.MCPName != nil && strings.TrimSpace(*patch.MCPName) != current.MCPName {
 		return true
 	}
 	return secretChanged(current.APIKey, patch.APIKey)
@@ -524,6 +612,24 @@ func (p *Provider) Preview(ctx context.Context, patch Patch) (Snapshot, error) {
 			return Snapshot{}, err
 		}
 		secretValue(group.APIKey, &snapshot.Linx.APIKey)
+		if err := urlValue(KeyLinxPublicMCPURL, group.PublicMCPURL, &snapshot.Linx.PublicMCPURL); err != nil {
+			return Snapshot{}, err
+		}
+		for _, field := range []struct {
+			value  *string
+			target *string
+		}{
+			{group.MCPName, &snapshot.Linx.MCPName},
+			{group.AssistantName, &snapshot.Linx.AssistantName},
+			{group.LLMModelID, &snapshot.Linx.LLMModelID},
+			{group.MemModelID, &snapshot.Linx.MemModelID},
+			{group.IntentModelID, &snapshot.Linx.IntentModelID},
+		} {
+			if field.value != nil {
+				*field.target = strings.TrimSpace(*field.value)
+			}
+		}
+		snapshot.Linx = snapshot.Linx.withDefaults()
 	}
 	if group := patch.Services; group != nil {
 		if err := urlValue(KeyDefaultRenderURL, group.RenderURL, &snapshot.Services.RenderURL); err != nil {
@@ -626,6 +732,34 @@ func (p *Provider) Update(ctx context.Context, patch Patch, actorID string) erro
 		if err := putSecret(KeyLinxAPIKey, group.APIKey); err != nil {
 			return err
 		}
+		if group.PublicMCPURL != nil {
+			if err := putURL(KeyLinxPublicMCPURL, *group.PublicMCPURL); err != nil {
+				return err
+			}
+		}
+		for _, field := range []struct {
+			key   string
+			value *string
+		}{
+			{KeyLinxMCPName, group.MCPName},
+			{KeyLinxAssistantName, group.AssistantName},
+			{KeyLinxLLMModelID, group.LLMModelID},
+			{KeyLinxMemModelID, group.MemModelID},
+			{KeyLinxIntentModelID, group.IntentModelID},
+		} {
+			if field.value != nil {
+				put(field.key, strings.TrimSpace(*field.value))
+			}
+		}
+		if group.RotateMCPToken {
+			token, err := GenerateMCPToken()
+			if err != nil {
+				return err
+			}
+			if err := putSecret(KeyLinxMCPToken, &SecretValue{Value: token}); err != nil {
+				return err
+			}
+		}
 	}
 	if patch.Services != nil {
 		group := patch.Services
@@ -663,4 +797,58 @@ func (p *Provider) Update(ctx context.Context, patch Patch, actorID string) erro
 		}
 	}
 	return nil
+}
+
+// GenerateMCPToken returns a new random bearer token for the gateway MCP.
+func GenerateMCPToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("settings: generate MCP token: %w", err)
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+// EnsureMCPToken makes sure a gateway MCP token exists. The first start uses
+// bootstrap (a legacy gateway.yaml value) when given, otherwise a random one.
+// A stored value is never overwritten here; rotate it from the admin page.
+func (p *Provider) EnsureMCPToken(ctx context.Context, bootstrap string) error {
+	rows, err := p.db.PlatformSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if row, ok := rows[KeyLinxMCPToken]; ok && row.Value != "" {
+		return nil
+	}
+	token := strings.TrimSpace(bootstrap)
+	if token == "" {
+		if token, err = GenerateMCPToken(); err != nil {
+			return err
+		}
+	}
+	if p.box == nil {
+		return errors.New("settings: cannot store the MCP token without a master key")
+	}
+	encrypted, err := p.box.Encrypt(token, secret.PlatformAAD(KeyLinxMCPToken))
+	if err != nil {
+		return err
+	}
+	return p.db.PutPlatformSettings(ctx, []store.PlatformSetting{{
+		Key: KeyLinxMCPToken, Value: encrypted, IsSecret: true, UpdatedAt: p.now(), UpdatedBy: "bootstrap",
+	}})
+}
+
+// MCPToken returns the current gateway MCP token, or "" when none is stored.
+func (p *Provider) MCPToken(ctx context.Context) (string, error) {
+	rows, err := p.db.PlatformSettings(ctx)
+	if err != nil {
+		return "", err
+	}
+	row, ok := rows[KeyLinxMCPToken]
+	if !ok || row.Value == "" {
+		return "", nil
+	}
+	if p.box == nil {
+		return "", fmt.Errorf("settings: %s is encrypted but no master key is available", KeyLinxMCPToken)
+	}
+	return p.box.Decrypt(row.Value, secret.PlatformAAD(KeyLinxMCPToken))
 }

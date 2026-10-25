@@ -14,7 +14,7 @@ import {
   Tag,
 } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   ApiError,
   adminApi,
@@ -38,6 +38,13 @@ interface SettingsFormValues {
   linx_ota_url?: string
   linx_api_key?: string
   linx_clear_key?: boolean
+  linx_public_mcp_url?: string
+  linx_mcp_name?: string
+  linx_assistant_name?: string
+  linx_llm_model_id?: string
+  linx_mem_model_id?: string
+  linx_intent_model_id?: string
+  linx_rotate_mcp_token?: boolean
   render_url?: string
   casting_url?: string
   render_token?: string
@@ -114,6 +121,23 @@ function toPatch(values: SettingsFormValues, baseline: PlatformSettings): Platfo
     linx.api_key = linxKey
     linxChanged = true
   }
+  for (const [field, formValue, current] of [
+    ['public_mcp_url', values.linx_public_mcp_url, baseline.linx.public_mcp_url],
+    ['mcp_name', values.linx_mcp_name, baseline.linx.mcp_name],
+    ['assistant_name', values.linx_assistant_name, baseline.linx.assistant_name],
+    ['llm_model_id', values.linx_llm_model_id, baseline.linx.llm_model_id],
+    ['mem_model_id', values.linx_mem_model_id, baseline.linx.mem_model_id],
+    ['intent_model_id', values.linx_intent_model_id, baseline.linx.intent_model_id],
+  ] as const) {
+    if (trimmed(formValue) !== current) {
+      linx[field] = trimmed(formValue)
+      linxChanged = true
+    }
+  }
+  if (values.linx_rotate_mcp_token) {
+    linx.rotate_mcp_token = true
+    linxChanged = true
+  }
   if (linxChanged) patch.linx = linx
 
   const services: NonNullable<PlatformSettingsPatch['services']> = {}
@@ -152,6 +176,22 @@ function toPatch(values: SettingsFormValues, baseline: PlatformSettings): Platfo
   return patch
 }
 
+function Source({ children, href }: { children: ReactNode; href?: string }) {
+  return (
+    <span>
+      {children}
+      {href ? (
+        <>
+          {' '}
+          <a href={href} target="_blank" rel="noreferrer">
+            打开
+          </a>
+        </>
+      ) : null}
+    </span>
+  )
+}
+
 function checkLine(check: ServiceCheck): string {
   return check.ok ? '可用' : check.message || '不可用'
 }
@@ -183,6 +223,13 @@ export function AdminSettingsPage() {
       linx_ota_url: settingsData.linx.ota_url,
       linx_api_key: '',
       linx_clear_key: false,
+      linx_public_mcp_url: settingsData.linx.public_mcp_url,
+      linx_mcp_name: settingsData.linx.mcp_name,
+      linx_assistant_name: settingsData.linx.assistant_name,
+      linx_llm_model_id: settingsData.linx.llm_model_id,
+      linx_mem_model_id: settingsData.linx.mem_model_id,
+      linx_intent_model_id: settingsData.linx.intent_model_id,
+      linx_rotate_mcp_token: false,
       render_url: settingsData.services.render_url,
       casting_url: settingsData.services.casting_url,
       render_token: '',
@@ -201,7 +248,8 @@ export function AdminSettingsPage() {
       queryClient.setQueryData(adminSettingsQueryOptions.queryKey, data)
       queryClient.invalidateQueries({ queryKey: ['admin', 'settings'] })
       queryClient.invalidateQueries({ queryKey: ['admin', 'overview'] })
-      message.success('平台设置已保存，新构建和新开工会立即使用新值')
+      message.success('平台设置已保存，新构建和新开通会立即使用新值')
+      if (data.warning) message.warning(data.warning, 8)
     },
     onError: (err) => {
       setError(err instanceof ApiError ? err.message : '保存平台设置失败')
@@ -322,16 +370,28 @@ export function AdminSettingsPage() {
                 },
               ]}
             />
-            <Form.Item label="Base URL" name="agentapi_base_url">
-              <Input placeholder="https://agent.example.com" autoComplete="off" />
+            <Form.Item
+              label="Base URL"
+              name="agentapi_base_url"
+              extra={
+                <Source href="https://portal.qiniu.com/agentapi">
+                  AgentAPI 服务地址：华东 https://agent.qiniuapi.com，美西 https://agent.sufy.com。
+                  资源按区域隔离，地址要与下面的 Agent、环境同一区域。控制台：
+                </Source>
+              }
+            >
+              <Input placeholder="https://agent.qiniuapi.com" autoComplete="off" />
             </Form.Item>
             <Form.Item
               label="API Key"
               name="agentapi_api_key"
               extra={
-                settingsData.agentapi.api_key.configured
-                  ? '已保存 API Key；留空保持不变。'
-                  : '未保存 API Key。'
+                <Source href="https://portal.qiniu.com/agentapi">
+                  {settingsData.agentapi.api_key.configured
+                    ? '已保存 API Key；留空保持不变。'
+                    : '未保存 API Key。'}
+                  在七牛控制台创建 MaaS API Key，会自动绑定到 AgentAPI 账户。
+                </Source>
               }
             >
               <Input.Password
@@ -346,13 +406,25 @@ export function AdminSettingsPage() {
                 <Checkbox>清除已保存的 AgentAPI API Key</Checkbox>
               </Form.Item>
             ) : null}
-            <Form.Item label="Agent ID" name="agentapi_agent_id">
+            <Form.Item
+              label="Agent ID"
+              name="agentapi_agent_id"
+              extra="负责生成应用的构建智能体 ID（形如 agt_…）。在 AgentAPI 控制台创建 app-builder 智能体后复制。"
+            >
               <Input autoComplete="off" />
             </Form.Item>
-            <Form.Item label="Agent 版本" name="agentapi_agent_version">
+            <Form.Item
+              label="Agent 版本"
+              name="agentapi_agent_version"
+              extra="可选。固定使用某个智能体版本；填 0 表示每次使用最新版本。"
+            >
               <InputNumber min={0} style={{ width: 180 }} />
             </Form.Item>
-            <Form.Item label="环境 ID" name="agentapi_environment_id">
+            <Form.Item
+              label="环境 ID"
+              name="agentapi_environment_id"
+              extra="构建会话运行的云端环境 ID（形如 env_…）。在 AgentAPI 控制台的“环境”里创建后复制。"
+            >
               <Input autoComplete="off" />
             </Form.Item>
           </section>
@@ -380,19 +452,30 @@ export function AdminSettingsPage() {
                 },
               ]}
             />
-            <Form.Item label="API Base" name="linx_api_base">
+            <Form.Item
+              label="API Base"
+              name="linx_api_base"
+              extra="灵矽开放 API 地址，一般保持 https://xrobo.qiniu.com。"
+            >
               <Input placeholder="https://xrobo.qiniu.com" autoComplete="off" />
             </Form.Item>
-            <Form.Item label="OTA 地址" name="linx_ota_url">
-              <Input placeholder="https://xrobo.qiniu.com/ota" autoComplete="off" />
+            <Form.Item
+              label="OTA 地址"
+              name="linx_ota_url"
+              extra="虚拟设备上报并领取激活码、设备 Token 的地址，一般保持 https://xrobo.qiniuapi.com/v1/ota/。"
+            >
+              <Input placeholder="https://xrobo.qiniuapi.com/v1/ota/" autoComplete="off" />
             </Form.Item>
             <Form.Item
               label="API Key"
               name="linx_api_key"
               extra={
-                settingsData.linx.api_key.configured
-                  ? '已保存 API Key；留空保持不变。修改地址或 Key 后，下一次开工会重建 MCP Server。'
-                  : '未保存 API Key。'
+                <Source href="https://xrobo.qiniu.com/">
+                  {settingsData.linx.api_key.configured
+                    ? '已保存 API Key；留空保持不变。修改地址或 Key 后，下一次开通会重建 MCP Server。'
+                    : '未保存 API Key。'}
+                  在灵矽智控台“API Key 管理”创建，用它为每位用户创建智能体。
+                </Source>
               }
             >
               <Input.Password
@@ -407,6 +490,77 @@ export function AdminSettingsPage() {
                 <Checkbox>清除已保存的 Linx API Key</Checkbox>
               </Form.Item>
             ) : null}
+          </section>
+
+          <section className="surface settings-section">
+            <div className="section-header">
+              <div>
+                <h2>灵矽 MCP 与智能体模板</h2>
+                <p>灵矽云通过 MCP 控制应用；新用户的智能体按下面的参数创建。已创建的智能体不受影响。</p>
+              </div>
+              {statusTag(
+                Boolean(settingsData.linx.public_mcp_url) && settingsData.linx.mcp_token.configured,
+              )}
+            </div>
+            <Form.Item
+              label="公网 MCP 地址"
+              name="linx_public_mcp_url"
+              extra="灵矽云访问本网关 MCP 的公网地址，必须以 /mcp 结尾（Streamable HTTP），例如 https://gateway.example.com/mcp。局域网地址灵矽云访问不到。修改后下一次开通会重建 MCP。"
+            >
+              <Input placeholder="https://gateway.example.com/mcp" autoComplete="off" />
+            </Form.Item>
+            <Form.Item
+              label="MCP 名称"
+              name="linx_mcp_name"
+              extra="在灵矽平台创建的 MCP 服务名称，同一个平台账号下需要唯一。"
+            >
+              <Input placeholder="Open Anywhere" autoComplete="off" />
+            </Form.Item>
+            <Form.Item
+              label="MCP Token"
+              extra={
+                settingsData.linx.mcp_token.configured
+                  ? '已自动生成并加密保存，灵矽云用它访问本网关 MCP，不会显示明文。'
+                  : '首次启动会自动生成。'
+              }
+            >
+              <Form.Item name="linx_rotate_mcp_token" valuePropName="checked" noStyle>
+                <Checkbox>保存时重新生成，并同步到灵矽 MCP（旧 Token 立即失效）</Checkbox>
+              </Form.Item>
+            </Form.Item>
+            <Form.Item
+              label="助手名称"
+              name="linx_assistant_name"
+              extra="新建智能体里的助手昵称，对应灵矽 assistantName。"
+            >
+              <Input placeholder="小灵" autoComplete="off" />
+            </Form.Item>
+            <Form.Item
+              label="大模型 ID"
+              name="linx_llm_model_id"
+              extra={
+                <Source href="https://linx.qiniu.com/docs/xrobot/">
+                  对应灵矽 llmModelId，默认 DeepSeek V4 Flash。其他可选模型见开放 API
+                  GET /v1/agents/models/llm，文档：
+                </Source>
+              }
+            >
+              <Input autoComplete="off" />
+            </Form.Item>
+            <Form.Item
+              label="记忆模型 ID"
+              name="linx_mem_model_id"
+              extra="对应灵矽 memModelId：Memory_nomem 为无记忆，Memory_long_term_memory 为长期记忆。"
+            >
+              <Input autoComplete="off" />
+            </Form.Item>
+            <Form.Item
+              label="意图模型 ID"
+              name="linx_intent_model_id"
+              extra="对应灵矽 intentModelId：Intent_function_call 为统一意图识别（调用 MCP 必须使用它），Intent_nointent 为无意图识别。"
+            >
+              <Input autoComplete="off" />
+            </Form.Item>
           </section>
 
           <section className="surface settings-section">

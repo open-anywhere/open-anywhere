@@ -121,24 +121,23 @@ pnpm install
 pnpm build
 ```
 
-然后在 `gateway.yaml` 中打开门户，并补齐门户模式必填的配置：
+然后在 `gateway.yaml` 中打开门户，并设置管理员引导账号：
 
 ```yaml
-mcp_token: "<随机长字符串>"
 portal:
   enabled: true
   username: "<管理员账号>"
   password: "<管理员密码>"
-linx:
-  public_mcp_url: "https://<公网域名>/mcp"
 ```
 
 管理员密码也可以放在 `PORTAL_USERNAME` / `PORTAL_PASSWORD` 环境变量里，避免写进配置文件。
 
 门户模式与独立模式的区别：
 
-- `mcp_token`、`linx.public_mcp_url` 和 `portal.username` / `portal.password` 变为必填。
-- AgentAPI、Linx、Render、Casting 的密钥可以在首次启动后由管理员在 `/admin` 配置，配置文件里的值只在对应设置为空时写入一次。
+- 只有 `portal.username` / `portal.password` 变为必填。
+- AgentAPI、Linx（含公网 MCP 地址、智能体模板）、默认 Render/Casting 都在首次启动后由管理员在 `/admin/settings` 配置，页面上每个字段都写明了数据从哪里取，配置文件里不需要再写这些项。
+- MCP Token 首次启动时自动生成并加密保存，在 `/admin/settings` 里可以重新生成，网关会同步到灵矽的 MCP。
+- 旧版 `gateway.yaml` 里已有的这些值只在数据库对应设置为空时写入一次，之后以数据库为准，改配置文件不再生效，可以从文件里删除。
 - 默认拒绝内网地址。本地调试时要把 `services.allow_private_targets` 设为 `true`，才能绑定 `127.0.0.1` 或局域网服务；生产环境保持 `false`。
 
 启动后打开 <http://192.168.1.20:8091/> 查看 Home，管理员登录后进入 `/admin`，普通用户在 `/register` 注册后使用 `/portal`。浏览器麦克风需要 HTTPS 或 `localhost`，详见[多租户用户 Portal 设计](../user-portal.md)。
@@ -158,10 +157,10 @@ linx:
 
 | 现象 | 排查方向 |
 | --- | --- |
-| 启动报 `-xxx is required` | 独立模式下 AgentAPI、Render、Casting 配置必填；门户模式下 `mcp_token`、`linx.public_mcp_url`、管理员账号必填 |
+| 启动报 `-xxx is required` | 独立模式下 AgentAPI、Render、Casting 配置必填；门户模式下只有管理员账号必填 |
 | 启动报凭证无法解密 | 数据库里的密钥与当前主密钥不匹配，恢复原来的 `portal-data/secret.key` 或 `GATEWAY_SECRET_KEY` |
 | Render 启动应用失败 | 用 Render 主机访问 `artifacts.base_url` 下的下载地址，确认 Render 能拉到产物 |
-| MCP 返回 401 | 请求没有带 `Bearer` token，或 token 与 `mcp_token` 不一致 |
+| MCP 返回 401 | 请求没有带 `Bearer` token，或 token 与当前 MCP Token 不一致（门户模式在 `/admin/settings` 里重新生成会让旧 token 立即失效） |
 | 应用能构建但投屏失败 | 确认 `casting.base_url` 可达、电视在线，并检查 Render 的 `-public-url` 是否是电视能访问的地址 |
 | 门户登录后无法保存平台配置 | 检查主密钥是否可用；查看服务日志中的解密错误 |
 

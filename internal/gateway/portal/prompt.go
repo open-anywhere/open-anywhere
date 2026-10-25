@@ -44,14 +44,7 @@ type BuildConfig struct {
 	Password          string
 	SessionTTL        time.Duration
 	CookieSecure      bool
-	LinxPublicMCPURL  string
-	LinxMCPName       string
-	LinxAssistantName string
-	LinxLLMModelID    string
-	LinxMemModelID    string
-	LinxIntentModelID string
 	SystemPrompt      string
-	MCPToken          string
 	ProvisionTimeout  time.Duration
 	TokenPollInterval time.Duration
 	TokenPollAttempts int
@@ -105,24 +98,33 @@ func NewService(ctx context.Context, cfg BuildConfig, db *store.DB, apps *servic
 			return nil, app.ErrPlatformNotConfigured
 		}
 		return linx.New(linx.Config{
-			BaseURL:      snapshot.Linx.APIBase,
-			APIKey:       snapshot.Linx.APIKey,
-			OTAURL:       snapshot.Linx.OTAURL,
-			PublicMCPURL: cfg.LinxPublicMCPURL,
-			MCPName:      cfg.LinxMCPName,
-			MCPToken:     cfg.MCPToken,
+			BaseURL: snapshot.Linx.APIBase,
+			APIKey:  snapshot.Linx.APIKey,
+			OTAURL:  snapshot.Linx.OTAURL,
 		}), nil
 	}
 	provision := NewProvisionerWithProvider(ctx, db, linxProvider, voice, ProvisionConfig{
-		DataDir:           cfg.DataDir,
-		MCPName:           cfg.LinxMCPName,
-		MCPDescription:    "Open Anywhere 应用管理 MCP",
-		PublicMCPURL:      cfg.LinxPublicMCPURL,
-		MCPToken:          cfg.MCPToken,
-		AssistantName:     cfg.LinxAssistantName,
-		LLMModelID:        cfg.LinxLLMModelID,
-		MemModelID:        cfg.LinxMemModelID,
-		IntentModelID:     cfg.LinxIntentModelID,
+		DataDir:        cfg.DataDir,
+		MCPDescription: "Open Anywhere 应用管理 MCP",
+		Template: func(ctx context.Context) (Template, error) {
+			if provider == nil {
+				return Template{}, app.ErrPlatformNotConfigured
+			}
+			snapshot, err := provider.Snapshot(ctx)
+			if err != nil {
+				return Template{}, err
+			}
+			linxSettings := snapshot.Linx
+			return Template{
+				MCPName:       linxSettings.MCPName,
+				PublicMCPURL:  linxSettings.PublicMCPURL,
+				MCPToken:      linxSettings.MCPToken,
+				AssistantName: linxSettings.AssistantName,
+				LLMModelID:    linxSettings.LLMModelID,
+				MemModelID:    linxSettings.MemModelID,
+				IntentModelID: linxSettings.IntentModelID,
+			}, nil
+		},
 		SystemPrompt:      prompt,
 		ProvisionTimeout:  cfg.ProvisionTimeout,
 		TokenPollInterval: cfg.TokenPollInterval,

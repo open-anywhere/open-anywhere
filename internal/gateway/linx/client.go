@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -241,6 +242,18 @@ func (c *Client) EnsureMCP(ctx context.Context, spec MCPSpec) (serverID, instanc
 		}
 	}
 	return "", "", errors.New("linx: created MCP instance was not found")
+}
+
+// UpdateMCPInstance rewrites the address and bearer token of an existing MCP
+// instance (PUT /v1/mcps/{id}), so a rotated token reaches agents that
+// already use it.
+func (c *Client) UpdateMCPInstance(ctx context.Context, instanceID string, spec MCPSpec) error {
+	if strings.TrimSpace(instanceID) == "" {
+		return errors.New("linx: MCP instance id is required")
+	}
+	body := mcpInstanceBody(spec, "")
+	delete(body, "mcp_id")
+	return c.do(ctx, http.MethodPut, "/v1/mcps/"+url.PathEscape(instanceID), body, nil)
 }
 
 // AttachMCP replaces an agent's MCP bindings with mcpIDs.
