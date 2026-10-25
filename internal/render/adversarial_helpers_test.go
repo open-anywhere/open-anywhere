@@ -248,6 +248,8 @@ type fakeServiceOptions struct {
 	nodeMode      string
 	ffmpegMode    string
 	ffmpegPath    string
+	audioFormat   string
+	audioInput    string
 	startup       time.Duration
 	workDir       string
 	ports         []int
@@ -284,6 +286,8 @@ func newFakeService(t *testing.T, opts fakeServiceOptions) *Service {
 		PublicURL:      "http://127.0.0.1:8090",
 		Node:           fakeNode(t, opts.nodeMode),
 		FFmpeg:         opts.ffmpegPath,
+		AudioFormat:    opts.audioFormat,
+		AudioInput:     opts.audioInput,
 		StartupTimeout: opts.startup,
 		ServicePorts:   opts.ports,
 		Logger:         log.New(io.Discard, "", 0),

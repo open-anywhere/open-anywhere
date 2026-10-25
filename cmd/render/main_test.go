@@ -15,6 +15,8 @@ func TestRunValidation(t *testing.T) {
 		{}, {"-no-such-flag"}, {"positional"}, {"-addr", "invalid-address", "-public-url", "http://localhost:8090"},
 		{"-addr", "127.0.0.1:0", "-public-url", "invalid-url"},
 		{"-addr", "127.0.0.1:0", "-public-url", "http://localhost:8090", "-fps", "0", "-width", "321"},
+		{"-addr", "127.0.0.1:0", "-public-url", "http://localhost:8090", "-audio-format", "pulse"},
+		{"-addr", "127.0.0.1:0", "-public-url", "http://localhost:8090", "-audio-input", "render.monitor"},
 	} {
 		if err := run(context.Background(), args, io.Discard); err == nil {
 			t.Fatalf("invalid arguments accepted: %v", args)

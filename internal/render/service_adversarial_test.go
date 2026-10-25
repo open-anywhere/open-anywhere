@@ -27,7 +27,7 @@ func TestAdversarialExecuteSuccessAndStop(t *testing.T) {
 	if ferr != nil {
 		t.Fatalf("create: %+v", ferr)
 	}
-	if v.State != "ready" || v.AppBaseURL == "" || v.Source == nil || v.Source.Format != "mpegts" {
+	if v.State != "ready" || v.AppBaseURL == "" || v.Source == nil || v.Source.Format != "mpegts" || v.Source.AudioCodec != "" {
 		t.Fatalf("bad ready instance: %+v", v)
 	}
 	if v.AppBaseURL != fmt.Sprintf("http://127.0.0.1:%d", port) {
@@ -58,6 +58,19 @@ func TestAdversarialExecuteSuccessAndStop(t *testing.T) {
 	entries, err := os.ReadDir(s.cfg.WorkDir)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("work dir leaked: %v %v", entries, err)
+	}
+}
+
+func TestAdversarialAudioSourceAdvertisement(t *testing.T) {
+	payload := standardArtifact(t, validLaunch(5000))
+	files := artifactServer(t, map[string][]byte{"/artifact.tar.gz": payload})
+	s := newFakeService(t, fakeServiceOptions{audioFormat: "pulse", audioInput: "render.monitor"})
+	v, ferr := s.Create(context.Background(), api.CreateRequest{AppID: "adv-audio", ArtifactURL: files.URL + "/artifact.tar.gz", Port: availableTestPort(t)})
+	if ferr != nil {
+		t.Fatalf("create: %+v", ferr)
+	}
+	if v.Source == nil || v.Source.AudioCodec != "aac" {
+		t.Fatalf("audio codec was not advertised: %+v", v.Source)
 	}
 }
 

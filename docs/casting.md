@@ -53,7 +53,7 @@ curl -X DELETE http://localhost:8080/v1/projection-sessions/projection-SESSION_I
 
 该字段表示本服务的设备占用，包含正在启动的会话，以及失败后尚未清理成功的会话；它不代表电视一定正在播放，也不反映其他应用发起的投屏。读取 Target 不会查询设备；查询 Session 或每 30 秒的后台扫描会刷新状态并释放占用。电视自行停止后，下一次刷新会把会话标记为 `stopped` 并释放占用。服务重启后不保留该字段对应的会话。
 
-Client 根据返回的 `target.id` 和 `endpoint.id` 创建会话：
+Client 根据返回的 `target.id` 和 `endpoint.id` 创建会话。`source` 中的 AAC 音轨由 Render 或其他媒体源直接提供；Casting 只把 URI 交给电视，不读取、解码或转码音频：
 
 ```sh
 curl -i http://localhost:8080/v1/projection-sessions \

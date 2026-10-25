@@ -253,7 +253,15 @@ func TestRenderScoreboard(t *testing.T) {
 	apiPort := server.Listener.Addr().(*net.TCPAddr).Port
 	base := "http://" + server.Listener.Addr().String()
 	work := t.TempDir()
-	s, err := core.New(core.Config{WorkDir: work, PublicURL: base, Chrome: os.Getenv("RENDER_CHROME"), ServicePorts: []int{apiPort}, Logger: log.New(os.Stderr, "render-e2e ", log.LstdFlags)})
+	s, err := core.New(core.Config{
+		WorkDir:      work,
+		PublicURL:    base,
+		Chrome:       os.Getenv("RENDER_CHROME"),
+		AudioFormat:  os.Getenv("RENDER_AUDIO_FORMAT"),
+		AudioInput:   os.Getenv("RENDER_AUDIO_INPUT"),
+		ServicePorts: []int{apiPort},
+		Logger:       log.New(os.Stderr, "render-e2e ", log.LstdFlags),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +313,7 @@ func TestRenderScoreboard(t *testing.T) {
 		t.Fatal("wrong port error")
 	}
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	probe, probeErr := exec.CommandContext(probeCtx, "ffprobe", "-v", "error", "-analyzeduration", "1000000", "-probesize", "1000000", "-show_entries", "stream=codec_name,width,height", "-of", "json", instance.Source.URL).Output()
+	probe, probeErr := exec.CommandContext(probeCtx, "ffprobe", "-v", "error", "-analyzeduration", "5000000", "-probesize", "5000000", "-show_entries", "stream=codec_name,codec_type,width,height", "-of", "json", instance.Source.URL).Output()
 	probeCancel()
 	if probeErr != nil {
 		t.Fatalf("probe stream: %v", probeErr)
@@ -313,12 +321,20 @@ func TestRenderScoreboard(t *testing.T) {
 	metadata := decode[struct {
 		Streams []struct {
 			Codec  string `json:"codec_name"`
+			Type   string `json:"codec_type"`
 			Width  int    `json:"width"`
 			Height int    `json:"height"`
 		} `json:"streams"`
 	}](t, probe)
-	if len(metadata.Streams) != 1 || metadata.Streams[0].Codec != "h264" || metadata.Streams[0].Width != 1280 || metadata.Streams[0].Height != 720 {
+	wantStreams := 1
+	if os.Getenv("RENDER_AUDIO_FORMAT") != "" {
+		wantStreams = 2
+	}
+	if len(metadata.Streams) != wantStreams || metadata.Streams[0].Codec != "h264" || metadata.Streams[0].Width != 1280 || metadata.Streams[0].Height != 720 {
 		t.Fatalf("unexpected stream: %s", probe)
+	}
+	if wantStreams == 2 && (metadata.Streams[1].Type != "audio" || metadata.Streams[1].Codec != "aac" || instance.Source.AudioCodec != "aac") {
+		t.Fatalf("unexpected audio stream: %s source=%+v", probe, instance.Source)
 	}
 	f := decodeStream(t, instance.Source.URL)
 	saveFrame(t, waitColor(t, f, [3]int{128, 128, 128}, "initial gray"), "01-initial")
