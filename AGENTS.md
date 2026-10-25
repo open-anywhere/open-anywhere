@@ -21,6 +21,12 @@ The product's commercial value is genuinely novel:
 
 Because nearly every household and every business already owns at least one screen, the addressable market is very large and still growing. Agents should treat this positioning as the reason the code exists: favor capabilities that shorten the path from spoken intent to a working experience on a nearby screen.
 
+## Business Plan
+
+The official business plan is [`docs/product/business-plan.md`](docs/product/business-plan.md). Read it for commercial strategy, pricing, age-segment needs, the first-week go-to-market loop, unit economics, competitive positioning, and the three-year targets. Market background and positioning rationale remain in [`docs/product/business.md`](docs/product/business.md).
+
+When a change affects pricing, packaging, target users, or validation metrics, update the business plan alongside the code.
+
 ## Validation Status
 
 The core loop has been validated in personal use: four people played four different generated games in one session on a real screen, and everyone enjoyed it. Describe it, cast it, play it works end to end for a small gathering.
@@ -58,7 +64,7 @@ When working in this repository:
 
 - Keep the control plane a router and orchestrator, not an app runtime.
 - Put generation and build rules in the app-builder skill and AgentAPI, runtime behavior in Render, protocol and session behavior in Casting, and device behavior in the voice entry.
-- Read the design documents before changing a contract: [`docs/architecture.md`](docs/architecture.md), [`docs/app-artifact.md`](docs/app-artifact.md), [`docs/casting.md`](docs/casting.md), [`docs/render-runtime.md`](docs/render-runtime.md), and [`docs/voice-entry.md`](docs/voice-entry.md).
+- Read the design documents before changing a contract: [`docs/architecture/overview.md`](docs/architecture/overview.md), [`docs/architecture/interfaces/app-artifact.md`](docs/architecture/interfaces/app-artifact.md), [`docs/operations/casting.md`](docs/operations/casting.md), [`docs/operations/render.md`](docs/operations/render.md), and [`docs/architecture/voice-entry.md`](docs/architecture/voice-entry.md).
 
 ## Scope of These Instructions
 

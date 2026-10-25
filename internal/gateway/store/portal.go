@@ -8,7 +8,7 @@ import (
 )
 
 // Portal account and device states. They mirror the design in
-// docs/user-portal.md and are stored as plain strings so the database stays
+// docs/architecture/interfaces/portal.md and are stored as plain strings so the database stays
 // readable without a migration tool.
 const (
 	PortalDeviceProvisioning = "provisioning"

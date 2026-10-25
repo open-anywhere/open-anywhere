@@ -20,14 +20,16 @@ import (
 )
 
 type fakePlatform struct {
-	mu        sync.Mutex
-	agents    int
-	binds     int
-	joins     int
-	failAgent bool
-	failBind  bool
-	servers   []map[string]any
-	instances []map[string]any
+	mu         sync.Mutex
+	agents     int
+	binds      int
+	joins      int
+	failAgent  bool
+	failBind   bool
+	failMCP    bool
+	failAttach bool
+	servers    []map[string]any
+	instances  []map[string]any
 }
 
 func (f *fakePlatform) handler(t *testing.T) http.Handler {
@@ -43,19 +45,39 @@ func (f *fakePlatform) handler(t *testing.T) http.Handler {
 			f.agents++
 			_, _ = io.WriteString(w, `{"code":0,"data":"agent_1"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/mcp-store/servers":
+			if f.failMCP {
+				http.Error(w, `{"code":500,"msg":"mcp store failed"}`, http.StatusInternalServerError)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"servers": f.servers}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/mcp-store/servers":
+			if f.failMCP {
+				http.Error(w, `{"code":500,"msg":"mcp store failed"}`, http.StatusInternalServerError)
+				return
+			}
 			f.servers = append(f.servers, map[string]any{
 				"id": "server_1", "name": "Open Anywhere",
 				"config_schema": map[string]any{"sse": map[string]any{"url": "https://gateway.example/sse"}},
 			})
 			_, _ = io.WriteString(w, `{"code":0,"data":{"id":"server_1"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/mcps":
+			if f.failMCP {
+				http.Error(w, `{"code":500,"msg":"mcp store failed"}`, http.StatusInternalServerError)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": f.instances})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/mcps":
+			if f.failMCP {
+				http.Error(w, `{"code":500,"msg":"mcp store failed"}`, http.StatusInternalServerError)
+				return
+			}
 			f.instances = append(f.instances, map[string]any{"id": "mcp_1", "mcp_id": "server_1", "name": "Open Anywhere"})
 			_, _ = io.WriteString(w, `{"code":0,"data":{"id":"mcp_1"}}`)
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/agents/"):
+			if f.failAttach {
+				http.Error(w, `{"code":500,"msg":"attach failed"}`, http.StatusInternalServerError)
+				return
+			}
 			f.joins++
 			_, _ = io.WriteString(w, `{"code":0}`)
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/xiaozhi/device/bind/"):
@@ -73,11 +95,14 @@ func (f *fakePlatform) handler(t *testing.T) http.Handler {
 }
 
 type fakeOTA struct {
-	mu          sync.Mutex
-	immediate   bool
-	afterBind   bool
-	platform    *fakePlatform
-	activationN int
+	mu           sync.Mutex
+	immediate    bool
+	afterBind    bool
+	failReport   bool
+	failAfterOne bool
+	noActivation bool
+	platform     *fakePlatform
+	activationN  int
 }
 
 func (f *fakeOTA) handler(t *testing.T) http.Handler {
@@ -88,6 +113,14 @@ func (f *fakeOTA) handler(t *testing.T) http.Handler {
 			t.Errorf("OTA request %s %s", r.Method, r.URL.Path)
 		}
 		f.activationN++
+		if f.failReport || (f.failAfterOne && f.activationN > 1) {
+			http.Error(w, `{"error":"ota failed"}`, http.StatusInternalServerError)
+			return
+		}
+		if f.noActivation {
+			_, _ = io.WriteString(w, `{}`)
+			return
+		}
 		bound := false
 		if f.platform != nil {
 			f.platform.mu.Lock()

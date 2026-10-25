@@ -6,7 +6,7 @@ Gateway 是控制面：对灵矽提供 MCP 工具，向 AgentAPI 提交构建任
 
 - Go，版本以 `go.mod` 为准
 - 已经启动 Casting 和 Render，见[启动 Casting](casting.md)与[启动 Render](render.md)
-- AgentAPI 的构建智能体与云端环境。`agent_id`、`environment_id` 在发布阶段创建一次，创建方法见[控制面与 AgentAPI 接口设计](../gateway-agentapi-interface.md)
+- AgentAPI 的构建智能体与云端环境。`agent_id`、`environment_id` 在发布阶段创建一次，创建方法见[控制面与 AgentAPI 接口设计](../architecture/interfaces/gateway-agentapi.md)
 - 如果启用用户门户，还需要 Node.js、pnpm，以及灵矽云可访问的公网地址
 
 ## 准备配置
@@ -140,7 +140,7 @@ portal:
 - 旧版 `gateway.yaml` 里已有的这些值只在数据库对应设置为空时写入一次，之后以数据库为准，改配置文件不再生效，可以从文件里删除。
 - 默认拒绝内网地址。本地调试时要把 `services.allow_private_targets` 设为 `true`，才能绑定 `127.0.0.1` 或局域网服务；生产环境保持 `false`。
 
-启动后打开 <http://192.168.1.20:8091/> 查看 Home，管理员登录后进入 `/admin`，普通用户在 `/register` 注册后使用 `/portal`。浏览器麦克风需要 HTTPS 或 `localhost`，详见[多租户用户 Portal 设计](../user-portal.md)。
+启动后打开 <http://192.168.1.20:8091/> 查看 Home，管理员登录后进入 `/admin`，普通用户在 `/register` 注册后使用 `/portal`。浏览器麦克风需要 HTTPS 或 `localhost`，详见[多租户用户 Portal 设计](../architecture/interfaces/portal.md)。
 
 ## 数据与重启
 

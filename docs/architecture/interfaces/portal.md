@@ -1,6 +1,6 @@
 # 多租户用户 Portal 设计
 
-> 相关文档：[架构设计](architecture.md)、[控制面数据库设计](gateway-database.md)、[应用管理 MCP](app-management-mcp.md)、[控制面与 Render 接口](gateway-render-interface.md)、[现场语音入口](voice-entry.md)
+> 相关文档：[架构设计](../overview.md)、[控制面数据库设计](../database.md)、[应用管理 MCP](app-management-mcp.md)、[控制面与 Render 接口](gateway-render.md)、[现场语音入口](../voice-entry.md)
 
 ## 1. 定位与范围
 
@@ -309,7 +309,7 @@ MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MIS
 
 ## 7. 数据模型与迁移摘要
 
-当前 `schemaVersion = 4`，按版本有序迁移（详见 [控制面数据库设计](gateway-database.md)）：
+当前 `schemaVersion = 4`，按版本有序迁移（详见 [控制面数据库设计](../database.md)）：
 
 | 版本 | 内容 |
 | --- | --- |

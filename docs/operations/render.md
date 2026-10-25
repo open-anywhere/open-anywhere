@@ -1,6 +1,6 @@
 # 运行 Render 与视频 E2E
 
-Render 的实现位于 `cmd/render`、`internal/render` 和 `pkg/render`。HTTP 字段及生命周期见[控制面与 Render 接口](gateway-render-interface.md)。支持 macOS 和 Linux，应用运行时为 Node.js。
+Render 的实现位于 `cmd/render`、`internal/render` 和 `pkg/render`。HTTP 字段及生命周期见[控制面与 Render 接口](../architecture/interfaces/gateway-render.md)。支持 macOS 和 Linux，应用运行时为 Node.js。
 
 ## 依赖与启动
 
@@ -14,6 +14,14 @@ go run ./cmd/render \
 ```
 
 将 `192.168.1.20` 换成控制面和电视可达的主机地址。应用地址默认使用同一主机名；控制面通过不同地址访问应用时，可配置 `-app-host`。`-chrome`、`-node`、`-ffmpeg` 可以指定可执行文件路径。
+
+启动后确认服务可用：
+
+```bash
+curl http://192.168.1.20:8090/healthz
+```
+
+预期返回 `{"status":"ok"}`。
 
 Linux 上 Chromium 需要可用的浏览器沙箱。Ubuntu 23.10+ 的 AppArmor 可能限制自行下载的浏览器创建 user namespace；E2E CI 为测试用 Chromium 的确切路径加载专用 AppArmor 配置，保留浏览器沙箱。
 
@@ -109,6 +117,17 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 设置 `RENDER_AUDIO_FORMAT` 与 `RENDER_AUDIO_INPUT` 后，同一 E2E 会要求 HTTP 流包含 AAC 音轨并检查 `source.audio_codec`；未设置时继续验证纯视频。
 
 普通的 `go test ./... -race` 覆盖归档与契约校验、并发期间的实例/端口预留、启动失败清理、HTTP 输入错误和慢速拉流客户端隔离；需要 `lsof`，但不启动浏览器或 FFmpeg。专门的 Render E2E CI 安装媒体依赖并执行真实链路。
+
+## 日志与停止
+
+服务日志输出到终端。每个实例的临时目录位于 `-work-dir` 下，包含应用进程日志 `app.log` 与编码日志 `encoder.log`。停止实例用 `DELETE /v1/apps/<instance_id>`；停止 Render 进程直接 `Ctrl-C`。
+
+## 常见问题
+
+- **局域网无法访问**：确认 `-addr` 使用 `0.0.0.0:8090`、防火墙已放行，并且 `-public-url` 是局域网地址。
+- **音频启动失败**：重新执行设备列表命令确认编号；音频格式与输入必须成对配置。
+- **电视没有声音**：确认系统输出已切到虚拟音频设备，并检查实例响应中的 `source.audio_codec` 是否为 `aac`。
+- **电视无法播放**：先用 `ffprobe <source.url>` 检查媒体流，再确认电视支持 MPEG-TS、H.264 与 AAC。
 
 ## 实现边界
 
