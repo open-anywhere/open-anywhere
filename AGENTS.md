@@ -21,19 +21,75 @@ The product's commercial value is genuinely novel:
 
 Because nearly every household and every business already owns at least one screen, the addressable market is very large and still growing. Agents should treat this positioning as the reason the code exists: favor capabilities that shorten the path from spoken intent to a working experience on a nearby screen.
 
+## What Is Implemented, and Where to Check It
+
+Everything in this table can be verified by reading the named files; none of it requires running the stack.
+
+| Capability | Code | Tests and supporting evidence |
+| --- | --- | --- |
+| Stable MCP surface — 8 tools | `internal/gateway/mcp/tools.go` (8 tool definitions), `server.go` | `tools_edge_test.go`, `server_owner_test.go`, `server_test.go` |
+| Compatibility helper — `list-apps` | `internal/gateway/mcp/compatibility.go` | `compatibility_test.go`; not part of the stable surface |
+| Asynchronous build through AgentAPI | `internal/gateway/build/builder.go` | `builder_test.go`, `builder_extra_test.go`; build duration is recorded (`builder.go:513`); a failed update keeps the previous artifact |
+| Artifact and OpenAPI validation | `internal/gateway/artifact/validate.go`, `internal/gateway/openapi/spec.go` | package tests; Render validates the artifact again before running |
+| Render runtime and stage capture | `cmd/render`, `internal/render` | `e2e/render_test.go` drives real Node, Chromium and FFmpeg |
+| DLNA casting | `cmd/casting`, `internal/casting/service.go`, `internal/casting/dlna` | `service_test.go`, `http_test.go`, `casting_adversarial_test.go` |
+| Voice entry | `cmd/voiceentry` | `docs/architecture/voice-entry.md`; the live gateway E2E is opt-in (`e2e/gateway_live_test.go`) |
+| Multi-tenant portal with identity isolation | `internal/gateway/portal/` (`auth.go`, `admin.go`, `http.go`) | Go tests in the package; the React frontend (`portal/src`) has no unit tests |
+| Multi-app sessions | `internal/gateway/service/service.go` | package tests; see the switching limitation below |
+| Recorded happy path | `README.md:15-16` links the 1080p and 4K demo videos | the recording shows the chain running; it is not evidence of demand |
+
 ## Business Plan
 
-The official business plan is [`docs/product/business-plan.md`](docs/product/business-plan.md). Read it for commercial strategy, pricing, age-segment needs, the first-week go-to-market loop, unit economics, competitive positioning, and the three-year targets. Market background and positioning rationale remain in [`docs/product/business.md`](docs/product/business.md).
+[`docs/product/business-plan.md`](docs/product/business-plan.md) is the single source of truth for commercial strategy, pricing, packaging, unit economics, three-year targets, and validation status. When another document disagrees with it on those topics, the business plan wins.
+
+[`docs/product/business.md`](docs/product/business.md) is market background and historical reasoning. Its chapter 6 pricing (new app 2 credits / edit 1 credit, 68/166/288 CNY per month, 20/12/5 run hours) is superseded by chapter 5 of the business plan and must not be cited as current.
+
+Reading the plan: §5.3 is the only price source; §7.1–§7.4 are models whose assumptions are labeled and dated for calibration; §12.1 separates what has been validated from what has not.
+
+Current commercial facts, stated once so agents do not restate a different version:
+
+- **Beachhead.** 18–30 party organizers and 30–45 households with children. The first profit engine is hospitality and party venues (民宿、轰趴馆、桌游店).
+- **Entry price.** 68 CNY/month standard plan. Standard annual card 599 CNY (800 credits + 60 run hours). Family annual card: list 899 CNY (1,200 credits + 100 run hours, includes one toy), first-year transaction 599 CNY without hardware. High-frequency annual card 1,599 CNY (2,400 credits + 150 run hours). Annual cards are 10 months of quota released over 12 months, priced at roughly 8.8–9.6 months of the matching monthly tier; they are not monthly quota × 12.
+- **Merchant price ladder.** Single event 399 CNY; monthly 599 CNY for 4 events; annual 3,999 CNY for 50 events. On-site hosting and setup are 500–1,000 CNY per event and are not included in the software subscription; the 199 CNY first-week single is a founder-led pilot, not a standard SKU.
+- **Credits.** Template 1, edit 2, new app 5, complex app 10. One credit equals one CNY on top-up.
+- **Run hours.** 1 / 3 / 6 / 10 / 15 / 25 hours for the 0 / 39 / 68 / 99 / 166 / 288 CNY tiers.
+- **Stage.** Validation. The first-week loop — 6–9 sessions, 30+ participants, at least 3 payments for delivered sessions collected manually — is the active operating target, not a completed result. Annual-card and merchant-monthly pre-sales are tracked separately and do not count toward those 3 payments.
+- **Billing.** Credits, subscriptions, and payment are not implemented in code. First-week payments are collected by personal payment code. Never describe billing, quota, subscription management, or a merchant console as shipped.
 
 When a change affects pricing, packaging, target users, or validation metrics, update the business plan alongside the code.
 
-## Validation Status
+## Commercial Status
 
-The core loop has been validated in personal use: four people played four different generated games in one session on a real screen, and everyone enjoyed it. Describe it, cast it, play it works end to end for a small gathering.
+**Verified on real hardware.** In October 2026, four participants played four generated applications in one session on a real screen. The session covered the full chain — spoken request, generation, cast to the screen, multi-participant play, and switching applications. Participants were three team members and one family member; a recording is linked from the README.
 
-The remaining validation targets are children and older adults. These two groups cover family learning activities and daily use by older people, and they are the age groups the product originally set out to serve.
+**Not yet verified.** External households (children and older adults), payment, retention, merchant repeat use, and measured generation cost and latency. The company is in its validation stage. The first-week loop in `docs/product/business-plan.md` §0.4 — 6–9 sessions, 30+ participants, at least 3 payments for delivered sessions with receipts, with annual-card pre-sales tracked separately — is the active operating target. The payment ledger in §4.3 is empty. This is a technical happy-path test, not market validation; until ledger entries exist, demand is a hypothesis and the plan labels it as such.
 
-Personal-use evidence is not commercial validation. It does not yet establish willingness to pay or use outside social gatherings. Treat it as proof that the happy path is real, and keep collecting evidence for the scenarios that are still unverified.
+## Current Implementation Boundary
+
+The evidence table above is the shipped surface. The rest of the plan is roadmap; `docs/product/business-plan.md` §0.7 marks the same boundary.
+
+Roadmap, not shipped: mobile join and controller, template instantiation and the 3-minute fallback, credits/billing/subscriptions, merchant console, children and elderly modes, AirPlay, run box and end devices, a generation-quality evaluation set, and token/cost telemetry.
+
+Roadmap items must not be described as implemented anywhere in this repository.
+
+Multi-app sessions are implemented, but switching apps stops the old app and creates a new Casting session (`internal/gateway/service/service.go`; `docs/architecture/overview.md` records the gap). The invariant that switching must not re-establish casting is not met; do not describe switching as seamless or zero-downtime.
+
+## Evidence Rules for Commercial Claims
+
+- A capability counts as shipped only when code and tests exist in this repository.
+- A commercial claim must cite code, a dated record under `docs/`, or a sourced external figure in appendix B of the business plan.
+- Do not describe planned work in the present tense. Use "roadmap" or "target" and name the milestone.
+- When two documents disagree on a number, fix the disagreement rather than adding a third number.
+- Commercial price claims must use section 5.3 of the business plan. Annual cards are 10 months of quota released over 12 months at roughly 8.8–9.6 months of the matching monthly price; do not describe them as monthly quota × 12 or as unlimited generation.
+- A validation claim must name the sample size, participant composition, and date. A team test is never "market validation".
+
+## Known Documentation and Implementation Drift
+
+These are known as of 2026-10-26. Treat code and this file as current; the listed documents are being corrected.
+
+- `docs/product/research.md` still marks multi-app sessions as unimplemented. Multi-app sessions are implemented, with the switching limitation described above.
+- `internal/gateway/portal/agent-prompt.txt` predates `update-app` and multi-app support, while `docs/agent-system-prompts/open-anywhere-host.txt` already documents them. Regenerate the embedded prompt from the docs copy and add a test that the two match before shipping.
+- `speaker_probe` is disabled by default and the compatibility probe returns `verified:false`. Do not claim voiceprint or speaker identity is shipped.
 
 ## Architecture
 
@@ -45,11 +101,12 @@ Display, input, and compute are deliberately isolated. Each plane can be replace
 | Compute | Control plane, AgentAPI, Render | MCP routing and orchestration, app registry, asynchronous builds in a sandbox, app runtime, stage capture | Understand the app's business semantics; speak the device protocol |
 | Display | Casting service and the target TV, projector, or other display | Device discovery, DLNA session lifecycle, playing a media stream | Know which app produced the stream |
 
-The planes meet through three narrow contracts:
+The planes meet through three narrow contracts, plus a browser-facing Portal API that sits on the control plane.
 
 1. **MCP** between Linx and the control plane. Linx sees a stable set of tools and never talks to AgentAPI or Render directly.
 2. **OpenAPI + `launch.json` + HTTP** between the control plane, Render, and apps. Apps expose HTTP and know nothing about MCP; the control plane validates and forwards requests.
-3. **Casting HTTP API** between the control plane and the casting service. Render supplies a media stream URL; the control plane asks Casting to play it.
+3. **Casting HTTP API** between the control plane and the casting service. Render supplies the media stream URL; Casting owns protocol control and playback.
+4. **Portal HTTP API** between the browser and the control plane. Session cookie, same-origin JSON writes; user routes under `/api/portal/*`, admin routes under `/api/admin/*`.
 
 Invariants to preserve when changing code:
 
