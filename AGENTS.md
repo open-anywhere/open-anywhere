@@ -30,7 +30,8 @@ Because nearly every household and every business already owns at least one scre
 Current commercial facts, stated once so agents do not restate a different version:
 
 - **Beachhead.** 18–30 party organizers and 30–45 households with children. The first profit engine is hospitality and party venues (民宿、轰趴馆、桌游店).
-- **Entry price.** 68 CNY/month standard plan. Standard annual card 599 CNY. Family annual card has a list price of 899 CNY and a first-year transaction price of 599 CNY. Merchant annual card 3,999 CNY.
+- **Entry price.** 68 CNY/month standard plan. Standard annual card 599 CNY (240 credits + 60 run hours). Family annual card: list 899 CNY (360 credits + 100 run hours, includes one toy), first-year transaction 599 CNY without hardware. High-frequency annual card 1,599 CNY (720 credits + 200 run hours). Annual cards are quota-bearing prepaid bundles, not monthly quota × 12.
+- **Merchant price ladder.** Single event 399 CNY; monthly 599 CNY for 4 events; annual 3,999 CNY for 50 events. On-site hosting and setup are 500–1,000 CNY per event and are not included in the software subscription; the 199 CNY first-week single is a founder-led pilot, not a standard SKU.
 - **Credits.** Template 1, edit 2, new app 5, complex app 10. One credit equals one CNY on top-up.
 - **Run hours.** 1 / 3 / 6 / 10 / 15 / 25 hours for the 0 / 39 / 68 / 99 / 166 / 288 CNY tiers.
 - **Stage.** Validation. The first-week loop — 6–9 sessions, 30+ participants, at least 3 real payments collected manually — is the active operating target, not a completed result.
@@ -48,6 +49,8 @@ The company is in its validation stage. The next evidence to collect, in order: 
 
 Shipped and verifiable in this repository: the stable MCP surface (8 tools), asynchronous build through AgentAPI, artifact and OpenAPI validation, the Render runtime with stage capture, DLNA casting, the voice entry, the multi-tenant portal, and multi-app sessions.
 
+Multi-app sessions are implemented, but switching apps currently stops the old app and creates a new Casting session. The invariant that switching must not re-establish casting is not yet met; do not describe switching as seamless or zero-downtime.
+
 Roadmap, not shipped: mobile join and controller, template instantiation and 3-minute fallback, credits/billing/subscriptions, merchant console, children and elderly modes, AirPlay, run box and end devices, a generation-quality evaluation set, and token/cost telemetry.
 
 Agents reviewing or extending this repository must not treat roadmap items as implemented. The business plan marks the same boundary in §0.7.
@@ -58,15 +61,20 @@ Agents reviewing or extending this repository must not treat roadmap items as im
 - A commercial claim must cite code, a dated record under `docs/`, or a sourced external figure in appendix B of the business plan.
 - Do not describe planned work in the present tense. Use "roadmap" or "target" and name the milestone.
 - When two documents disagree on a number, fix the disagreement rather than adding a third number.
+- Commercial price claims must use section 5.3 of the business plan. Annual cards are quota-bearing prepaid bundles; do not describe them as monthly quota × 12 or as unlimited generation.
+- A validation claim must name the sample size, participant composition, and date. A team test is never "market validation".
 
 ## Known Documentation and Implementation Drift
 
 These are known as of 2026-10-26. Treat code and this file as current; the listed documents are being corrected.
 
 - `docs/architecture.md` describes AirPlay in its summary and component table. The implemented casting adapter is DLNA only (`docs/casting.md`); AirPlay is a planned adapter.
-- `docs/product-extensions.md` still marks multi-app sessions as unimplemented. Multi-app sessions are implemented.
+- `docs/product-extensions.md` still marks multi-app sessions as unimplemented. Multi-app sessions are implemented, with the switching limitation described above.
+- `docs/product.md` section 7.1 says the personal party scenario completed a "first full validation". That is the same four-person team test described in Commercial Status; it is a technical happy-path test, not independent market validation. The business plan section 12.1 is authoritative.
 - `docs/business-strategy.md` still says single-tenant and no billing. The Portal is multi-tenant; billing is roadmap, not implemented.
 - `internal/gateway/portal/agent-prompt.txt` predates `update-app` and multi-app support, while `docs/agent-system-prompts/open-anywhere-host.txt` already documents them. Regenerate the embedded prompt from the docs copy and add a test that the two match before shipping.
+- `docs/app-management-mcp.md` lists nine tools including a compatibility helper. The stable product surface is the eight tools in `internal/gateway/mcp/tools.go`; compatibility helpers are not part of the MCP contract.
+- `speaker_probe` is disabled by default and the compatibility probe returns `verified:false`. Do not claim voiceprint or speaker identity is shipped.
 
 ## Architecture
 
