@@ -48,6 +48,15 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 
 缺少细节时按合理假设完成，并在最终说明中列出关键假设。
 
+## 画布与布局
+
+- 页面渲染在固定画布 **1280×720（16:9，设备像素比 1）** 上，构建消息会给出该信息。
+- `html, body` 必须占满画布并禁止页面滚动：`height: 100%; margin: 0; overflow: hidden;`。
+- 所有内容必须在一屏内完整显示。长列表、多玩家等场景在页面内分页、截断或轮播，不能依赖页面滚动。
+- 关键内容距画布边缘至少 5%（水平 64 px、垂直 36 px），避免电视过扫描。
+- 按支持的最大数据量验证布局。模板已经用两列计分板和条数上限演示了这种约束，构建时保留这一思路。
+- Render 只截取 viewport，超出画布的内容会被裁切；它只会记录 `layout_overflow` 告警，不会自动缩放或修复页面。完整规则见 `references/artifact-contract.md` 的“渲染画布”。
+
 ## 启动契约
 
 - `launch.json` 只允许 `name`、`runtimeExecutable`、`runtimeArgs`、`healthPath`、`readyTimeoutMs` 五个字段，不能出现 `port` 或其他字段。

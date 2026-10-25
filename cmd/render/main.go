@@ -17,6 +17,7 @@ import (
 	"time"
 
 	core "github.com/open-anywhere/open-anywhere/internal/render"
+	"github.com/open-anywhere/open-anywhere/pkg/canvas"
 )
 
 func main() {
@@ -37,8 +38,8 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	node := flags.String("node", "node", "Node.js executable")
 	chrome := flags.String("chrome", "", "Chromium executable (auto-detected if empty)")
 	ffmpeg := flags.String("ffmpeg", "ffmpeg", "FFmpeg executable with libx264")
-	width := flags.Int("width", 1280, "video width")
-	height := flags.Int("height", 720, "video height")
+	width := flags.Int("width", canvas.Width, "video width (must keep a 16:9 ratio)")
+	height := flags.Int("height", canvas.Height, "video height (must keep a 16:9 ratio)")
 	fps := flags.Int("fps", 10, "capture frames per second")
 	if err := flags.Parse(args); err != nil {
 		return err

@@ -16,6 +16,8 @@
 | 屏幕映射 | `screens` 指向的 JSON 文件 | 否 |
 | 投屏会话 | Casting 服务内存 | 否 |
 | Render 实例 | Render 服务内存 | 否 |
+| 门户账号、会话、设备记录（计划） | `portal_*` 四张表 | 是（v2，尚未实现） |
+| 虚拟设备凭证（计划） | `{portal.data_dir}/devices/{device_id}.json` | 否，0600 文件 |
 | MCP 调用日志 | 进程标准日志 | 否 |
 
 因此控制面重启后能恢复的是"应用属于谁、处于什么阶段、产物在哪、下一步该做什么"，而不是下游的真实运行状态。下游状态通过 `session_id`、`instance_id`、`projection_session_id` 等已持久化标识，由 `reconcile` 只读核对后重建（见 `internal/gateway/service/reconcile.go`）。
@@ -307,6 +309,8 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 - 删除一个应用会同时删除其产物文件和元数据。
 - 启动或运行时的任何一次裁剪都不做"删除后校验"，因此不是跨表事务。
 
+门户设计已确定把裁剪改为按 `(device_id, agent_id)` 分组、每组保留 10 个，避免用户之间互相挤占（见 [用户管理端设计](user-portal.md) 9.4）。该变更会随 v2 一起实现。
+
 ## 10. Schema 版本与迁移
 
 - 当前 `schemaVersion = 1`，保存在 SQLite `PRAGMA user_version`。
@@ -317,6 +321,8 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
   2. 对已有数据库执行 `ALTER TABLE ... ADD COLUMN`（或重建表）；
   3. 递增 `schemaVersion`；
   4. 保留"新库拒绝启动"的保护，避免旧程序写入不认识的 schema。
+
+门户设计会引入 v2：只新增 `portal_users`、`portal_sessions`、`portal_devices`、`portal_settings` 四张表，不修改现有表；实现时递增 `schemaVersion`，并把第 15 节改为“按当前实现整理”。
 
 ## 11. 容量与性能
 
@@ -343,7 +349,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 4. **`EventCursor` 只写不读**：与接口文档 3.7 的"按游标跳过已处理事件"不一致。要么在恢复时真正使用游标/事件 ID 集合，要么从 schema 与文档中移除该字段，避免误以为去重是跨重启的。
 5. **整快照高频写入**：构建过程中每个 thinking 事件都重写完整快照。建议把高频进度拆成独立小表或独立列，或按时间/事件数节流，降低 WAL 和磁盘压力。
 6. **跨表写入不是事务**：产物与应用快照、应用删除与产物删除分属不同语句。建议明确可接受的中间状态，并配合启动时的孤儿扫描；否则崩溃窗口会留下不一致。
-7. **历史上限是全局的**：一台设备产生 10 个应用后，其他设备的旧应用也可能被裁掉。如果产品语义是"每个设备 + 智能体保留 10 个"，需要把裁剪改成按所有者分组，并相应索引归属列。
+7. **历史上限是全局的**：一台设备产生 10 个应用后，其他设备的旧应用也可能被裁掉。如果产品语义是"每个设备 + 智能体保留 10 个"，需要把裁剪改成按所有者分组，并相应索引归属列。门户设计已确定改为按 owner 分组，待实现。
 8. **缺少逐语句超时**：建议 CRUD 使用带超时的 `ExecContext/QueryContext`，避免锁等待把 `/healthz` 和 MCP 响应一起拖住。
 9. **不支持多副本**：`Revision` 只能防止同一数据库内的旧快照覆盖新快照，无法协调两个 Gateway 同时管理同一批应用。部署文档应明确"一个数据库一个进程"。
 
@@ -376,3 +382,64 @@ sqlite3 open-anywhere.gateway.db \
 # 在线备份（WAL 模式下不要只拷主文件）
 sqlite3 open-anywhere.gateway.db ".backup 'gateway-backup.db'"
 ```
+
+## 15. 门户表（v2 设计，尚未实现）
+
+> 状态：设计稿，代码尚未落地。实现 Phase A 时，本节随建表语句一起改为“按当前实现整理”，并更新第 10 节的版本号。
+
+门户与 Gateway 共用同一个 SQLite。v2 只新增表，不修改 `apps` 与 `artifacts`：
+
+```sql
+CREATE TABLE IF NOT EXISTS portal_users (
+    id            TEXT PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS portal_sessions (
+    token_hash   TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    user_agent   TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS portal_sessions_user ON portal_sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS portal_devices (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    mac             TEXT NOT NULL UNIQUE,
+    client_id       TEXT NOT NULL,
+    linx_agent_id   TEXT NOT NULL DEFAULT '',
+    agent_name      TEXT NOT NULL DEFAULT '',
+    state           TEXT NOT NULL,
+    step            TEXT NOT NULL DEFAULT '',
+    error           TEXT NOT NULL DEFAULT '',
+    credential_path TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    registered_at   TEXT,
+    FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS portal_devices_user ON portal_devices(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS portal_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+```
+
+关系与约定：
+
+- `portal_users` 1:N `portal_sessions` / `portal_devices`；外键依赖 DSN 里的 `foreign_keys(1)`。
+- `portal_devices.mac` 对应 `apps.data.Owner.device_id`，`linx_agent_id` 对应 `Owner.agent_id`。应用表不新增外键：应用由灵矽 MCP 写入，可能早于门户记录，归属过滤仍在内存完成。
+- `credential_path` 只是相对 `portal.data_dir` 的文件名，设备 token 不进数据库；凭证文件 `0600`，目录 `0700`。
+- `portal_sessions.token_hash` 存会话 token 的 SHA-256，不存明文；启动时清理 `expires_at < now` 的行。
+- `portal_settings` 保存平台侧的 MCP Server/实例 ID 等少量全局配置，不保存 API Key。
+- 容量很小（本期一个用户一台设备），不设归档策略；删除用户时需要先按“停语音 → 解绑设备 → 删除智能体 → 删除凭证”清理平台资源，再依赖 `ON DELETE CASCADE` 删除本地行。

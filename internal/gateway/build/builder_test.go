@@ -540,6 +540,11 @@ func TestBuildPrompt(t *testing.T) {
 	if !strings.Contains(without, "请按系统提示词和 app-builder 技能完成构建。") {
 		t.Fatalf("prompt does not reference the system prompt or skill: %q", without)
 	}
+	for _, want := range []string{"渲染画布：1280×720（16:9）", "不允许页面滚动", "距边缘至少 5%"} {
+		if !strings.Contains(without, want) {
+			t.Fatalf("prompt does not carry canvas constraint %q: %q", want, without)
+		}
+	}
 	for _, constraint := range []string{"硬性要求", "artifact.tar.gz", "user_name", "launch.json", "不要提问"} {
 		if strings.Contains(without, constraint) {
 			t.Fatalf("prompt should leave %q to the system prompt: %q", constraint, without)

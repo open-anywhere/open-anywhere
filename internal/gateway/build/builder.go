@@ -21,6 +21,7 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/artifact"
 	"github.com/open-anywhere/open-anywhere/pkg/agentapi"
+	"github.com/open-anywhere/open-anywhere/pkg/canvas"
 )
 
 // Sentinel errors for follow-up turns on an existing AgentAPI session.
@@ -657,6 +658,7 @@ func BuildPrompt(requirement string, playerNames []string) string {
 		encoded, _ := json.Marshal(playerNames)
 		prompt += "\n\n初始玩家（按加入顺序）：" + string(encoded)
 	}
+	prompt += "\n\n渲染画布：" + canvas.Description() + "。页面必须在画布内完整显示，不允许页面滚动；关键内容距边缘至少 5%。"
 	return prompt + "\n\n请按系统提示词和 app-builder 技能完成构建。"
 }
 

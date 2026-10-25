@@ -98,6 +98,15 @@ type browserHooks struct {
 	start   func(context.Context, Config) (context.Context, context.CancelFunc, context.CancelFunc)
 	run     func(context.Context, ...chromedp.Action) error
 	capture func(context.Context) ([]byte, error)
+	layout  func(context.Context) (layoutMetrics, error)
+}
+
+// layoutMetrics describes the rendered page's scrollable content and viewport.
+type layoutMetrics struct {
+	Width          int `json:"width"`
+	Height         int `json:"height"`
+	ViewportWidth  int `json:"viewportWidth"`
+	ViewportHeight int `json:"viewportHeight"`
 }
 
 func (c Config) browserHooks() browserHooks {
@@ -114,6 +123,7 @@ func (c Config) browserHooks() browserHooks {
 		},
 		run:     chromedp.Run,
 		capture: captureFrame,
+		layout:  measureLayout,
 	}
 	if c.browser.start != nil {
 		h.start = c.browser.start
@@ -123,6 +133,9 @@ func (c Config) browserHooks() browserHooks {
 	}
 	if c.browser.capture != nil {
 		h.capture = c.browser.capture
+	}
+	if c.browser.layout != nil {
+		h.layout = c.browser.layout
 	}
 	return h
 }
@@ -144,6 +157,19 @@ func captureScreenshot(ctx context.Context, frame *[]byte) error {
 	return err
 }
 
+// measureLayout reads the page's scrollable content size and viewport size.
+// It is diagnostic only: a failure to measure must not stop the stream.
+func measureLayout(ctx context.Context) (layoutMetrics, error) {
+	var m layoutMetrics
+	err := chromedp.Run(ctx, chromedp.Evaluate(`({
+		width: Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0),
+		height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),
+		viewportWidth: window.innerWidth,
+		viewportHeight: window.innerHeight
+	})`, &m))
+	return m, err
+}
+
 func startMedia(life, startup context.Context, cfg Config, url, logPath string, h *hub) (*media, error) {
 	hooks := cfg.browserHooks()
 	ctx, cancel := context.WithCancel(life)
@@ -160,6 +186,30 @@ func startMedia(life, startup context.Context, cfg Config, url, logPath string, 
 	defer stopDeadline()
 	if err := hooks.run(browser, chromedp.EmulateViewport(int64(cfg.Width), int64(cfg.Height)), chromedp.Navigate(url), chromedp.WaitReady("body", chromedp.ByQuery)); err != nil {
 		return m, fmt.Errorf("load browser page: %w", err)
+	}
+	// Overflow is a build-contract defect, not a render failure: report it and
+	// keep streaming the visible viewport. Re-check periodically because page
+	// content can grow after load.
+	overflow := false
+	var lastOverflowLog time.Time
+	checkLayout := func() {
+		if hooks.layout == nil || cfg.Logger == nil {
+			return
+		}
+		metrics, err := hooks.layout(browser)
+		if err != nil {
+			return
+		}
+		if metrics.Width <= metrics.ViewportWidth && metrics.Height <= metrics.ViewportHeight {
+			overflow = false
+			return
+		}
+		if overflow && time.Since(lastOverflowLog) < 10*time.Second {
+			return
+		}
+		cfg.Logger.Printf("layout_overflow content=%dx%d viewport=%dx%d canvas=%dx%d", metrics.Width, metrics.Height, metrics.ViewportWidth, metrics.ViewportHeight, cfg.Width, cfg.Height)
+		overflow = true
+		lastOverflowLog = time.Now()
 	}
 	var err error
 	m.log, err = os.Create(logPath)
@@ -189,7 +239,12 @@ func startMedia(life, startup context.Context, cfg Config, url, logPath string, 
 		defer stdin.Close()
 		ticker := time.NewTicker(time.Second / time.Duration(cfg.FPS))
 		defer ticker.Stop()
+		frames := 0
 		for {
+			if frames%cfg.FPS == 0 {
+				checkLayout()
+			}
+			frames++
 			frame, err := hooks.capture(browser)
 			if err != nil {
 				m.fail(fmt.Errorf("browser capture: %w", err))
