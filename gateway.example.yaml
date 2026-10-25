@@ -64,6 +64,7 @@ portal:
   enabled: false
   data_dir: "portal-data"      # 设备凭证、secret.key 与运行时数据，创建为 0700
   web_dir: "portal/dist"       # Vite 构建产物
+  web_embedded: false          # true 时改用编译进二进制的产物（需 -tags portalembed），忽略 web_dir
   username: ""                 # 管理员引导账号，可用 PORTAL_USERNAME 覆盖
   password: ""                 # 管理员引导密码，可用 PORTAL_PASSWORD 覆盖
   session_ttl: "720h"

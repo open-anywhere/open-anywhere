@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestRootSPAServesClientRoutesAndRejectsReservedPrefixes(t *testing.T) {
@@ -80,5 +81,48 @@ func TestRootSPAServesClientRoutesAndRejectsReservedPrefixes(t *testing.T) {
 	missing.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "pnpm build") {
 		t.Fatalf("missing build status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRootSPAServesFromFS(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html":    {Data: []byte("<!doctype html><div id=root>shell</div>")},
+		"assets/app.js": {Data: []byte("console.log('app')")},
+	}
+	handler := newSPA(fsys, "/", "", rootReservedPrefixes, true)
+
+	for _, path := range []string{"/", "/login", "/portal/apps/app_1"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "shell") {
+			t.Errorf("%s status=%d body=%q", path, recorder.Code, recorder.Body.String())
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "console.log") {
+		t.Fatalf("asset status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("asset cache-control=%q", recorder.Header().Get("Cache-Control"))
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil)
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("missing asset status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	// No filesystem at all: the handler explains how to build instead of panicking.
+	empty := newSPA(nil, "/", "", rootReservedPrefixes, true)
+	request = httptest.NewRequest(http.MethodGet, "/portal", nil)
+	recorder = httptest.NewRecorder()
+	empty.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "pnpm build") {
+		t.Fatalf("empty fs status=%d body=%q", recorder.Code, recorder.Body.String())
 	}
 }

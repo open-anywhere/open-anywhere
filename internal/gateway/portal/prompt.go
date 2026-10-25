@@ -39,6 +39,7 @@ func SystemPrompt(path string) (string, error) {
 type BuildConfig struct {
 	DataDir           string
 	WebDir            string
+	WebEmbedded       bool
 	Username          string
 	Password          string
 	SessionTTL        time.Duration
@@ -75,6 +76,13 @@ func NewService(ctx context.Context, cfg BuildConfig, db *store.DB, apps *servic
 	}
 	if err := os.Chmod(cfg.DataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("portal: secure data directory: %w", err)
+	}
+	webDir := cfg.WebDir
+	if cfg.WebEmbedded {
+		if !EmbeddedWebAvailable() {
+			return nil, fmt.Errorf("portal: frontend is not embedded in this binary; rebuild with -tags portalembed")
+		}
+		webDir = ""
 	}
 	prompt, err := SystemPrompt(cfg.SystemPrompt)
 	if err != nil {
@@ -120,8 +128,8 @@ func NewService(ctx context.Context, cfg BuildConfig, db *store.DB, apps *servic
 		TokenPollInterval: cfg.TokenPollInterval,
 		TokenPollAttempts: cfg.TokenPollAttempts,
 	})
-	api := NewAPI(db, auth, apps, voice, provision, cfg.WebDir)
+	api := NewAPI(db, auth, apps, voice, provision, webDir)
 	api.SetPlatform(provider, pool, resolver)
-	logMissingWebDir(cfg.WebDir)
+	logMissingWebDir(webDir)
 	return &Service{Auth: auth, Provision: provision, Voice: voice, API: api, Settings: provider, Resolver: resolver}, nil
 }

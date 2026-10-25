@@ -219,6 +219,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 		portalService, err := portal.NewService(ctx, portal.BuildConfig{
 			DataDir:           cfg.PortalDataDir,
 			WebDir:            cfg.PortalWebDir,
+			WebEmbedded:       cfg.PortalWebEmbedded,
 			Username:          cfg.PortalUsername,
 			Password:          cfg.PortalPassword,
 			SessionTTL:        cfg.PortalSessionTTL,

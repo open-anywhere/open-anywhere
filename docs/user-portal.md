@@ -331,6 +331,7 @@ portal:
   enabled: true
   data_dir: "portal-data"        # 凭证、secret.key、运行时数据，目录 0700
   web_dir: "portal/dist"         # Vite 构建产物
+  web_embedded: false            # true 时用编译进二进制的产物，忽略 web_dir
   username: "admin"              # 管理员引导账号
   password: "<至少 8 个字符>"     # 建议用 PORTAL_PASSWORD 注入
   allow_registration: false      # 仅首次启动 seed 到 registration.open
@@ -346,6 +347,7 @@ linx:
 ```
 
 - 先构建前端：`cd portal && pnpm install && pnpm build`；未构建时 `/` 返回 503。
+- 单文件部署：`make build-gateway-embed`（等价于 `go build -tags portalembed`）。`pnpm build` 会把 `portal/dist` 同步到 `internal/gateway/portal/webdist` 供 `go:embed` 使用，运行时把 `portal.web_embedded` 设为 `true`。未带 tag 的二进制配置该项会启动失败，避免误以为前端已内嵌。
 - 灵矽云必须能访问 `linx.public_mcp_url`；局域网地址不可达。
 - 浏览器麦克风要求 HTTPS 或 `localhost`。
 - 单进程、单 SQLite；一个数据库只对应一个 Gateway。

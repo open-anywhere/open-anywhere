@@ -2,7 +2,7 @@ package portal
 
 import (
 	"fmt"
-	"html"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -11,12 +11,13 @@ import (
 	"strings"
 )
 
-// SPA serves the Vite build from disk. The portal deliberately keeps the
-// frontend out of the Go binary: `pnpm build` produces portal/dist, and
-// portal.web_dir points at it. Client routes fall back to index.html so a
-// refresh survives at any depth.
+// SPA serves the Vite build. By default it is read from disk: `pnpm build`
+// produces portal/dist, and portal.web_dir points at it. A `-tags portalembed`
+// build can carry the same output inside the binary instead, selected by
+// portal.web_embedded; the empty dir then means "serve the embedded copy".
+// Client routes fall back to index.html so a refresh survives at any depth.
 type SPA struct {
-	dir string
+	fsys fs.FS
 	// prefix is the URL prefix this handler owns. NewSPA owns /portal/;
 	// NewRootSPA owns / and rejects the gateway's reserved prefixes.
 	prefix string
@@ -30,22 +31,44 @@ type SPA struct {
 	missingFile404 bool
 }
 
+// rootReservedPrefixes belong to the gateway's API, MCP, artifact, voice and
+// health endpoints; the site shell must never answer for them.
+var rootReservedPrefixes = map[string]struct{}{
+	"mcp": {}, "sse": {}, "api": {}, "voice": {}, "artifacts": {}, "healthz": {},
+}
+
 // NewSPA returns a handler for the built portal under /portal/. A missing
-// directory is not an error: the handler explains how to build the frontend
+// build is not an error: the handler explains how to build the frontend
 // instead of crashing the gateway.
 func NewSPA(dir string) http.Handler {
-	return &SPA{dir: dir, prefix: "/portal/", bareRedirect: "/portal/"}
+	return newSPA(resolveWebFS(dir), "/portal/", "/portal/", nil, false)
 }
 
 // NewRootSPA returns the root site handler. It serves the same build at /,
 // /login and /portal, and refuses the prefixes owned by the gateway's API,
 // MCP, artifact, voice and health endpoints.
 func NewRootSPA(dir string) http.Handler {
+	return newSPA(resolveWebFS(dir), "/", "", rootReservedPrefixes, true)
+}
+
+// EmbeddedWebAvailable reports whether this build carries the portal frontend.
+func EmbeddedWebAvailable() bool { return embeddedWebFS() != nil }
+
+// resolveWebFS prefers the compiled-in build when web_dir is empty.
+func resolveWebFS(dir string) fs.FS {
+	if dir != "" {
+		return os.DirFS(dir)
+	}
+	return embeddedWebFS()
+}
+
+func newSPA(fsys fs.FS, prefix, bareRedirect string, reserved map[string]struct{}, missingFile404 bool) http.Handler {
 	return &SPA{
-		dir:            dir,
-		prefix:         "/",
-		reserved:       map[string]struct{}{"mcp": {}, "sse": {}, "api": {}, "voice": {}, "artifacts": {}, "healthz": {}},
-		missingFile404: true,
+		fsys:           fsys,
+		prefix:         prefix,
+		bareRedirect:   bareRedirect,
+		reserved:       reserved,
+		missingFile404: missingFile404,
 	}
 }
 
@@ -79,12 +102,14 @@ func (s *SPA) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Only real files are served directly. Everything else is a client route
 	// and must return the SPA shell, unless it looks like a stale asset.
 	name := strings.TrimPrefix(clean, "/")
-	if file, err := os.Stat(filepath.Join(s.dir, filepath.FromSlash(name))); err == nil && !file.IsDir() {
-		if strings.HasPrefix(clean, "/assets/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if s.fsys != nil {
+		if file, err := fs.Stat(s.fsys, name); err == nil && !file.IsDir() {
+			if strings.HasPrefix(clean, "/assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
+			http.ServeFileFS(w, r, s.fsys, name)
+			return
 		}
-		http.ServeFile(w, r, filepath.Join(s.dir, filepath.FromSlash(name)))
-		return
 	}
 	if s.missingFile404 && path.Ext(clean) != "" {
 		http.NotFound(w, r)
@@ -103,15 +128,16 @@ func (s *SPA) reservedPath(p string) bool {
 }
 
 func (s *SPA) serveIndex(w http.ResponseWriter, r *http.Request) {
-	index := filepath.Join(s.dir, "index.html")
-	if info, err := os.Stat(index); err != nil || info.IsDir() {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = fmt.Fprintf(w, missingBuildPage, html.EscapeString(s.dir))
-		return
+	if s.fsys != nil {
+		if info, err := fs.Stat(s.fsys, "index.html"); err == nil && !info.IsDir() {
+			w.Header().Set("Cache-Control", "no-cache")
+			http.ServeFileFS(w, r, s.fsys, "index.html")
+			return
+		}
 	}
-	w.Header().Set("Cache-Control", "no-cache")
-	http.ServeFile(w, r, index)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = fmt.Fprint(w, missingBuildPage)
 }
 
 const missingBuildPage = `<!doctype html>
@@ -123,11 +149,19 @@ const missingBuildPage = `<!doctype html>
 <pre style="background:#1b1f27;padding:16px;border-radius:10px">cd portal
 pnpm install
 pnpm build</pre>
-<p>然后把 <code>portal.web_dir</code> 指向构建产物（默认 <code>%s</code>）。</p>
+<p>构建产物会自动同步到 <code>internal/gateway/portal/webdist</code>：用
+<code>-tags portalembed</code> 重新编译即可内嵌进二进制，或把
+<code>portal.web_dir</code> 指向 <code>portal/dist</code> 从磁盘加载。</p>
 </body></html>`
 
 // logMissingWebDir records a one-line hint at startup.
 func logMissingWebDir(dir string) {
+	if dir == "" {
+		if embeddedWebFS() == nil {
+			log.Printf("portal: no frontend available; run `cd portal && pnpm install && pnpm build`, then rebuild with -tags portalembed or set portal.web_dir")
+		}
+		return
+	}
 	if _, err := os.Stat(filepath.Join(dir, "index.html")); err != nil {
 		log.Printf("portal: frontend not built in %s; run `cd portal && pnpm install && pnpm build`", dir)
 	}

@@ -52,6 +52,7 @@ type Config struct {
 	PortalEnabled           bool
 	PortalDataDir           string
 	PortalWebDir            string
+	PortalWebEmbedded       bool
 	PortalUsername          string
 	PortalPassword          string
 	PortalSessionTTL        time.Duration
@@ -122,6 +123,7 @@ type fileConfig struct {
 		Enabled           bool   `yaml:"enabled"`
 		DataDir           string `yaml:"data_dir"`
 		WebDir            string `yaml:"web_dir"`
+		WebEmbedded       bool   `yaml:"web_embedded"`
 		Username          string `yaml:"username"`
 		Password          string `yaml:"password"`
 		SessionTTL        string `yaml:"session_ttl"`
@@ -221,6 +223,7 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	flags.BoolVar(&cfg.PortalEnabled, "portal", envBool(getenv, "PORTAL_ENABLED", base.PortalEnabled), "serve the user portal")
 	flags.StringVar(&cfg.PortalDataDir, "portal-data-dir", env(getenv, "PORTAL_DATA_DIR", base.PortalDataDir), "portal credential and runtime directory")
 	flags.StringVar(&cfg.PortalWebDir, "portal-web-dir", env(getenv, "PORTAL_WEB_DIR", base.PortalWebDir), "built portal frontend directory")
+	flags.BoolVar(&cfg.PortalWebEmbedded, "portal-web-embedded", envBool(getenv, "PORTAL_WEB_EMBEDDED", base.PortalWebEmbedded), "serve the portal frontend embedded in the binary (requires -tags portalembed)")
 	flags.DurationVar(&cfg.PortalSessionTTL, "portal-session-ttl", envDuration(getenv, "PORTAL_SESSION_TTL", base.PortalSessionTTL), "portal session lifetime")
 	flags.BoolVar(&cfg.PortalCookieSecure, "portal-cookie-secure", envBool(getenv, "PORTAL_COOKIE_SECURE", base.PortalCookieSecure), "mark portal cookies Secure (HTTPS)")
 	flags.BoolVar(&cfg.PortalAllowRegistration, "portal-allow-registration", envBool(getenv, "PORTAL_ALLOW_REGISTRATION", base.PortalAllowRegistration), "seed open registration for a fresh database")
@@ -314,8 +317,8 @@ func (c Config) Validate() error {
 		if err != nil || mcpURL.Host == "" || (mcpURL.Scheme != "http" && mcpURL.Scheme != "https") {
 			return fmt.Errorf("gateway: -linx-public-mcp-url must be an absolute HTTP(S) URL")
 		}
-		if c.PortalDataDir == "" || c.PortalWebDir == "" {
-			return fmt.Errorf("gateway: portal data and web directories are required")
+		if c.PortalDataDir == "" {
+			return fmt.Errorf("gateway: portal data directory is required")
 		}
 		if strings.TrimSpace(c.PortalUsername) == "" || c.PortalPassword == "" {
 			return fmt.Errorf("gateway: portal username and password are required when the portal is enabled")
@@ -461,6 +464,9 @@ func applyFile(cfg *Config, file fileConfig) error {
 	}
 	if file.Portal.WebDir != "" {
 		cfg.PortalWebDir = file.Portal.WebDir
+	}
+	if file.Portal.WebEmbedded {
+		cfg.PortalWebEmbedded = true
 	}
 	if file.Portal.Username != "" {
 		cfg.PortalUsername = file.Portal.Username
