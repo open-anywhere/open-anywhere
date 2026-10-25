@@ -190,6 +190,10 @@ func (b *Builder) watch(appID, sessionID string) {
 		// treated as this turn finishing (false idle + stale artifact).
 		afterCursor = snap.EventCursor
 	}
+	// Continue / Resume / stale-retry already advanced past prior events. If the
+	// stream ends with the session idle and nothing new after the cursor, finish
+	// via complete() instead of spinning until BuildTimeout.
+	hadCursor := afterCursor != ""
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	seen := make(map[string]bool)
@@ -230,6 +234,9 @@ func (b *Builder) watch(appID, sessionID string) {
 			if afterCursor != "" {
 				if event.ID == afterCursor {
 					afterCursor = ""
+					// Prior turn already ran; a following idle must complete even
+					// if this watch invocation never saw status_running again.
+					active = true
 				}
 				continue
 			}
@@ -278,6 +285,22 @@ func (b *Builder) watch(appID, sessionID string) {
 			case "session.status_terminated":
 				stream.Close()
 				b.fail(appID, "构建会话已终止", fmt.Errorf("session terminated"))
+				b.archive(sessionID)
+				return
+			}
+		}
+		// Continue / Resume / stale-retry already had a cursor. After catch-up
+		// the stream may end with the session idle and no further status_idle
+		// event to observe — collect once and settle instead of spinning.
+		// (Do not use this on a fresh Start: mid-build stream drops still need
+		// reconnect while the session may briefly report idle.)
+		if hadCursor && afterCursor == "" {
+			switch status := b.sessionStatus(sessionID); status {
+			case "idle":
+				b.complete(appID, sessionID)
+				return
+			case "terminated", "archived":
+				b.fail(appID, "构建会话已终止", fmt.Errorf("session %s", status))
 				b.archive(sessionID)
 				return
 			}
@@ -372,12 +395,18 @@ func (b *Builder) complete(appID, sessionID string) {
 		}
 	}
 	os.Remove(path)
-	// Premature end_turn can surface the previous turn's package. Stay in
-	// building and keep watching so a later real delivery can still register.
+	// Premature end_turn can surface the previous turn's package. If the
+	// session is still running, keep watching for a real delivery; if it is
+	// already idle, the agent finished without a fresh artifact — fail (and
+	// keep the previous package on update) instead of looping forever.
 	if isStaleArtifact(err) && entry.Snapshot().State == app.StateBuilding {
-		b.logf("build %s: %v; resume watch for a fresher artifact", appID, err)
-		go b.watch(appID, sessionID)
-		return
+		status := b.sessionStatus(sessionID)
+		if status == "running" || status == "rescheduling" {
+			b.logf("build %s: %v (session %s); resume watch for a fresher artifact", appID, err, status)
+			go b.watch(appID, sessionID)
+			return
+		}
+		b.logf("build %s: %v (session %s); giving up without a fresher artifact", appID, err, status)
 	}
 	kept := b.fail(appID, userMessage(err), err)
 	if !kept {

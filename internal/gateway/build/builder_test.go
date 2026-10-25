@@ -371,6 +371,71 @@ func TestWatchIgnoresReplayedPriorTurnWhenCursorSet(t *testing.T) {
 	}
 }
 
+func TestWatchSettlesWhenIdleAfterCursorWithNoNewEvents(t *testing.T) {
+	// Stale-retry re-enters watch with EventCursor set; AgentAPI is already idle
+	// and the SSE replay has nothing after the cursor. Without an EOF→complete
+	// path the watcher spun until BuildTimeout while the app stayed "building".
+	archive := testArtifact(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/sessions/ses_1/events/stream":
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			write := func(data string) {
+				io.WriteString(w, "event: message\ndata: "+data+"\n\n")
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			write(`{"id":"e_prior_msg","type":"agent.message","content":[{"type":"text","text":"上一轮"}]}`)
+			write(`{"id":"e_prior_idle","type":"session.status_idle","stop_reason":{"type":"end_turn"}}`)
+			// EOF — no events after the cursor.
+		case "/v1/sessions/ses_1":
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"id":"ses_1","status":"idle"}`)
+		case "/v1/files":
+			// No downloadable artifact in-window → OUTPUT_STALE immediately
+			// (created_at before BuildStartedAt), without collect's long retry.
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{
+					"id": "file_old", "filename": "artifact.tar.gz", "downloadable": true,
+					"size_bytes": len(archive),
+					"created_at": time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+				}},
+				"has_more": false,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	notifier := &fakeNotifier{}
+	builder, registry, _ := newTestBuilder(t, server.URL, notifier)
+	builder.cfg.BuildTimeout = time.Minute
+	// collect retries 0/5/15/30s on stale candidates; collapse sleeps for the test.
+	builder.sleepFn = func(context.Context, time.Duration) bool { return true }
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	entry := registry.Add(app.App{
+		ID: "app_1", Owner: owner, Prompt: "自动播放音效", State: app.StateBuilding,
+		SessionID: "ses_1", EventCursor: "e_prior_idle",
+		BuildStartedAt: time.Now().UTC(),
+		Name:           "spring",
+		Artifact:       app.Artifact{SHA256: "keep-me", Path: "old.tar.gz", DownloadURL: "http://old"},
+	})
+
+	go builder.watch("app_1", "ses_1")
+	waitFor(t, 5*time.Second, func() bool { return entry.Snapshot().State != app.StateBuilding })
+	snapshot := entry.Snapshot()
+	if snapshot.State != app.StateIdle || snapshot.Artifact.SHA256 != "keep-me" {
+		t.Fatalf("expected keep previous on idle+stale, got %+v", snapshot)
+	}
+	if notes := notifier.list(); len(notes) != 1 || !strings.Contains(notes[0].Message, "更新失败") {
+		t.Fatalf("notes = %+v", notes)
+	}
+}
+
 func TestBuilderContinueUpdates(t *testing.T) {
 	archive := testArtifact(t)
 	rec := &recorder{}
