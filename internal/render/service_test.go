@@ -245,6 +245,7 @@ func TestPortInspectionFailureIsNotReportedAsFree(t *testing.T) {
 func TestConfigurationAndClosedService(t *testing.T) {
 	for _, cfg := range []Config{
 		{Width: 321}, {FPS: 31}, {Width: 640, Height: 480}, {Width: 1920, Height: 1081}, {StartupTimeout: time.Millisecond}, {PublicURL: "ftp://example.com"},
+		{AudioFormat: "pulse"}, {AudioInput: "render.monitor"}, {AudioFormat: "pulse", AudioInput: "bad\ninput"},
 		{PublicURL: "http://localhost:8090", AppHost: "bad/host"},
 		{WorkDir: t.TempDir(), PublicURL: "http://:8090"},
 		{PublicURL: "http://localhost:8090"},

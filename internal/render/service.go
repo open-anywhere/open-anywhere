@@ -24,6 +24,9 @@ import (
 	api "github.com/open-anywhere/open-anywhere/pkg/render"
 )
 
+// Config controls a Render process. AudioFormat and AudioInput identify a
+// host capture device (for example pulse/render.monitor or avfoundation/:6);
+// both must be set to enable audio, while an empty pair keeps video-only mode.
 type Config struct {
 	WorkDir        string
 	PublicURL      string
@@ -34,6 +37,8 @@ type Config struct {
 	Width          int
 	Height         int
 	FPS            int
+	AudioFormat    string
+	AudioInput     string
 	StartupTimeout time.Duration
 	ServicePorts   []int
 	Logger         *log.Logger
@@ -95,6 +100,17 @@ func failure(status int, code, msg string) *Failure {
 	return &Failure{HTTP: status, Detail: api.Error{Stage: "starting", Code: code, Message: msg}}
 }
 
+func (c Config) audioEnabled() bool {
+	return c.AudioFormat != "" && c.AudioInput != ""
+}
+
+func (c Config) audioCodec() string {
+	if c.audioEnabled() {
+		return "aac"
+	}
+	return ""
+}
+
 func New(cfg Config) (*Service, error) {
 	if cfg.Node == "" {
 		cfg.Node = "node"
@@ -113,6 +129,14 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.Width < 320 || cfg.Height < 180 || cfg.Width > 3840 || cfg.Height > 2160 || !canvas.Is16x9(cfg.Width, cfg.Height) || cfg.Width%2 != 0 || cfg.Height%2 != 0 || cfg.FPS < 1 || cfg.FPS > 30 {
 		return nil, errors.New("invalid video dimensions or FPS: width and height must be 16:9")
+	}
+	cfg.AudioFormat = strings.TrimSpace(cfg.AudioFormat)
+	cfg.AudioInput = strings.TrimSpace(cfg.AudioInput)
+	if (cfg.AudioFormat == "") != (cfg.AudioInput == "") {
+		return nil, errors.New("audio format and audio input must be set together")
+	}
+	if strings.ContainsAny(cfg.AudioFormat, "\r\n\x00") || strings.ContainsAny(cfg.AudioInput, "\r\n\x00") {
+		return nil, errors.New("invalid audio input")
 	}
 	if cfg.StartupTimeout == 0 {
 		cfg.StartupTimeout = 60 * time.Second
@@ -385,6 +409,12 @@ func (s *Service) execute(r *run) {
 	}
 	video, err = startMedia(r.ctx, startup, s.cfg, localURL+"/", filepath.Join(dir, "encoder.log"), r.hub)
 	if err != nil {
+		// startMedia may have started FFmpeg before a startup failure was
+		// observed. It returns the handle so the caller can always reap it.
+		if video != nil {
+			_ = video.close()
+			video = nil
+		}
 		fail(502, "STREAM_START_FAILED", err)
 		return
 	}
@@ -409,7 +439,7 @@ func (s *Service) execute(r *run) {
 	}
 	r.info.State = "ready"
 	r.info.AppBaseURL = "http://" + net.JoinHostPort(s.cfg.AppHost, strconv.Itoa(r.info.Port))
-	r.info.Source = &casting.StreamSource{Type: "stream", URL: s.cfg.PublicURL + "/streams/" + r.info.InstanceID + "/live.ts", Format: "mpegts", VideoCodec: "h264", AudioCodec: ""}
+	r.info.Source = &casting.StreamSource{Type: "stream", URL: s.cfg.PublicURL + "/streams/" + r.info.InstanceID + "/live.ts", Format: "mpegts", VideoCodec: "h264", AudioCodec: s.cfg.audioCodec()}
 	s.mu.Unlock()
 	started = true
 	close(r.started)

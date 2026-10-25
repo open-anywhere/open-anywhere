@@ -114,6 +114,15 @@ func (c Config) browserHooks() browserHooks {
 		start: func(ctx context.Context, cfg Config) (context.Context, context.CancelFunc, context.CancelFunc) {
 			options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
 			options = append(options, chromedp.WindowSize(cfg.Width, cfg.Height), chromedp.Flag("hide-scrollbars", true), chromedp.Flag("disable-background-timer-throttling", true))
+			if cfg.audioEnabled() {
+				// Headless Chromium commonly starts with audio muted and blocks
+				// media autoplay. Render has no user gesture, so explicitly enable
+				// both when an audio capture device is configured.
+				options = append(options,
+					chromedp.Flag("mute-audio", false),
+					chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
+				)
+			}
 			if cfg.Chrome != "" {
 				options = append(options, chromedp.ExecPath(cfg.Chrome))
 			}
@@ -170,6 +179,51 @@ func measureLayout(ctx context.Context) (layoutMetrics, error) {
 	return m, err
 }
 
+const (
+	audioSampleRate = 48000
+	audioChannels   = 2
+)
+
+// encoderArgs builds the FFmpeg command used by one Render instance. The
+// screenshot pipe is always input 0. If an audio device is configured, input
+// 1 is a live PCM stream captured by FFmpeg and encoded as AAC in the same
+// MPEG-TS output. Keeping both inputs in one process gives the muxer one clock
+// and avoids a second process introducing drift or an unbounded PCM buffer.
+func encoderArgs(cfg Config, fps string) []string {
+	args := []string{
+		"-hide_banner", "-loglevel", "warning",
+		"-f", "image2pipe", "-vcodec", "mjpeg", "-framerate", fps, "-i", "pipe:0",
+	}
+	if cfg.audioEnabled() {
+		args = append(args,
+			"-thread_queue_size", "512",
+			"-f", cfg.AudioFormat, "-i", cfg.AudioInput,
+			"-map", "0:v:0", "-map", "1:a:0",
+		)
+	} else {
+		args = append(args, "-an")
+	}
+	args = append(args,
+		"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+		"-pix_fmt", "yuv420p", "-threads", "2",
+		"-g", fps, "-keyint_min", fps, "-sc_threshold", "0",
+	)
+	if cfg.audioEnabled() {
+		args = append(args,
+			"-c:a", "aac", "-profile:a", "aac_low", "-b:a", "128k",
+			"-ar", strconv.Itoa(audioSampleRate), "-ac", strconv.Itoa(audioChannels),
+			// Keep audio timestamps continuous when a capture device starts a
+			// little before or after the first screenshot.
+			"-af", "aresample=async=1:first_pts=0",
+		)
+	}
+	return append(args,
+		"-max_muxing_queue_size", "1024",
+		"-mpegts_flags", "+resend_headers", "-muxdelay", "0", "-muxpreload", "0",
+		"-f", "mpegts", "pipe:1",
+	)
+}
+
 func startMedia(life, startup context.Context, cfg Config, url, logPath string, h *hub) (*media, error) {
 	hooks := cfg.browserHooks()
 	ctx, cancel := context.WithCancel(life)
@@ -217,7 +271,7 @@ func startMedia(life, startup context.Context, cfg Config, url, logPath string, 
 		return m, err
 	}
 	fps := strconv.Itoa(cfg.FPS)
-	m.cmd = exec.Command(cfg.FFmpeg, "-hide_banner", "-loglevel", "warning", "-f", "image2pipe", "-vcodec", "mjpeg", "-framerate", fps, "-i", "pipe:0", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2", "-g", fps, "-keyint_min", fps, "-sc_threshold", "0", "-mpegts_flags", "+resend_headers", "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1")
+	m.cmd = exec.Command(cfg.FFmpeg, encoderArgs(cfg, fps)...)
 	ownProcessGroup(m.cmd)
 	m.cmd.Stderr = m.log
 	stdin, err := m.cmd.StdinPipe()

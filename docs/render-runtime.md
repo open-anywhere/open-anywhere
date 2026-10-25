@@ -4,7 +4,7 @@ Render 的第一期实现位于 `cmd/render`、`internal/render` 和 `pkg/render
 
 ## 依赖与启动
 
-主机需安装 Node.js 20 或更新版本、Chromium / Google Chrome、带 `libx264` 的 FFmpeg，以及 `lsof`。Render 使用独立的 headless Chromium，不采集用户桌面，不需要 macOS 屏幕录制权限。
+主机需安装 Node.js 20 或更新版本、Chromium / Google Chrome、带 `libx264` 和 AAC 编码器的 FFmpeg，以及 `lsof`。Render 使用独立的 headless Chromium，不采集用户桌面，不需要 macOS 屏幕录制权限。需要页面声音时，还需准备 Chromium 能输出到的虚拟音频设备和 FFmpeg 能读取的设备输入。
 
 ```sh
 go run ./cmd/render \
@@ -17,7 +17,37 @@ go run ./cmd/render \
 
 Linux 上 Chromium 需要可用的浏览器沙箱。Ubuntu 23.10+ 的 AppArmor 可能限制自行下载的浏览器创建 user namespace；E2E CI 为测试用 Chromium 的确切路径加载专用 AppArmor 配置，保留浏览器沙箱。
 
-API 和媒体流共用 `-addr`，应用按请求中的 `port` 监听。默认视频为 1280×720（16:9）、10 fps，可用 `-width`、`-height`、`-fps` 配置；宽高必须保持 16:9。服务拒绝非法尺寸、比例、帧率或缺少公开地址的配置。
+API 和媒体流共用 `-addr`，应用按请求中的 `port` 监听。默认视频为 1280×720（16:9）、10 fps，可用 `-width`、`-height`、`-fps` 配置；宽高必须保持 16:9。服务拒绝非法尺寸、比例、帧率或缺少公开地址的配置。默认只输出视频；需要声音时同时设置 `-audio-format` 和 `-audio-input`。
+
+## 音频采集
+
+Render 不负责创建或选择系统音频设备。部署方应先创建 loopback/null sink，让 Chromium 的音频输出进入该设备，再把对应的 monitor/input 交给 Render。Render 会把截图和设备采样交给同一个 FFmpeg 进程，编码为 MPEG-TS/H.264/AAC；返回的 `source.audio_codec` 才会是 `aac`。两个音频参数必须同时设置；都为空时保持纯视频。
+
+Linux（PulseAudio 或 PipeWire 兼容 PulseAudio）示例：
+
+```sh
+pactl load-module module-null-sink sink_name=render
+pactl set-default-sink render
+go run ./cmd/render \
+  -addr :8090 \
+  -public-url http://192.168.1.20:8090 \
+  -work-dir /tmp/open-anywhere-render \
+  -audio-format pulse \
+  -audio-input render.monitor
+```
+
+macOS 可使用 BlackHole 等 loopback 音频设备。把系统输出切换到该设备后，用 `ffmpeg -f avfoundation -list_devices true -i ""` 找到音频输入编号，再启动：
+
+```sh
+go run ./cmd/render \
+  -addr :8090 \
+  -public-url http://192.168.1.20:8090 \
+  -work-dir /tmp/open-anywhere-render \
+  -audio-format avfoundation \
+  -audio-input :6
+```
+
+开启音频时 Chromium 会关闭静音并允许页面自动播放，页面中的 `<audio>`、Web Audio 和游戏音效会进入同一条投屏流。音频设备不可用会导致实例启动失败，不会错误地声明 AAC 或静默降级。一个 Render 进程中的多个实例共享配置的音频输入，若需要隔离应分别运行 Render 进程和音频设备。
 
 ## 可下载的计分板应用包
 
@@ -68,7 +98,7 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 
 - 应用按注入端口启动，健康检查、页面和业务 API 可访问。
 - 应用 ID 和端口占用关联正确，重复 `app_id`、重复端口返回冲突。
-- FFprobe 识别实际 HTTP 视频流为 H.264、1280×720、无音轨。
+- FFprobe 识别实际 HTTP 视频流为 H.264、1280×720；默认配置无音轨，配置音频输入后为 H.264 + AAC。
 - FFmpeg 持续解码真实视频，状态块从灰色变为红色、蓝色，再重置为灰色；同时核对业务分数。
 - 中途新建拉流连接也能解码当前状态。
 - 停止结束媒体连接、释放端口和运行目录；同一应用可换端口重新启动。
@@ -76,11 +106,13 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 
 状态色块固定在页面坐标中。断言使用区域平均色与压缩容差，不依赖 OCR 或整页像素完全一致。`RENDER_E2E_OUTPUT` 指定的目录会保存解码后的视频帧，便于检查和展示。
 
+设置 `RENDER_AUDIO_FORMAT` 与 `RENDER_AUDIO_INPUT` 后，同一 E2E 会要求 HTTP 流包含 AAC 音轨并检查 `source.audio_codec`；未设置时继续验证纯视频。
+
 普通的 `go test ./... -race` 覆盖归档与契约校验、并发期间的实例/端口预留、启动失败清理、HTTP 输入错误和慢速拉流客户端隔离；需要 `lsof`，但不启动浏览器或 FFmpeg。专门的 Render E2E CI 安装媒体依赖并执行真实链路。
 
 ## 实现边界
 
-- 捕获采用 Chromium DevTools 截图采样，经 FFmpeg 编码为 MPEG-TS/H.264；默认 10 fps，适用于计分板等低动态页面。它不是桌面镜像或高帧率游戏串流，也没有音轨。
+- 捕获采用 Chromium DevTools 截图采样，经 FFmpeg 编码为 MPEG-TS/H.264；默认 10 fps，适用于计分板等低动态页面。配置音频输入后，FFmpeg 同时采集并编码 AAC，音视频在同一个复用器中按实时输入时间戳封装。它不是桌面镜像或高帧率游戏串流。
 - 页面按固定 1280×720 画布截图，超出 viewport 的内容会被裁切。Render 会检测并记录 `layout_overflow` 告警，但不会自动缩放或中断播放。
 - 每个实例具有独立进程、工作目录、浏览器和编码器。同一 Render 上按 `app_id` 原子预留；跨节点单实例仍由控制面保证，本服务不实现分布式锁。
 - 进程退出、连续三次健康检查失败或视频输出中断会触发错误与清理；不自动重启应用。状态和实例记录仅在内存中，服务重启不恢复旧实例。

@@ -37,10 +37,12 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	work := flags.String("work-dir", ".render-data", "temporary instance directories")
 	node := flags.String("node", "node", "Node.js executable")
 	chrome := flags.String("chrome", "", "Chromium executable (auto-detected if empty)")
-	ffmpeg := flags.String("ffmpeg", "ffmpeg", "FFmpeg executable with libx264")
+	ffmpeg := flags.String("ffmpeg", "ffmpeg", "FFmpeg executable with libx264 (and AAC when audio is enabled)")
 	width := flags.Int("width", canvas.Width, "video width (must keep a 16:9 ratio)")
 	height := flags.Int("height", canvas.Height, "video height (must keep a 16:9 ratio)")
 	fps := flags.Int("fps", 10, "capture frames per second")
+	audioFormat := flags.String("audio-format", "", "FFmpeg audio input format, e.g. pulse or avfoundation (empty disables audio)")
+	audioInput := flags.String("audio-input", "", "FFmpeg audio input, e.g. render.monitor or :6 (empty disables audio)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -57,7 +59,7 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	defer listener.Close()
 	_, p, _ := net.SplitHostPort(listener.Addr().String())
 	port, _ := strconv.Atoi(p)
-	s, err := core.New(core.Config{WorkDir: *work, PublicURL: *publicURL, AppHost: *appHost, Node: *node, Chrome: *chrome, FFmpeg: *ffmpeg, Width: *width, Height: *height, FPS: *fps, ServicePorts: []int{port}})
+	s, err := core.New(core.Config{WorkDir: *work, PublicURL: *publicURL, AppHost: *appHost, Node: *node, Chrome: *chrome, FFmpeg: *ffmpeg, Width: *width, Height: *height, FPS: *fps, AudioFormat: *audioFormat, AudioInput: *audioInput, ServicePorts: []int{port}})
 	if err != nil {
 		return err
 	}
