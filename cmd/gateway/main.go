@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -216,7 +217,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 	go apps.RunMonitor(ctx)
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", server.StreamableHTTP(cfg.PublicHost, cfg.SpeakerProbe))
+	mux.Handle("/mcp", server.StreamableHTTPHosts(mcpAllowedHosts(cfg, platform), cfg.SpeakerProbe))
 	mux.HandleFunc("GET /sse", server.ServeSSE)
 	mux.Handle("POST /mcp/message", http.MaxBytesHandler(http.HandlerFunc(server.ServeMessage), 1<<20))
 	mux.HandleFunc("GET /artifacts/{app_id}/{name}", artifactStore.ServeDownload)
@@ -354,6 +355,38 @@ func mcpAuthFunc(token func(context.Context) (string, error), next http.Handler)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// mcpAllowedHosts lists the extra Host values /mcp accepts: public_host from
+// the config file and, in portal mode, the host of the public MCP address in
+// the admin settings. The settings are read at most every few seconds, so an
+// address saved in the admin page applies without a restart.
+func mcpAllowedHosts(cfg config.Config, platform *settings.Provider) func(context.Context) []string {
+	var (
+		mu      sync.Mutex
+		hosts   []string
+		expires time.Time
+	)
+	return func(ctx context.Context) []string {
+		base := []string{}
+		if cfg.PublicHost != "" {
+			base = append(base, cfg.PublicHost)
+		}
+		if !cfg.PortalEnabled || platform == nil {
+			return base
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if time.Now().Before(expires) {
+			return append(base, hosts...)
+		}
+		// A failed read keeps the previous answer; it is retried on the next request.
+		if snapshot, err := platform.Snapshot(ctx); err == nil {
+			hosts = mcp.HostsFromURL(snapshot.Linx.PublicMCPURL)
+			expires = time.Now().Add(5 * time.Second)
+		}
+		return append(base, hosts...)
+	}
 }
 
 // mcpTokenSource is the database token in portal mode and the configured one

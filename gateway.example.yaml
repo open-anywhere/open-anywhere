@@ -46,7 +46,11 @@ timeouts:
   call: "2m"
   http: "30s"
 
-# 可选：公网代理 Host、入口 Bearer token、声纹参数诊断。真实 token 只填 gateway.yaml。
+# public_host：额外放行的 MCP Host（host:port），例如 "203.0.113.10:6004"。灵矽云经隧道或反向代理访问、
+# 请求从本机回环地址进来时，MCP 入口只放行配置过的 Host，否则返回 403 invalid Host header。
+# 门户模式下管理后台里的公网 MCP 地址会自动放行，通常不用填；独立模式，或代理改写了 Host 时才需要。
+# 它是启动时读取的，修改后需要重启。网关直接暴露在公网网卡上时可以留空。
+# 另外可选：入口 Bearer token、声纹参数诊断。真实 token 只填 gateway.yaml。
 # 门户模式（portal.enabled=true）下不需要填 mcp_token：首次启动自动生成并加密保存，
 # 在管理后台 /admin/settings 的“MCP 服务”里可以重新生成。这里的值只用于独立模式，
 # 或在门户首次启动时作为初始 token 导入一次。

@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
@@ -95,7 +99,110 @@ func identityFrom(r *http.Request) app.Identity {
 
 // StreamableHTTP preserves the deployed request/response transport. Server-initiated
 // notifications are delivered over the separate SSE endpoint, not this stateless channel.
+// StreamableHTTP serves /mcp and accepts one extra public Host. See
+// StreamableHTTPHosts for the Host rules.
 func (s *Server) StreamableHTTP(publicHost string, probe bool) http.Handler {
+	return s.StreamableHTTPHosts(func(context.Context) []string {
+		if publicHost == "" {
+			return nil
+		}
+		return []string{publicHost}
+	}, probe)
+}
+
+// HostsFromURL returns the Host header values a client sends when it calls
+// the given URL: the host with its port, plus the bare host when the port is
+// the scheme's default. It returns nil for an empty or unparsable URL.
+func HostsFromURL(raw string) []string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" {
+		return nil
+	}
+	hosts := []string{parsed.Host}
+	port := parsed.Port()
+	if (parsed.Scheme == "http" && port == "80") || (parsed.Scheme == "https" && port == "443") {
+		hosts = append(hosts, parsed.Hostname())
+	}
+	return hosts
+}
+
+func isLoopbackHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// hostAllowed decides whether a request may reach /mcp by its Host header.
+// Loopback Hosts are always fine. When Hosts are configured, any other Host
+// must be one of them. When none are configured, a request that arrives over
+// a loopback connection with a foreign Host is refused, which is the DNS
+// rebinding guard the SDK applies on its own; the guard is done here so the
+// allowed Hosts can change while the gateway runs.
+func hostAllowed(r *http.Request, allowed []string) bool {
+	if isLoopbackHost(r.Host) {
+		return true
+	}
+	for _, host := range allowed {
+		if strings.EqualFold(r.Host, host) {
+			return true
+		}
+	}
+	if len(allowed) > 0 {
+		return false
+	}
+	if local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && local != nil {
+		return !isLoopbackHost(local.String())
+	}
+	return true
+}
+
+// hostRefusals remembers which refused Hosts were logged lately, so a client
+// that retries every second does not fill the log.
+type hostRefusals struct {
+	mu   sync.Mutex
+	seen map[string]time.Time
+}
+
+const (
+	hostRefusalLogInterval = time.Minute
+	hostRefusalMaxHosts    = 64
+	hostRefusalMaxLength   = 128
+)
+
+// note logs a refused Host unless the same one was logged within the last minute.
+func (h *hostRefusals) note(logf func(string, ...any), host string) {
+	if len(host) > hostRefusalMaxLength {
+		host = host[:hostRefusalMaxLength] + "..."
+	}
+	now := time.Now()
+	h.mu.Lock()
+	if h.seen == nil || len(h.seen) >= hostRefusalMaxHosts {
+		// A Host header is attacker-controlled; keep the table small.
+		h.seen = make(map[string]time.Time)
+	}
+	last, logged := h.seen[host]
+	if logged && now.Sub(last) < hostRefusalLogInterval {
+		h.mu.Unlock()
+		return
+	}
+	h.seen[host] = now
+	h.mu.Unlock()
+	logf("mcp: refused a request with Host %q; if this is the address the Linx cloud uses, "+
+		"set it as the public MCP address in the admin settings or as public_host in gateway.yaml", host)
+}
+
+// StreamableHTTPHosts serves /mcp. hosts is asked on every request for the
+// extra Host values to accept, so an address changed in the admin settings
+// applies without a restart.
+func (s *Server) StreamableHTTPHosts(hosts func(context.Context) []string, probe bool) http.Handler {
+	refusals := &hostRefusals{}
 	handler := sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
 		identity := identityFrom(r)
 		if identity.DeviceID == "" || identity.SessionID == "" {
@@ -113,10 +220,11 @@ func (s *Server) StreamableHTTP(publicHost string, probe bool) http.Handler {
 		addTools(server, tools, identity, s.callTimeout)
 		addCompatibility(server, tools, identity, probe)
 		return server
-	}, &sdk.StreamableHTTPOptions{Stateless: true, MaxRequestBodyBytes: 1 << 20, DisableLocalhostProtection: publicHost != ""})
+	}, &sdk.StreamableHTTPOptions{Stateless: true, MaxRequestBodyBytes: 1 << 20, DisableLocalhostProtection: true})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if publicHost != "" && r.Host != publicHost && !strings.HasPrefix(r.Host, "127.0.0.1:") && !strings.HasPrefix(r.Host, "localhost:") {
-			http.Error(w, "invalid host", 403)
+		if !hostAllowed(r, hosts(r.Context())) {
+			refusals.note(s.logf, r.Host)
+			http.Error(w, "invalid host", http.StatusForbidden)
 			return
 		}
 		// The SSE transport validates the owner once per connection. Streamable
