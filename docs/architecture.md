@@ -36,6 +36,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 - 用户用自然语言创建应用，不需要知道代码、构建或部署。
 - 灵矽只依赖一组稳定的 MCP Tool；新应用不需要在灵矽侧重新注册工具。
 - 构建是长任务，可以异步执行、按需查询状态和已用时间，不阻塞语音对话。
+- 同一设备与智能体可并行创建多个应用；每个应用在控制面绑定独立的 AgentAPI 构建会话，并可通过 `update-app` 在同一会话上修订产物（见 [multi-app-sessions.md](multi-app-sessions.md)）。
 - 应用生成后可以在 Render 上稳定启动，并通过 OpenAPI 被控制面调用。
 - 应用画面通过 AirPlay 常驻在屏幕上；切换应用不重新建立投屏。
 - Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
@@ -211,4 +212,4 @@ DELETE /v1/projection-sessions/{session_id}
 
 ## 6. 应用管理 MCP
 
-灵矽通过控制面发现屏幕，并创建、查询、启动和停止应用（`get-screens`、`create-app`、`get-app-status`、`start-app`、`stop-app`）。工具集、状态模型、通知和错误约定见[应用管理 MCP](app-management-mcp.md)。
+灵矽通过控制面发现屏幕，并创建、修订、查询、启动和停止应用（`get-screens`、`create-app`、`update-app`、`get-app-status`、`start-app`、`stop-app` 等）。工具集、状态模型、通知和错误约定见[应用管理 MCP](app-management-mcp.md)；多应用并行与会话绑定见[多应用并发构建与同会话更新](multi-app-sessions.md)。

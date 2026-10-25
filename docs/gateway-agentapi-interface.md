@@ -1,15 +1,17 @@
 # 控制面与 AgentAPI 接口设计
 
 > 状态：Proposal（供 PR 评审）
-> 版本：v0.1
-> 日期：2026-10-24
+> 版本：v0.2
+> 日期：2026-10-25
+>
+> 多应用并行会话与 `update-app` 修订轮见 [multi-app-sessions.md](multi-app-sessions.md)。
 
 ## 1. 范围
 
 本文定义控制面（gateway）与 AgentAPI 之间的构建契约：
 
 - AgentAPI 侧：一次性准备构建智能体、内置技能模板和云端环境；智能体不使用 MCP。
-- 控制面侧：`create-app` 之后创建构建会话、提交构建任务、订阅会话事件，并在会话进入 `idle` 后收集、校验 `outputs/` 产物。
+- 控制面侧：`create-app` 之后创建构建会话、提交构建任务、订阅会话事件，并在会话进入 `idle` 后收集、校验 `outputs/` 产物；`update-app` 在同一会话上提交后续轮次并再次收集产物。
 
 ### 1.1 角色与调用方向
 
@@ -25,9 +27,10 @@
 - 控制面与 AgentAPI 之间使用 HTTP + JSON，事件流使用 SSE。
 - `app_id` 是控制面分配的业务标识；AgentAPI 的 `session_id` 只在控制面内部使用，不通过 MCP 返回。
 - 智能体和技能按版本准备，环境按部署配置复用；创建会话时固定智能体版本，构建过程可追溯、可复现。
-- 构建异步执行：`create-app` 在会话创建并提交任务后立即返回 `building`，不等待构建完成。
+- 构建异步执行：`create-app` / `update-app` 在提交任务后立即返回 `building`，不等待完成。
+- 每个 `app_id` 绑定至多一个 AgentAPI `session_id`；不同应用的会话可并行。成功构建后会话保持 `idle`，供 `update-app` 复用；失败、超时或设备清理时归档。
 - 构建智能体不接入 MCP、不配置自定义工具、不挂载输入文件；它只使用运行时内置工具和内置技能模板。
-- 产物以单个 `artifact.tar.gz` 交付；控制面在会话结束后从 Files API 取回并校验，再交给 Render。
+- 产物以单个 `artifact.tar.gz` 交付；控制面在每一轮进入 `idle` 且 `end_turn` 后从 Files API 取回并校验，再交给 Render。
 
 ### 1.3 认证与地址
 
@@ -254,7 +257,9 @@ Content-Type: application/json
 5. 调用 `POST /v1/sessions/{id}/events` 提交 `user.message`，只把用户需求和初始玩家名单交给智能体；完整构建契约由 `app-builder` 技能承载，系统提示词只负责角色、输入约定、强制使用技能和最终输出。
 6. 立即向灵矽返回 `app_id` 和 `state=building`；构建在后台继续。
 7. 消费事件流，更新 `building.message`；会话进入 `idle` 后按停止原因处理。
-8. 成功时收集并校验 `/mnt/session/outputs/artifact.tar.gz`，注册应用并进入 `idle`，构建会话保持 `idle`；失败时进入 `error(stage=building)`。
+8. 成功时收集并校验 `/mnt/session/outputs/artifact.tar.gz`，注册应用并进入 `idle`，构建会话保持 `idle`，供后续 `update-app` 使用；失败时进入 `error(stage=building)` 并归档会话。
+
+同一设备和智能体可同时对多个 `app_id` 执行上述流程；每个应用独立 session 与事件消费者，互不短路。
 
 ```mermaid
 sequenceDiagram
@@ -276,8 +281,19 @@ sequenceDiagram
   C->>A: GET /v1/files/{file_id}/content
   A-->>C: tar.gz bytes
   C->>C: 校验、注册 app
-  Note over C: 会话保持 idle，可继续对话；通知灵矽 state=idle
+  Note over C: 会话保持 idle，可继续 update-app；通知灵矽 state=idle
 ```
+
+### 3.1.1 `update-app` 之后的处理顺序
+
+1. 控制面校验归属与状态（见 [multi-app-sessions.md](multi-app-sessions.md)），读取已绑定的 `session_id`。
+2. `GET /v1/sessions/{id}` 确认会话为 `idle` 且可接收消息；`terminated`、404、已归档返回 `SESSION_UNAVAILABLE`，不改应用状态。`idle` 后沙箱可能已暂停（AgentAPI 约 90–150 秒处理 `pause_pending`），下一轮输入会恢复同一沙箱并重设运行时长；`claudecode` / `codex` 原沙箱丢失则会话终止，不能仅凭事件历史重建。`running` / `rescheduling` 时不要提交 `user.message`（`claudecode`/`codex` 返回 `409` agent busy）。
+3. **先**复用或重新挂上该 session 的事件流消费者，再改本地状态并提交（与初次构建相同：先 SSE，后 `user.message`）。
+4. 应用进入 `building`，保留上一版产物。
+5. `POST /v1/sessions/{id}/events` 提交修订轮 `user.message`（见 3.3.1）。若竞态得到 `409`，按 `UPDATE_START_FAILED` 处理并回滚到更新前状态。
+6. 立即向灵矽返回 `building`；后台消费事件，按 3.5 处理本轮 `idle`（必须读 `stop_reason`）。
+7. 成功时下载并校验新的 `artifact.tar.gz`（多轮可能产生多个同名文件对象，取最新可下载的一份），**替换**产物与 OpenAPI 后进入 `idle`；会话继续保持 `idle`，不归档。
+8. 失败时：若有上一版可启动产物则恢复 `idle` 并保留旧包；否则 `error(stage=building)`。仅在会话不可再用以失败收场时归档。
 
 ### 3.2 创建会话
 
@@ -355,6 +371,23 @@ Content-Type: application/json
 - 构建契约、产物结构、最小验证和禁止事项都在系统提示词与技能中，不在消息里重复，避免智能体把时间花在逐条对照约束上。
 - 不在消息里放入 `app_id`、`session_id`、屏幕信息或任何凭证。
 - 请求返回只表示事件已被接收，构建结果必须从事件流读取。
+
+### 3.3.1 修订轮任务（`update-app`）
+
+请求路径与初次构建相同。`text` 只含修改说明与固定收尾，例如：
+
+```text
+请根据以下修改要求更新应用，并重新交付完整的 artifact.tar.gz。
+
+修改要求：
+题目改成动物主题，仍保持五题、三人依次作答。
+
+按系统提示词和 app-builder 技能完成构建。
+```
+
+- 不重传完整初次 `prompt` 或 `player_names`（会话历史中已有上下文）；名单变更写进修改要求。
+- 智能体必须产出完整可启动产物，不能只交补丁文件。
+- 控制面仍只认 `/mnt/session/outputs/artifact.tar.gz`；Files API 可能同时列出本轮与历史同名文件，取最新 `created_at` 且可下载的对象。校验失败则本轮更新失败。
 
 ### 3.4 订阅事件流
 
@@ -617,10 +650,11 @@ MVP 不做自动修复轮次。构建失败后由用户重新发起 `create-app`
 
 幂等与并发：
 
-- 同一 `app_id` 最多创建一个构建会话；MCP 层重复 `create-app` 返回已有的 `building` 应用。
-- 产物只在应用尚未注册时处理；重复的 `session.status_idle` 或重放事件不能重复注册应用。
+- 同一 `app_id` 最多创建一个构建会话；`create-app` 每次新建 `app_id` 与会话，不因同 owner 已有 `building` 而短路。修订走 `update-app`，复用绑定会话。
+- 不同 `app_id` 的会话与 SSE 消费者可并行；锁的粒度是 `app_id` / `session_id`，不是全控制面单飞构建。
+- 每一轮产物只在本轮 `end_turn` 且校验成功后写入；重复的 `session.status_idle` 或重放事件不能重复注册或覆盖产物。
 - 同一 `session_id` 的消费者串行推进；多副本部署使用分布式锁。
-- 应用注册成功后，不再重新下载或重新注册产物；构建会话保持 `idle`。
+- 初次注册或修订成功后，构建会话保持 `idle`，可继续接收 `update-app`。
 
 ## 7. 安全与边界
 
