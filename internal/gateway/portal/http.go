@@ -87,6 +87,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/portal/devices", a.withUser(a.createDevice))
 	mux.HandleFunc("GET /api/portal/devices/{id}", a.withUser(a.getDevice))
 	mux.HandleFunc("POST /api/portal/devices/{id}/retry", a.withUser(a.retryDevice))
+	mux.HandleFunc("POST /api/portal/devices/{id}/disconnect", a.withUser(a.disconnectDevice))
+	mux.HandleFunc("POST /api/portal/devices/{id}/reconnect", a.withUser(a.reconnectDevice))
 	mux.HandleFunc("GET /api/portal/screens", a.withUser(a.listScreens))
 	mux.HandleFunc("POST /api/portal/screens/{screen_id}/stop", a.withUser(a.stopScreen))
 	mux.HandleFunc("GET /api/portal/services", a.withUser(a.getServices))
@@ -307,6 +309,56 @@ func (a *API) retryDevice(w http.ResponseWriter, r *http.Request, user store.Por
 	}
 	a.provision.Start(device.ID)
 	writeJSON(w, http.StatusAccepted, map[string]any{"device": a.deviceView(device)})
+}
+
+// voiceDevice loads a device the user owns and requires it to be a registered
+// virtual device, the only kind that has a voice runtime to control.
+func (a *API) voiceDevice(r *http.Request, user store.PortalUser) (store.PortalDevice, error) {
+	device, err := a.ownedDevice(r, user, r.PathValue("id"))
+	if err != nil {
+		return store.PortalDevice{}, err
+	}
+	if device.Kind != store.PortalDeviceVirtual || device.State != store.PortalDeviceRegistered {
+		return store.PortalDevice{}, apiError(http.StatusConflict, "DEVICE_NOT_READY", "设备尚未完成注册")
+	}
+	return device, nil
+}
+
+// disconnectDevice drops the device's connection to Linx. The device stays
+// offline, with its registration and credentials intact, until the user
+// reconnects it or the gateway restarts.
+func (a *API) disconnectDevice(w http.ResponseWriter, r *http.Request, user store.PortalUser) {
+	device, err := a.voiceDevice(r, user)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if a.voice == nil {
+		writeError(w, apiError(http.StatusServiceUnavailable, "VOICE_UNAVAILABLE", "语音运行时还未就绪，请稍后重试"))
+		return
+	}
+	a.voice.Stop(device.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"device": a.deviceView(device)})
+}
+
+// reconnectDevice replaces the device's connection with a fresh one, whether or
+// not the current connection is healthy.
+func (a *API) reconnectDevice(w http.ResponseWriter, r *http.Request, user store.PortalUser) {
+	device, err := a.voiceDevice(r, user)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if a.voice == nil || a.provision == nil {
+		writeError(w, apiError(http.StatusServiceUnavailable, "VOICE_UNAVAILABLE", "语音运行时还未就绪，请稍后重试"))
+		return
+	}
+	if err := a.voice.Restart(a.provision.withCredential(device)); err != nil {
+		a.logf("portal: reconnect voice for %s: %v", device.ID, err)
+		writeError(w, apiError(http.StatusServiceUnavailable, "VOICE_UNAVAILABLE", "语音运行时启动失败，请稍后重试"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"device": a.deviceView(device)})
 }
 
 func (a *API) listScreens(w http.ResponseWriter, r *http.Request, user store.PortalUser) {

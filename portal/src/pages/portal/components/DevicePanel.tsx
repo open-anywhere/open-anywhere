@@ -1,11 +1,12 @@
 import {
   AudioOutlined,
   DesktopOutlined,
+  DisconnectOutlined,
   PlusOutlined,
   ReloadOutlined,
   RobotOutlined,
 } from '@ant-design/icons'
-import { Alert, Button, Descriptions, Space, Steps } from 'antd'
+import { Alert, Button, Descriptions, Popconfirm, Space, Steps } from 'antd'
 import type { Device } from '../../../api'
 import { EmptyState } from '../../../components/EmptyState'
 import { DeviceStateTag, VoiceTag } from '../../../components/Tags'
@@ -33,12 +34,27 @@ interface Props {
   device?: Device
   creating?: boolean
   retrying?: boolean
+  disconnecting?: boolean
+  reconnecting?: boolean
   onCreate: () => void
   onRetry: () => void
   onCall: () => void
+  onDisconnect?: () => void
+  onReconnect?: () => void
 }
 
-export function DevicePanel({ device, creating, retrying, onCreate, onRetry, onCall }: Props) {
+export function DevicePanel({
+  device,
+  creating,
+  retrying,
+  disconnecting,
+  reconnecting,
+  onCreate,
+  onRetry,
+  onCall,
+  onDisconnect,
+  onReconnect,
+}: Props) {
   if (!device) {
     return (
       <EmptyState
@@ -60,6 +76,7 @@ export function DevicePanel({ device, creating, retrying, onCreate, onRetry, onC
   }
 
   const current = stepIndex(device.step)
+  const voiceOffline = device.voice.state === 'offline'
 
   return (
     <section className="device-panel">
@@ -79,11 +96,31 @@ export function DevicePanel({ device, creating, retrying, onCreate, onRetry, onC
         </div>
         <Space wrap>
           {device.state === 'registered' ? (
-            <Button type="primary" icon={<AudioOutlined />} onClick={onCall}>
+            <Button type="primary" icon={<AudioOutlined />} disabled={voiceOffline} onClick={onCall}>
               开始对话
             </Button>
           ) : null}
-          {device.state === 'error' || device.state === 'provisioning' || device.voice.state === 'offline' ? (
+          {device.state === 'registered' && onReconnect ? (
+            <Button icon={<ReloadOutlined />} loading={reconnecting} onClick={onReconnect}>
+              重新连接
+            </Button>
+          ) : null}
+          {device.state === 'registered' && onDisconnect && !voiceOffline ? (
+            <Popconfirm
+              title="断开与灵矽的连接？"
+              description="正在进行的对话会中断，之后可以随时重新连接。"
+              okText="断开"
+              cancelText="取消"
+              onConfirm={onDisconnect}
+            >
+              <Button icon={<DisconnectOutlined />} loading={disconnecting}>
+                断开连接
+              </Button>
+            </Popconfirm>
+          ) : null}
+          {device.state === 'error' ||
+          device.state === 'provisioning' ||
+          (device.state === 'registered' && !onReconnect && voiceOffline) ? (
             <Button
               icon={<ReloadOutlined />}
               loading={retrying}
@@ -131,17 +168,21 @@ export function DevicePanel({ device, creating, retrying, onCreate, onRetry, onC
               { key: 'registered', label: '准备好于', children: formatDate(device.registered_at) },
             ]}
           />
-          {device.voice.error || device.voice.state === 'offline' ? (
+          {device.voice.error || voiceOffline ? (
             <Alert
               type="warning"
               showIcon
               className="panel-alert"
               message="智能体暂时不在线"
               description={
-                device.voice.error || '它没有响应，可以试着重新连接。'
+                device.voice.error || '连接已断开或没有响应，可以重新连接。'
               }
               action={
-                <Button size="small" loading={retrying} onClick={onRetry}>
+                <Button
+                  size="small"
+                  loading={onReconnect ? reconnecting : retrying}
+                  onClick={onReconnect ?? onRetry}
+                >
                   重新连接
                 </Button>
               }
