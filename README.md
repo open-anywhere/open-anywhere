@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <sub>Bilibili 视频可直接观看；小红书视频可能仍在审核中，通过前暂时无法播放。</sub>
+  <sub>Bilibili 视频可直接观看。小红书视频发布时仍在审核中，你看到这里时可能已经审核通过；若暂时打不开，请稍后再试。</sub>
 </p>
 
 <p align="center">
