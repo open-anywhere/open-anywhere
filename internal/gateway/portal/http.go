@@ -45,6 +45,10 @@ type API struct {
 	adminTest   *windowLimiter
 	now         func() time.Time
 	logf        func(string, ...any)
+	// cookieSecure mirrors the deployment setting: when cookies are Secure,
+	// responses are only served over HTTPS and may be pinned with HSTS even
+	// behind a TLS-terminating reverse proxy.
+	cookieSecure bool
 }
 
 // NewAPI wires the portal HTTP surface.
@@ -73,6 +77,23 @@ func (a *API) SetPlatform(provider *settings.Provider, pool *endpoints.Pool, res
 	a.settings = provider
 	a.pool = pool
 	a.resolver = resolver
+}
+
+// SetCookieSecure tells the portal whether the deployment serves HTTPS and
+// marks session cookies Secure. It also controls the HSTS header on plain
+// HTTP requests that arrive through a TLS-terminating proxy.
+func (a *API) SetCookieSecure(secure bool) { a.cookieSecure = secure }
+
+// securityHeaders adds HSTS only when the request is actually TLS or the
+// deployment is configured for HTTPS. A local HTTP portal must not pin the
+// browser to HTTPS.
+func (a *API) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS != nil || a.cookieSecure {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Handler returns the portal API. It is mounted at /api/portal/; the root
@@ -106,12 +127,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/portal/apps/{id}/openapi.yaml", a.withUser(a.getOpenAPI))
 	mux.HandleFunc("DELETE /api/portal/apps/{id}", a.withUser(a.deleteApp))
 	mux.Handle("/api/portal/", http.NotFoundHandler())
-	return a.guard(mux)
+	return a.securityHeaders(a.guard(mux))
 }
 
 // WebHandler returns the single-page application for /, /login and /portal.
 func (a *API) WebHandler() http.Handler {
-	return a.web
+	return a.securityHeaders(a.web)
 }
 
 type authedHandler func(http.ResponseWriter, *http.Request, store.PortalUser)
@@ -648,6 +669,8 @@ func mapServiceError(err error) error {
 		return apiError(http.StatusBadGateway, "RUNTIME_UNAVAILABLE", "应用运行时不可用")
 	case "START_FAILED", "BUILD_FAILED", "BUILD_START_FAILED":
 		return apiError(http.StatusBadGateway, code, "应用启动失败")
+	case "ARTIFACT_INVALID":
+		return apiError(http.StatusUnprocessableEntity, "ARTIFACT_INVALID", "应用产物无效，请修订后重新构建")
 	case "":
 		return err
 	default:

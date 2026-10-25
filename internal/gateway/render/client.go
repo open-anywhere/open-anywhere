@@ -86,6 +86,18 @@ func IsCode(err error, code string) bool {
 	return errors.As(err, &target) && target.Code == code
 }
 
+// CodeInvalidArtifact is Render's code for a package that fails validation.
+const CodeInvalidArtifact = "INVALID_ARTIFACT"
+
+// IsInvalidArtifact reports a Render rejection of the artifact itself. Render
+// returns 422 for structural or contract failures; treat any 422 as an
+// artifact problem so the control plane can stop asking the user to retry.
+func IsInvalidArtifact(err error) bool {
+	var target *HTTPError
+	return errors.As(err, &target) &&
+		(target.Status == http.StatusUnprocessableEntity || target.Code == CodeInvalidArtifact)
+}
+
 // Client calls the Render HTTP API.
 type Client struct {
 	baseURL string

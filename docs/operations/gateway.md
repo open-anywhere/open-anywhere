@@ -22,7 +22,7 @@ cp gateway.example.yaml gateway.yaml
 仓库根目录的 `gateway.example.yaml` 列出了所有配置项，启动前至少确认下面几组：
 
 ```yaml
-addr: "0.0.0.0:8091"
+addr: ":8091"
 
 agentapi:
   base_url: "https://agent.qiniuapi.com"
@@ -43,8 +43,8 @@ artifacts:
 
 几点容易配错的地方：
 
-- Gateway 默认监听 `:8090`，与 Render 的示例端口相同。两者要分开，这里把 Gateway 放到 `:8091`，`render.base_url` 指向 Render 的 `:8090`。
-- `artifacts.base_url` 是 Render 下载应用包时使用的地址，必须指向 Gateway 自己，并且从 Render 主机可以访问。写 `127.0.0.1` 会导致 Render 拉不到产物。
+- Gateway 的内置默认值是 `:8090`，与 Render 的示例端口相同。两者必须分开：`gateway.example.yaml` 已把 `addr` 设为 `:8091`，`render.base_url` 指向 Render 的 `:8090`。用 `0.0.0.0:8091` 可让局域网访问，只在本机测试用 `127.0.0.1:8091`。
+- `artifacts.base_url` 是 Render 下载应用包时使用的地址，必须指向 Gateway 自己（示例 `:8091`），并且从 Render 主机可以访问。写 `127.0.0.1` 会导致 Render 拉不到产物。
 - `render.base_url` 和 `casting.base_url` 从 Gateway 进程访问，必须填渲染主机和投屏服务实际监听的地址。
 
 ## 启动
@@ -56,10 +56,10 @@ go run ./cmd/gateway -config gateway.yaml
 看到下面的日志表示 HTTP 服务已经启动：
 
 ```text
-gateway listening on 0.0.0.0:8091
+gateway listening on :8091
 ```
 
-`-addr` 使用 `0.0.0.0` 时局域网其他设备可以访问；只在本机测试时可以改成 `127.0.0.1:8091`。
+`addr` 写成 `:8091` 时等价于监听 `0.0.0.0:8091`，局域网其他设备可以访问；只在本机测试时可以改成 `127.0.0.1:8091`。日志会原样打印配置里的 `addr`。
 
 ## 检查服务
 
@@ -79,13 +79,13 @@ curl http://192.168.1.20:8091/healthz
 
 灵矽通过 MCP 使用控制面，端点如下：
 
-| 端点 | 方法 | 用途 |
-| --- | --- | --- |
-| `/mcp` | Streamable HTTP | 新接入使用这个地址 |
-| `/sse` | `GET` | 旧版 SSE 连接 |
-| `/mcp/message` | `POST` | 旧版 SSE 的消息端点 |
+| 端点 | 方法 | 用途 | 身份校验 |
+| --- | --- | --- | --- |
+| `/mcp` | Streamable HTTP（stateless） | 新接入使用这个地址 | 每个请求都重新校验三个身份头 |
+| `/sse` | `GET` | 旧版 SSE 连接 | 建连时校验一次 |
+| `/mcp/message` | `POST` | 旧版 SSE 的消息端点 | 每次请求都要与已建立的 SSE 会话一致 |
 
-设置了 `mcp_token` 后，这三个端点都要求 `Authorization: Bearer <token>`，其他路径不受影响。
+设置了 `mcp_token` 后，这三个端点都要求 `Authorization: Bearer <token>`，其他路径不受影响。门户模式下 MCP Token 在 `/admin/settings` 管理，首次启动自动生成并加密入库；`gateway.yaml` 的 `mcp_token` 只用于独立模式或空库首次导入。
 
 每个 MCP 请求还要带灵矽身份头，控制面据此确定应用、屏幕和语音会话的归属：
 
@@ -95,7 +95,14 @@ curl http://192.168.1.20:8091/healthz
 | `X-Linx-Session-Id` | 本次语音会话标识 |
 | `X-Linx-Agent-Id` | 智能体标识，门户模式下必填 |
 
-这些头由灵矽侧携带。手工联调时缺了 `X-Linx-Device-Id` 或 `X-Linx-Session-Id`，`/mcp` 会返回 `400`；门户模式下还必须带 `X-Linx-Agent-Id` 且身份匹配，否则返回 `400` 或 `403`。
+这些头由灵矽侧携带。门户模式下手工联调：
+
+- 缺任一头，`/mcp` 返回 `400 MISSING_IDENTITY`。
+- 设备不存在、未完成开通或账号被停用，返回 `403`（`OWNER_NOT_FOUND` / `IDENTITY_NOT_REGISTERED` / `USER_DISABLED`）。
+- `/mcp/message` 的头与会话不一致时返回 `403 IDENTITY_MISMATCH`；`/sse` 没有逐请求比对，建连时按上面的 400/403 处理。
+- 身份查询本身失败（例如数据库不可用）返回 `503 IDENTITY_CHECK_FAILED`，不会放行请求。
+
+单租户部署（`portal.enabled=false`）不启用 owner 校验器，但仍要求 `X-Linx-Device-Id` 与 `X-Linx-Session-Id`；缺了会连接失败。
 
 灵矽云需要能直接访问这个地址。局域网地址只适合本机联调，正式接入需要把 Gateway 暴露到公网，并在灵矽平台上把 MCP 地址配置为 `https://<域名>/mcp`。如果灵矽云经隧道或反向代理访问 Gateway（请求从本机回环地址进来），MCP 入口只放行配置过的 Host，否则返回 `403 invalid Host header`。门户模式下管理后台里的公网 MCP 地址会自动放行，通常不用再配；独立模式或代理改写了 Host 时，把 `public_host` 设为对外使用的 `host:port`，修改后需要重启。直接暴露在公网网卡上时可以留空。
 
@@ -138,7 +145,7 @@ portal:
 - AgentAPI、Linx（含公网 MCP 地址、智能体模板）、默认 Render/Casting 都在首次启动后由管理员在 `/admin/settings` 配置，页面上每个字段都写明了数据从哪里取，配置文件里不需要再写这些项。
 - MCP Token 首次启动时自动生成并加密保存，在 `/admin/settings` 里可以重新生成，网关会同步到灵矽的 MCP。
 - 旧版 `gateway.yaml` 里已有的这些值只在数据库对应设置为空时写入一次，之后以数据库为准，改配置文件不再生效，可以从文件里删除。
-- 默认拒绝内网地址。本地调试时要把 `services.allow_private_targets` 设为 `true`，才能绑定 `127.0.0.1` 或局域网服务；生产环境保持 `false`。
+- 默认拒绝内网地址。本地调试时要把 `services.allow_private_targets` 设为 `true`，才能绑定 `127.0.0.1` 或局域网服务；公网暴露或开放注册时保持 `false`，受信内网单租户部署可设为 `true`，但不要与开放注册同时使用。该开关同时放宽 custom 用户填写的 Render/Casting 地址。
 
 启动后打开 <http://192.168.1.20:8091/> 查看 Home，管理员登录后进入 `/admin`，普通用户在 `/register` 注册后使用 `/portal`。浏览器麦克风需要 HTTPS 或 `localhost`，详见[多租户用户 Portal 设计](../architecture/interfaces/portal.md)。
 

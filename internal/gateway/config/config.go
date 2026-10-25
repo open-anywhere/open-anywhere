@@ -8,6 +8,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -127,7 +129,7 @@ type fileConfig struct {
 		Username          string `yaml:"username"`
 		Password          string `yaml:"password"`
 		SessionTTL        string `yaml:"session_ttl"`
-		CookieSecure      bool   `yaml:"cookie_secure"`
+		CookieSecure      *bool  `yaml:"cookie_secure"`
 		AllowRegistration bool   `yaml:"allow_registration"`
 	} `yaml:"portal"`
 	Linx struct {
@@ -175,6 +177,7 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 		PortalDataDir:         "portal-data",
 		PortalWebDir:          "portal/dist",
 		PortalSessionTTL:      720 * time.Hour,
+		PortalCookieSecure:    true,
 		LinxAPIBase:           "https://xrobo.qiniu.com",
 		LinxOTAURL:            "https://xrobo.qiniuapi.com/v1/ota/",
 		LinxMCPName:           "Open Anywhere",
@@ -225,7 +228,7 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&cfg.PortalWebDir, "portal-web-dir", env(getenv, "PORTAL_WEB_DIR", base.PortalWebDir), "built portal frontend directory")
 	flags.BoolVar(&cfg.PortalWebEmbedded, "portal-web-embedded", envBool(getenv, "PORTAL_WEB_EMBEDDED", base.PortalWebEmbedded), "serve the portal frontend embedded in the binary (requires -tags portalembed)")
 	flags.DurationVar(&cfg.PortalSessionTTL, "portal-session-ttl", envDuration(getenv, "PORTAL_SESSION_TTL", base.PortalSessionTTL), "portal session lifetime")
-	flags.BoolVar(&cfg.PortalCookieSecure, "portal-cookie-secure", envBool(getenv, "PORTAL_COOKIE_SECURE", base.PortalCookieSecure), "mark portal cookies Secure (HTTPS)")
+	flags.BoolVar(&cfg.PortalCookieSecure, "portal-cookie-secure", envBool(getenv, "PORTAL_COOKIE_SECURE", base.PortalCookieSecure), "mark portal cookies Secure (HTTPS); disable only for loopback HTTP")
 	flags.BoolVar(&cfg.PortalAllowRegistration, "portal-allow-registration", envBool(getenv, "PORTAL_ALLOW_REGISTRATION", base.PortalAllowRegistration), "seed open registration for a fresh database")
 	flags.BoolVar(&cfg.AllowPrivateTargets, "allow-private-targets", envBool(getenv, "ALLOW_PRIVATE_TARGETS", base.AllowPrivateTargets), "allow loopback and private Render/Casting addresses (debug only)")
 	flags.StringVar(&cfg.LinxAPIBase, "linx-api-base", env(getenv, "LINX_API_BASE", base.LinxAPIBase), "Linx management API base URL")
@@ -327,8 +330,37 @@ func (c Config) Validate() error {
 		if c.LinxProvisionTimeout <= 0 || c.LinxTokenPollInterval <= 0 || c.LinxTokenPollAttempts < 1 {
 			return fmt.Errorf("gateway: portal provisioning timeouts must be positive")
 		}
+		if warning := c.portalCookieWarning(); warning != "" {
+			// The portal still starts: a local HTTP deployment is a legitimate
+			// development setup. The warning must be loud enough to catch a
+			// public listener that would send session cookies in clear text.
+			log.Print(warning)
+		}
 	}
 	return nil
+}
+
+// portalCookieWarning reports an exposed portal that disables Secure cookies.
+func (c Config) portalCookieWarning() string {
+	if !c.PortalEnabled || c.PortalCookieSecure || isLoopbackListen(c.Addr) {
+		return ""
+	}
+	return fmt.Sprintf("WARNING: portal listens on %s with cookie_secure=false; session cookies will be sent over plain HTTP\n"+
+		"WARNING: serve the portal over HTTPS and enable Secure cookies, or bind to a loopback address for local use", c.Addr)
+}
+
+// isLoopbackListen reports whether addr only accepts local connections. An
+// empty or wildcard host listens on every interface and is not loopback.
+func isLoopbackListen(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 func locateConfig(args []string, getenv func(string) string) (string, bool) {
@@ -472,8 +504,8 @@ func applyFile(cfg *Config, file fileConfig) error {
 	if file.Portal.Password != "" {
 		cfg.PortalPassword = file.Portal.Password
 	}
-	if file.Portal.CookieSecure {
-		cfg.PortalCookieSecure = true
+	if file.Portal.CookieSecure != nil {
+		cfg.PortalCookieSecure = *file.Portal.CookieSecure
 	}
 	if file.Portal.AllowRegistration {
 		cfg.PortalAllowRegistration = true

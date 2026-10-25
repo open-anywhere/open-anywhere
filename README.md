@@ -33,7 +33,7 @@
 
 应用不在菜单里，是被当场写出来的；玩法不在代码里，是被当场理解并驱动的。**有块屏幕，就能开场。**
 
-<sub>参赛议题：灵矽应用 —— 通过 AirPlay 协议连接屏幕，并通过语音控制 code agent 进行编程开发。</sub>
+<sub>参赛议题：灵矽应用 —— 通过 DLNA 把画面投到电视上，并通过语音控制 code agent 进行编程开发（AirPlay 为后续扩展）。</sub>
 
 ## 为什么值得做
 
@@ -110,19 +110,56 @@
 
 ## 架构
 
-四个部件分布在三个互不重叠的平面上：输入、计算、显示。平面之间只有三条契约——MCP 让语音只看到工具；OpenAPI + `launch.json` + HTTP 让应用只暴露 HTTP；投屏 HTTP 只传媒体流地址。详见[架构设计](docs/architecture/overview.md)与[模块规格](docs/architecture/modules.md)。
+四个部件分布在三个互不重叠的平面上：输入、计算、显示。平面之间只有三条契约——MCP 让语音只看到工具；OpenAPI + `launch.json` + HTTP 让应用只暴露 HTTP；控制面调用投屏服务，只传媒体流地址与目标。当前投屏走 DLNA（MPEG-TS），AirPlay 是后续扩展。详见[架构设计](docs/architecture/overview.md)与[模块规格](docs/architecture/modules.md)。
 
 ## 快速开始
 
+外部前置条件：Render 主机需要 Node.js 20 或更新版本、Chromium、带 `libx264` 与 AAC 的 FFmpeg，以及 `lsof`；阶段 0 与阶段 1 都不需要灵矽账号。只有最后接灵矽时才需要账号与公网 HTTPS。
+
 ```bash
+cp gateway.example.yaml gateway.yaml
 go build ./... && go test ./... -race
-go run ./cmd/gateway -config gateway.yaml     # 控制面：MCP、编排、Portal
 go run ./cmd/render -addr :8090 -public-url http://192.168.1.20:8090
 go run ./cmd/casting -addr :8080 -interface en0
+go run ./cmd/gateway -config gateway.yaml     # 控制面；独立模式需先填写 gateway.yaml 第 2 部分，门户模式需先构建前端并在 /admin 配置
 go run ./cmd/voiceentry -serve                # 打开 http://127.0.0.1:8788/
 ```
 
-配置文件从 `gateway.example.yaml` 复制。Render 需要 Node.js、Chromium、FFmpeg 与 lsof；Portal 前端在 `portal/` 下用 pnpm 构建。逐步说明见 [Gateway](docs/operations/gateway.md)、[Render](docs/operations/render.md)、[Casting](docs/operations/casting.md) 启动指南。
+本地或局域网调试时，把 `gateway.yaml` 的 `services.allow_private_targets` 设为 `true`；它同时放宽 custom 用户地址，只用于受信单租户环境。
+
+先启动 Render 与 Casting，再启动 Gateway。端口分工：
+
+| 进程 | 默认端口 | 用途 |
+| --- | --- | --- |
+| Gateway | 8091 | MCP、编排、Portal；`gateway.example.yaml` 已显式设置 |
+| Render | 8090 | 应用进程、Chromium 渲染与 MPEG-TS 媒体流 |
+| Casting | 8080 | DLNA 投屏控制 |
+| 静态产物服务 | 8092 | 手工验收时给 Render 提供 `e2e/artifacts` 下载 |
+| voiceentry 控制台 | 8788 | 模拟硬件的本地 Web 控制台 |
+
+Gateway 的内置默认值仍是 `:8090`，与 Render 冲突；示例配置已改为 `:8091`，请保证 `addr`、`render.base_url`、`casting.base_url` 三者互不冲突。`artifacts.base_url` 必须指向 Gateway 自己（示例 `http://127.0.0.1:8091`），否则 Render 拉不到产物。
+
+### 让第一个应用上屏
+
+不需要先接灵矽，按阶段验收：
+
+0. **只验 Render + Casting。** 用 `./scripts/package-scoreboard.sh` 打包 `e2e/testdata/scoreboard`，用 `python3 -m http.server 8092 --directory e2e/artifacts` 提供下载，再用 `curl` 在 Render 上启动计分板。拿到 `source` 后，用 `GET /v1/targets` 取 `target_id`，再 `POST /v1/projection-sessions` 把流交给 Casting。命令见 [Render 运行说明](docs/operations/render.md#可下载的计分板应用包) 与 [Casting 服务](docs/operations/casting.md#api-示例)。
+1. **本地 MCP 建应用。** 保持 `portal.enabled: false`，在 `gateway.yaml` 填好 AgentAPI、Render、Casting（Render/Casting 在 `127.0.0.1` 或 `192.168.x` 时必须把 `services.allow_private_targets` 设为 `true`），然后连接 `http://127.0.0.1:8091/mcp`（Streamable HTTP，每次请求都带身份头）：
+
+   ```bash
+   curl -s http://127.0.0.1:8091/mcp \
+     -H 'Content-Type: application/json' \
+     -H 'Accept: application/json, text/event-stream' \
+     -H 'X-Linx-Device-Id: dev-local' \
+     -H 'X-Linx-Session-Id: sess-local' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+          "params":{"name":"create-app","arguments":{"prompt":"做一个两人掷骰子游戏"}}}'
+   ```
+
+   门户模式下还要带 `X-Linx-Agent-Id` 和 `Authorization: Bearer <MCP Token>`。之后用 `get-app-status` 等构建完成，再用 `get-screens` + `start-app` 上屏；工具与错误码见[应用管理 MCP](docs/architecture/interfaces/app-management-mcp.md)。
+2. **接灵矽。** 准备灵矽账号、灵矽云能访问的公网 HTTPS 地址（`https://<域名>/mcp`），在 `/admin/settings` 完成平台配置。局域网地址只适合本机联调。
+
+逐步说明见 [Gateway](docs/operations/gateway.md)、[Render](docs/operations/render.md)、[Casting](docs/operations/casting.md) 启动指南。Portal 前端在 `portal/` 下用 pnpm 构建。
 
 ## 文档
 

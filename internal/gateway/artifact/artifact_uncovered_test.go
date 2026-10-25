@@ -5,14 +5,11 @@ import (
 	"testing"
 )
 
-func TestParseLaunchRejectsEntryThatCleansToAnotherName(t *testing.T) {
-	// A backslash is a valid file-name character, so the archive can contain
-	// "app/dir\main.js"; cleanName normalizes it to app/dir/main.js and the
-	// runtime argument no longer resolves to an archived entry.
+func TestParseLaunchRequiresExactEntryPath(t *testing.T) {
 	data := []byte(`{"name":"quiz","runtimeExecutable":"node","runtimeArgs":["app/dir\\main.js"]}`)
-	files := map[string]bool{"app/dir\\main.js": true}
+	files := map[string]bool{"app/dir\\main.js": true, "app/app.js": true}
 	_, err := parseLaunch(data, files)
-	if err == nil || !strings.Contains(err.Error(), "must reference an entry file inside app/") {
+	if err == nil || !strings.Contains(err.Error(), "app/app.js") {
 		t.Fatalf("err = %v", err)
 	}
 }

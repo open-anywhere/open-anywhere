@@ -25,6 +25,7 @@ launch.json
 - `app/` 必须自包含。前端 JSX、TypeScript、样式和依赖在构建端处理完成；运行端不执行 install 或 build，不依赖构建沙箱里的文件或全局安装的应用依赖。
 - MVP 的 Node.js 程序使用内置模块，或把可打包的依赖预先打包到入口文件；运行端提供约定版本的 Node.js。
 - `app/app.js`、`app/package.json`、`app/public/index.html`、`openapi.yaml` 和 `launch.json` 必填；样式、页面脚本和其他资源按需提供。
+- 压缩包不超过 100 MiB，解压后总量不超过 100 MiB，归档条目不超过 4096 个；超过任一条都会在准入阶段被拒绝。
 
 打包示例：
 
@@ -50,9 +51,9 @@ Node.js 示例：
 | --- | --- | --- |
 | `name` | 是 | 应用名称，用于日志、注册表和展示 |
 | `runtimeExecutable` | 是 | 一期固定为 `node`，其他值不予接受 |
-| `runtimeArgs` | 是 | Node.js 启动参数数组，包含包内入口文件路径，例如 `["app/app.js"]`；不含部署端口 |
+| `runtimeArgs` | 是 | Node.js 启动参数数组。第一个元素必须等于 `app/app.js`；其余元素只能是 node 标志（如 `--max-old-space-size=256`），不能出现 `--port` 或固定端口 |
 | `healthPath` | 否 | 默认 `/health`；MVP 固定使用 `/health`，若声明必须为该值 |
-| `readyTimeoutMs` | 否 | 就绪超时，单位毫秒，默认 `10000`，须为正整数；运行端可设置上限 |
+| `readyTimeoutMs` | 否 | 就绪超时，单位毫秒，默认 `10000`，取值 1–60000 |
 
 所有相对路径以 artifact 根目录为基准，进程工作目录也是该目录。`runtimeArgs` 按参数数组直接传递，不进行 shell 展开。
 
@@ -153,6 +154,9 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 接收方须独立检查产物。准入检查至少覆盖：
 
 - 归档目录结构、入口文件和启动契约符合要求；一期仅接受 `runtimeExecutable: "node"` 的 Node.js 应用。
+- `launch.json.runtimeArgs[0]` 等于 `app/app.js`，其余元素只能是 node 标志；`readyTimeoutMs` 在 1–60000 之间。
+- `launch.json`、`openapi.yaml`、`app/app.js`、`app/package.json`、`app/public/index.html` 五个文件都存在且是常规文件；`package.json` 是合法 JSON。
+- 压缩包 ≤100 MiB、展开后 ≤100 MiB、归档条目 ≤4096；拒绝绝对路径、`..`、符号链接与硬链接。
 - `launch.json` 不携带端口，OpenAPI 合法且与实际业务操作一致。
 - 无 install/build 步骤，仅注入 `HOST`、`PORT` 即可从 artifact 根目录启动。
 - 在就绪时限内，`GET /health` 返回 HTTP `200` 和 `{"status":"ok"}`；缺失该路由则验收失败。

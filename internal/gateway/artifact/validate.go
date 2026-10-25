@@ -22,11 +22,27 @@ const (
 	// MaxSize is the compressed artifact limit from the artifact contract.
 	MaxSize int64 = 100 << 20
 	// MaxReadyTimeoutMS is the upper bound accepted for launch.json.
-	MaxReadyTimeoutMS = 600000
+	MaxReadyTimeoutMS = 60_000
 
-	maxFileSize = 64 << 20
-	maxTotal    = 512 << 20
+	// maxArtifactSize is the expanded artifact limit. It matches Render's
+	// maxArtifactBytes so an artifact accepted here cannot fail there.
+	maxArtifactSize int64 = 100 << 20
+	// maxFileSize is the per-file limit. Render does not impose a tighter
+	// per-file bound, so keep it equal to the expanded total.
+	maxFileSize = maxArtifactSize
+	maxTotal    = maxArtifactSize
+	// maxEntries matches Render's archive entry cap.
+	maxEntries = 4096
 )
+
+// requiredFiles must exist as regular files for the archive to be runnable.
+var requiredFiles = []string{
+	"launch.json",
+	"openapi.yaml",
+	"app/app.js",
+	"app/package.json",
+	"app/public/index.html",
+}
 
 // Error is a validation failure with a stable code.
 type Error struct {
@@ -114,6 +130,7 @@ func validateArchive(filename string) (Result, error) {
 		openapiData []byte
 		packageJSON []byte
 		total       int64
+		entryCount  int
 	)
 	for {
 		header, err := reader.Next()
@@ -122,6 +139,10 @@ func validateArchive(filename string) (Result, error) {
 		}
 		if err != nil {
 			return Result{}, &Error{Code: "ARTIFACT_CORRUPT", Message: "cannot read tar archive: " + err.Error()}
+		}
+		entryCount++
+		if entryCount > maxEntries {
+			return Result{}, invalid("archive has more than %d entries", maxEntries)
 		}
 		name, err := cleanName(header.Name)
 		if err != nil {
@@ -153,7 +174,7 @@ func validateArchive(filename string) (Result, error) {
 			launchData, err = readEntry(reader, header.Size, 1<<20)
 		case "openapi.yaml":
 			openapiData, err = readEntry(reader, header.Size, 8<<20)
-		case "package.json", "app/package.json":
+		case "app/package.json":
 			packageJSON, err = readEntry(reader, header.Size, 1<<20)
 		}
 		if err != nil {
@@ -166,24 +187,16 @@ func validateArchive(filename string) (Result, error) {
 	if expanded.N <= 0 {
 		return Result{}, invalid("expanded archive too large")
 	}
-	if len(launchData) == 0 {
-		return Result{}, invalid("launch.json not found at archive root")
-	}
-	if len(openapiData) == 0 {
-		return Result{}, invalid("openapi.yaml not found at archive root")
-	}
-	hasAppFile := false
-	for name := range files {
-		if strings.HasPrefix(name, "app/") {
-			hasAppFile = true
-			break
+	for _, name := range requiredFiles {
+		if !files[name] {
+			return Result{}, invalid("required file %q is missing", name)
 		}
 	}
-	if !hasAppFile {
-		return Result{}, invalid("archive must contain app/ with at least one file")
+	if packageJSON == nil {
+		return Result{}, invalid("required file %q is missing", "app/package.json")
 	}
-	if packageJSON != nil && !json.Valid(packageJSON) {
-		return Result{}, invalid("package.json is not valid JSON")
+	if _, err := decodePackageJSON(packageJSON); err != nil {
+		return Result{}, err
 	}
 	launch, err := parseLaunch(launchData, files)
 	if err != nil {
@@ -194,6 +207,15 @@ func validateArchive(filename string) (Result, error) {
 		return Result{}, invalid("%s", err)
 	}
 	return Result{Launch: launch, OpenAPI: spec}, nil
+}
+
+// decodePackageJSON requires the same shape Render accepts: a JSON object.
+func decodePackageJSON(data []byte) (map[string]any, error) {
+	var metadata map[string]any
+	if err := json.Unmarshal(data, &metadata); err != nil || metadata == nil {
+		return nil, invalid("app/package.json is not a valid JSON object")
+	}
+	return metadata, nil
 }
 
 func parseLaunch(data []byte, files map[string]bool) (Launch, error) {
@@ -219,25 +241,16 @@ func parseLaunch(data []byte, files map[string]bool) (Launch, error) {
 	if len(value.RuntimeArgs) == 0 {
 		return Launch{}, invalid("runtimeArgs is required")
 	}
-	first := value.RuntimeArgs[0]
-	if !strings.HasPrefix(first, "app/") || path.Clean(first) != first || !files[first] {
-		return Launch{}, invalid("first runtime argument must be the app/ entry file")
+	if value.RuntimeArgs[0] != "app/app.js" {
+		return Launch{}, invalid(`runtimeArgs[0] must be exactly "app/app.js", got %q`, value.RuntimeArgs[0])
 	}
-	entryFound := false
-	for _, arg := range value.RuntimeArgs {
-		if strings.HasPrefix(arg, "--port") {
+	if !files["app/app.js"] {
+		return Launch{}, invalid(`runtimeArgs[0] must reference the archived file "app/app.js"`)
+	}
+	for _, arg := range value.RuntimeArgs[1:] {
+		if arg == "--port" || strings.HasPrefix(arg, "--port=") {
 			return Launch{}, invalid("runtimeArgs must not fix a port")
 		}
-		normalized, err := cleanName(arg)
-		if err != nil {
-			continue
-		}
-		if strings.HasPrefix(normalized, "app/") && files[normalized] {
-			entryFound = true
-		}
-	}
-	if !entryFound {
-		return Launch{}, invalid("runtimeArgs must reference an entry file inside app/")
 	}
 	healthPath := value.HealthPath
 	if healthPath == "" {

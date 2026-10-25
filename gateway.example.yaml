@@ -13,13 +13,16 @@
 # 1. 部署项
 # ---------------------------------------------------------------------------
 
-addr: ":8090"
+# 端口分工见 README 的“端口”表：Gateway 8091、Render 8090、Casting 8080。
+# 内置默认值仍是 ":8090"，与 Render 示例端口冲突，所以示例显式改成 8091。
+addr: ":8091"
 
 services:
-  # 仅本地调试使用。设为 true 后允许用户填写 127.0.0.1、局域网等内网 Render/Casting 地址；
-  # 生产环境保持 false，否则用户可以借服务绑定探测部署所在内网。
+  # 仅本地调试或受信单租户部署使用。设为 true 后允许用户填写 127.0.0.1、局域网等内网
+  # Render/Casting 地址；生产环境保持 false，否则用户可以借服务绑定探测部署所在内网。
   # 门户模式下管理员保存的平台默认服务也受同一策略约束；本地使用 127.0.0.1
-  # 默认地址调试时，需要设为 true。
+  # 默认地址调试时，需要设为 true。该开关同时放宽 custom 用户的地址校验，
+  # 只应在自己信任的单租户环境打开。
   allow_private_targets: false
 
 # 屏幕映射 JSON 文件；留空时直接使用投屏服务发现的目标。
@@ -27,9 +30,10 @@ screens: ""
 
 artifacts:
   dir: "artifacts"
-  # Render 下载产物使用的地址，必须是 Render 能访问的绝对 HTTP(S) URL，
-  # 通常是本机在局域网或公网上的地址，例如 http://<本机地址>:8090。
-  base_url: "http://127.0.0.1:8090"
+  # Render 下载产物使用的地址，必须指向 Gateway 自己并且是 Render 能访问的绝对 HTTP(S) URL。
+  # 示例端口 8091 就是 Gateway 的 addr；不要填 Render 的 8090，Render 会拉不到产物。
+  # 局域网或公网部署时换成 http://<Gateway 主机地址>:8091。
+  base_url: "http://127.0.0.1:8091"
 
 database:
   path: "open-anywhere.gateway.db"
@@ -59,7 +63,7 @@ mcp_token: ""
 speaker_probe: false
 
 # 多租户用户门户（可选）。开启后提供 Home、注册/登录、/portal 用户控制台与 /admin 管理后台。
-# 前端需先构建：cd portal && npm install && npm run build。
+# 前端需先构建：cd portal && pnpm install && pnpm build。
 # portal.username / portal.password 是管理员引导账号：启动时创建或提升为 admin，并激活账号。
 portal:
   enabled: false
@@ -69,9 +73,10 @@ portal:
   username: ""                 # 管理员引导账号，可用 PORTAL_USERNAME 覆盖
   password: ""                 # 管理员引导密码，可用 PORTAL_PASSWORD 覆盖
   session_ttl: "720h"
-  cookie_secure: false         # 生产 HTTPS 置为 true
+  cookie_secure: true          # 默认 true；纯 HTTP 本地调试若拿不到 Cookie 再显式改 false
   # 仅在 registration.open 尚无值时把注册开关 seed 为 true；之后以管理后台的设置为准。
-  # 上线前应先完成租户隔离验证，再打开注册。
+  # 开放注册前必须先完成租户隔离：Render 目前没有鉴权与沙箱，MCP 仍是全局 token +
+  # 请求头自报身份。未完成隔离就开放注册，等于把跨租户读写暴露给任何注册用户。
   allow_registration: false
   # 平台密钥与用户服务 token 使用 AES-256-GCM 加密。主密钥优先生成在 data_dir/secret.key（0600），
   # 也可用环境变量 GATEWAY_SECRET_KEY（base64 32 字节）提供。密钥必须与数据库一起备份，
@@ -100,7 +105,7 @@ linx:
 #   environment_id: ""
 #
 # render:
-#   base_url: ""        # 平台托管用户使用的默认渲染服务，本机调试例如 http://127.0.0.1:8091
+#   base_url: ""        # 平台托管用户使用的默认渲染服务，本机调试例如 http://127.0.0.1:8090
 #
 # casting:
 #   base_url: ""        # 平台托管用户使用的默认投屏服务，本机调试例如 http://127.0.0.1:8080

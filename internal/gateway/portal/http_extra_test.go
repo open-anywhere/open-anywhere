@@ -448,6 +448,7 @@ func TestMapServiceErrorCoversEveryCode(t *testing.T) {
 		{"START_FAILED", http.StatusBadGateway, "START_FAILED"},
 		{"BUILD_FAILED", http.StatusBadGateway, "BUILD_FAILED"},
 		{"BUILD_START_FAILED", http.StatusBadGateway, "BUILD_START_FAILED"},
+		{"ARTIFACT_INVALID", http.StatusUnprocessableEntity, "ARTIFACT_INVALID"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.code, func(t *testing.T) {

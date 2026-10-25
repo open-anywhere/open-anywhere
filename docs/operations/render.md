@@ -65,10 +65,10 @@ go run ./cmd/render \
 ./scripts/package-scoreboard.sh
 ```
 
-生成 `e2e/artifacts/scoreboard.tar.gz`。在一个终端提供文件下载：
+生成 `e2e/artifacts/scoreboard.tar.gz`。在一个终端提供文件下载（用 8092，避开 Gateway 的 8091）：
 
 ```sh
-python3 -m http.server 8091 --directory e2e/artifacts
+python3 -m http.server 8092 --directory e2e/artifacts
 ```
 
 本机调用示例：
@@ -77,7 +77,7 @@ python3 -m http.server 8091 --directory e2e/artifacts
 curl http://localhost:8090/v1/ports/39101
 curl http://localhost:8090/v1/apps \
   -H 'Content-Type: application/json' \
-  -d '{"app_id":"app-scoreboard","artifact_url":"http://127.0.0.1:8091/scoreboard.tar.gz","port":39101}'
+  -d '{"app_id":"app-scoreboard","artifact_url":"http://127.0.0.1:8092/scoreboard.tar.gz","port":39101}'
 ```
 
 这里的 `127.0.0.1` 假设文件服务与 Render 在同一主机，远程部署须使用 Render 可访问的下载地址。调用业务操作：
@@ -118,6 +118,13 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 
 普通的 `go test ./... -race` 覆盖归档与契约校验、并发期间的实例/端口预留、启动失败清理、HTTP 输入错误和慢速拉流客户端隔离；需要 `lsof`，但不启动浏览器或 FFmpeg。专门的 Render E2E CI 安装媒体依赖并执行真实链路。
 
+## 局域网与多租户部署
+
+- **局域网或自托管**：Render 与 Gateway 不在同一台机器、或必须走私网地址时，要在 `gateway.yaml` 显式设置 `services.allow_private_targets: true`。默认策略拒绝回环、私网、link-local 与 CGNAT 地址，不改这个开关就绑不上 `192.168.x.x` 这类地址。该开关同时放宽 custom 用户填写的 Render/Casting 地址，只适用于自己信任的单租户部署。
+- **不要直接暴露公网**：`POST /v1/apps` 没有鉴权，也没有 Node.js 沙箱隔离，任何能访问它的人都可以启动任意 tar.gz。Render 只应放在受信网络里，或由反向代理与网络策略收口。
+- **共享多租户是开放注册前的阻塞项**：平台默认 Render 被所有 managed 用户共用时，缺少运行时隔离、独立 UID、资源配额与 per-tenant 凭证。在完成隔离之前，不要在托管实例上打开注册；管理后台的注册开关旁也有同样的提示。
+- **token 只透传**：Gateway 会把用户或平台配置的 token 作为 `Authorization: Bearer` 发给 Render，但 Render 当前不解析、不校验这个头。需要访问控制的部署必须在网络层完成。
+
 ## 日志与停止
 
 服务日志输出到终端。每个实例的临时目录位于 `-work-dir` 下，包含应用进程日志 `app.log` 与编码日志 `encoder.log`。停止实例用 `DELETE /v1/apps/<instance_id>`；停止 Render 进程直接 `Ctrl-C`。
@@ -135,7 +142,7 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 - 页面按固定 1280×720 画布截图，超出 viewport 的内容会被裁切。Render 会检测并记录 `layout_overflow` 告警，但不会自动缩放或中断播放。
 - 每个实例具有独立进程、工作目录、浏览器和编码器。同一 Render 上按 `app_id` 原子预留；跨节点单实例仍由控制面保证，本服务不实现分布式锁。
 - 进程退出、连续三次健康检查失败或视频输出中断会触发错误与清理；不自动重启应用。状态和实例记录仅在内存中，服务重启不恢复旧实例。
-- 归档拒绝路径穿越、链接和特殊文件，压缩及展开数据各限制 100 MiB。OpenAPI 校验覆盖版本、业务路径和操作元信息，不是完整的 OpenAPI / JSON Schema 校验器；完整校验与业务自测由构建端承担。
+- 归档拒绝路径穿越、链接和特殊文件，压缩及展开数据各限制 100 MiB，归档条目不超过 4096 个。OpenAPI 校验覆盖版本、业务路径和操作元信息，不是完整的 OpenAPI / JSON Schema 校验器；完整校验与业务自测由构建端承担。
 - 端口列表合并 Render 预留和 `lsof` 可见的 TCP 监听记录；端口检查还进行与应用监听行为一致的绑定探测。系统权限可能限制其他用户进程的可见范围，列表不能代替启动时的绑定结果。
-- 这是运行可信构建产物的本地服务，不提供用户鉴权和 Node.js 沙箱隔离。应用启动时只继承必要环境变量；应用日志与编码日志在实例工作目录中，清理后删除，生命周期错误写服务日志。
+- 这是运行构建产物的本地服务，不提供用户鉴权和 Node.js 沙箱隔离；多租户场景下产物必须视为不可信输入，开放注册前要先完成隔离（见“局域网与多租户部署”）。应用启动时只继承必要环境变量；应用日志与编码日志在实例工作目录中，清理后删除，生命周期错误写服务日志。
 - `ready` 表示媒体流已经就绪，不代表电视已经开始播放。

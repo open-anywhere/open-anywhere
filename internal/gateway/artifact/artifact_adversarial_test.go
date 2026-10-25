@@ -135,13 +135,13 @@ func TestValidateDetectsATruncatedGzipTrailer(t *testing.T) {
 	}
 }
 
-func TestValidateRequiresAtLeastOneAppFile(t *testing.T) {
+func TestValidateRequiresEveryAppFile(t *testing.T) {
 	entries := validEntries()
 	for _, name := range []string{"app/", "app/app.js", "app/package.json", "app/public/index.html"} {
 		entries = remove(entries, name)
 	}
 	_, err := Validate(writeArchive(t, entries))
-	if err == nil || !strings.Contains(err.Error(), "app/") {
+	if err == nil || !strings.Contains(err.Error(), "app/app.js") {
 		t.Fatalf("err = %v", err)
 	}
 }

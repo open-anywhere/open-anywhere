@@ -29,12 +29,12 @@
 - 只暴露稳定、与运行时无关的业务标识（`app_id`、`screen_id`），不暴露端口、运行目录或 Render 标识。
 - `app_id` 必须属于当前设备和智能体（device + agent）。Linx 会话重连不影响归属，控制面拒绝跨设备或跨智能体访问。
 - 构建是长任务：`create-app` 立即返回，状态通过 `get-app-status` 查询，构建完成通过 MCP 通知告知。
-- 写操作按业务键幂等：同一 `app_id` 不重复创建构建 session、应用进程或投屏会话。`create-app` 每次新建应用与 session；修订走 `update-app` 复用绑定 session。
+- 写操作按业务键收敛：同一 `app_id` 不重复创建构建 session、应用进程或投屏会话。但 `create-app` / `update-app` 本身不是可重试的幂等调用——每次调用都会新建一轮构建；修订走 `update-app` 复用绑定 session。
 - 屏幕与应用都按 owner 作用域：同一 `screen_id` 在两个用户的 Casting 上是两块互不相关的屏幕。
 
 ### 1.3 身份与租户隔离（Portal 模式）
 
-Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE 会话一致：
+Portal 启用时，MCP 请求必须携带三个头：
 
 | 头 | 含义 |
 | --- | --- |
@@ -42,29 +42,53 @@ Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE �
 | `X-Linx-Agent-Id` | Linx 智能体 ID，对应 `portal_devices.linx_agent_id` |
 | `X-Linx-Session-Id` | 本次 MCP 会话 ID |
 
+端点与校验时机：
+
+| 端点 | 传输 | 校验时机 |
+| --- | --- | --- |
+| `/mcp` | Streamable HTTP，stateless | 每个请求独立校验三个头与 owner |
+| `/sse` | Legacy SSE | 建立连接时校验一次 |
+| `/mcp/message` | Legacy SSE 的消息端点 | 每次 POST 都要与已建立的 SSE 会话精确一致 |
+
 校验规则：
 
-- `GET /sse`：缺少任一头返回 `400 MISSING_IDENTITY`；设备不存在、未完成开通或用户被停用返回 403（`OWNER_NOT_FOUND` / `IDENTITY_NOT_REGISTERED` / `USER_DISABLED`），不建立会话。
-- `POST /mcp/message`：每次请求都要求三头齐全且与 SSE 会话精确一致；缺失或不一致返回 `403 IDENTITY_MISMATCH`。随后再次查库校验设备与用户状态，不只依赖建连时的检查。
+- 缺少任一头：`/mcp` 和 `/sse` 返回 `400 MISSING_IDENTITY`，不建立会话。
+- 设备不存在、未完成开通或用户被停用：`403 OWNER_NOT_FOUND` / `IDENTITY_NOT_REGISTERED` / `USER_DISABLED`。
+- `/mcp/message` 的头缺失或与 SSE 会话不一致：`403 IDENTITY_MISMATCH`；随后再查库校验设备与用户状态，不只依赖建连时的检查。
+- 身份校验器自身失败（例如数据库不可用，无法归入上面的归属错误）：`503 IDENTITY_CHECK_FAILED`，不返回工具结果。
 - Portal 模式下 MCP Token 首次启动时自动生成并加密保存在数据库，管理员可在平台设置里重新生成；MCP 端点每次请求都读取当前值校验，读取失败时拒绝请求。
 - 单租户部署（`portal.enabled=false`）不注入 owner 校验器，兼容旧的 `X-Linx-Device-Id` / `X-Linx-Session-Id` 行为。
-- 设备必须在 `registered` 状态才能调用工具；一个用户最多一台虚拟设备，一个 `linx_agent_id` 只能属于一台设备。
+- 设备必须在 `registered` 状态才能调用工具。每个账号最多 10 台设备（虚拟与硬件合计），一个智能体可以挂多台硬件；应用归属仍是 `(device, agent)`，与 v4 schema 和 [Portal 设计](portal.md) 一致。
 
 ## 2. 工具与状态
 
 ### 2.1 工具集
+
+本节是工具清单的唯一权威来源；[架构总览](../overview.md)与[模块规格](../modules.md)只引用本节，不再各列一份。
+
+**typed 工具**（`internal/gateway/mcp/tools.go`，带 JSON Schema 校验）：
 
 | Tool | 作用 | 输入 | 输出 |
 | --- | --- | --- | --- |
 | `get-screens` | 查询当前可用屏幕及占用情况 | 无 | `screens` 数组，见第 5 章 |
 | `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt`、可选 `player_names` | `app_id`, `state: building` |
 | `update-app` | 在已有应用的绑定会话上提交修订并重建产物 | `app_id`, `prompt` | `app_id`, `state: building` |
-| `list-apps` | 查询当前设备和智能体的历史应用 | 无 | `apps` 数组，见 3.1 |
 | `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见第 4 章 |
 | `get-app-operations` | 查询应用声明的 OpenAPI 业务操作 | `app_id` | `app_id`, `state`, `operations` |
 | `start-app` | 在指定屏幕上启动已构建的应用 | `app_id`, `screen_id`, 可选 `force` | `app_id`, `screen_id`, `state: running`, 可选 `replaced_app_id` |
 | `stop-app` | 停止运行中的应用 | `app_id` | `app_id`, `state: idle` |
 | `send-request` | 调用应用的业务操作 | `app_id`, `operation_id`, `parameters`, `body` | `status`, `body` |
+
+**兼容层工具**（`internal/gateway/mcp/compatibility.go`，为旧版灵矽提示词保留）：
+
+| Tool | 说明 | 输入 | 输出 |
+| --- | --- | --- | --- |
+| `get_openapi` | 读取应用完整 OpenAPI 文档 | `app_id` | 完整 OpenAPI JSON |
+| `list-apps` | 列出当前设备和智能体的历史应用，最新的在前 | 无 | `apps` 数组，见 3.1 |
+| `send_request` | `send-request` 的旧别名（下划线命名） | `app_id`、`operationId`、可选 `parameters`、`requestBody` | `{ok, status, data}`：`ok` 表示 2xx，`data` 是应用响应体 |
+| `probe_speaker` | 声纹诊断，仅在 `speaker_probe: true` 时注册 | `speaker_id`、`speaker_name`、`context_source` | `{received, verified}`，不参与业务 |
+
+`send-request` 与 `send_request` 走同一套转发逻辑，但返回结构不同：typed 版返回应用原始 `status` 与 `body`，兼容版返回 `{ok, status, data}`。灵矽新提示词应使用 typed 工具；兼容工具不要写进新的接入文档。
 
 ### 2.2 应用状态
 
@@ -77,7 +101,7 @@ Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE �
 | `running` | 应用健康检查通过，指定屏幕的投屏会话处于播放状态 |
 | `error` | 构建、启动或运行失败，包含投屏失败 |
 
-`error.stage` 区分失败阶段，取 `building`、`starting` 或 `running`；构建失败不会产生可启动的 `idle` 应用。构建成功但启动失败的应用仍处于 `error`，保留失败原因；再次 `start-app` 或 `stop-app` 会先清理上次启动遗留的资源，成功后回到 `idle`，因此可以重试。清理尚未完成时工具返回 `CLEANUP_PENDING`。错误结构与错误码见第 9 章。
+`error.stage` 区分失败阶段，取 `building`、`starting` 或 `running`；构建失败不会产生可启动的 `idle` 应用。构建成功但启动失败的应用仍处于 `error`，保留失败原因；再次 `start-app` 或 `stop-app` 会先清理上次启动遗留的资源，成功后回到 `idle`，因此连接类失败可以重试。产物结构错误（`ARTIFACT_INVALID`）不能靠重试解决，必须先 `update-app` 或重新 `create-app`。清理尚未完成时工具返回 `CLEANUP_PENDING`。错误结构与错误码见第 9 章。
 
 ## 3. `create-app`
 
@@ -140,11 +164,11 @@ Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE �
 }
 ```
 
-同一设备和智能体可以同时有多个 `building` 应用：每次 `create-app` 都分配新的 `app_id`，并创建独立的 AgentAPI 构建会话。控制面在内部把 `app_id` 与 `session_id` 一对一绑定；`session_id` 不通过 MCP 返回。已返回的 `app_id` 用 `get-app-status` 或通知跟踪；不要为同一用户意图盲目重试 `create-app`（会多出一个应用）。修改已有应用走 `update-app`，见第 3.2 节与 [multi-app-sessions.md](multi-app-sessions.md)。
+同一设备和智能体可以同时有多个 `building` 应用：每次 `create-app` 都分配新的 `app_id`，并创建独立的 AgentAPI 构建会话。控制面在内部把 `app_id` 与 `session_id` 一对一绑定；`session_id` 不通过 MCP 返回。已返回的 `app_id` 用 `get-app-status` 或通知跟踪。**`create-app` 不是幂等操作**（MCP 注解 `idempotentHint=false`）：请求超时或结果不明时先 `list-apps` / `get-app-status` 确认，不要直接重试，否则会多建一个应用和一整轮构建。修改已有应用走 `update-app`，见第 3.2 节与 [multi-app-sessions.md](multi-app-sessions.md)。
 
 ### 3.1 `list-apps`
 
-输入为空对象。返回当前设备和智能体构建过的应用，最新的在前，不受 Linx 会话重连影响。历史是全局上限：所有设备和智能体共享最近 10 个应用；超出时淘汰最旧且不在 `building` / `running`、也不持有下游资源的应用及其产物。`list-apps` 只返回当前设备和智能体的应用。
+输入为空对象。返回当前设备和智能体构建过的应用，最新的在前，不受 Linx 会话重连影响。历史按 `(device, agent)` 分组，每组保留最近 10 个应用，不同设备或智能体之间互不挤占；超出时淘汰该组最旧且不在 `building` / `running`、也不持有下游资源的应用及其产物。`list-apps` 只返回当前设备和智能体的应用。
 
 ```json
 {
@@ -166,7 +190,7 @@ Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE �
 }
 ```
 
-- `startable` 表示现在能否直接 `start-app`；false 时 `not_startable_reason` 说明原因（构建中、运行中、构建失败、产物丢失，或上次启动还在核对/清理）。
+- `startable` 表示现在能否直接 `start-app`；false 时 `not_startable_reason` 说明原因（构建中、运行中、构建失败、产物无效需 `update-app` 重建、产物丢失，或上次启动还在核对/清理）。
 - 用户说“玩上次那个/之前那个”时，先 `list-apps` 让用户确认，再用 `start-app` 启动；不要重新 `create-app`。
 - `list-apps` 是历史快照，启动时仍以 `get-app-status` / `start-app` 的结果为准。
 
@@ -205,6 +229,8 @@ Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE �
   "state": "building"
 }
 ```
+
+`update-app` 同样不是幂等操作（MCP 注解 `idempotentHint=false`）：每次成功提交都会多跑一轮构建并替换产物。提交超时或连接中断时先用 `get-app-status` 确认是否已进入 `building`，不要直接重发；返回 `APP_BUILDING` 也不代表可以插队。
 
 状态与错误：
 
@@ -378,7 +404,7 @@ Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE �
 
 应用端口、Render 的 `instance_id`、Casting 的 `endpoint_id` 和投屏会话 id 只在控制面内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。
 
-可以从 `idle` 启动，也可以从“构建成功但启动失败”的 `error` 重试；`start-app` 会先清理上次失败遗留的资源，成功后回到 `running`。已经在同一屏幕上 `running` 时幂等返回当前状态；若指定不同屏幕，返回 `APP_ALREADY_RUNNING`，由调用方先停止再启动。`building` 时返回 `APP_BUILDING`；构建失败、没有可启动产物的 `error` 返回 `APP_IN_ERROR`。
+可以从 `idle` 启动，也可以从“构建成功但启动失败”的 `error` 重试；`start-app` 会先清理上次失败遗留的资源，成功后回到 `running`。`ARTIFACT_INVALID` 是例外：产物结构不合法时重试不会成功，先 `update-app` 或重新 `create-app`。已经在同一屏幕上 `running` 时幂等返回当前状态；若指定不同屏幕，返回 `APP_ALREADY_RUNNING`，由调用方先停止再启动。`building` 时返回 `APP_BUILDING`；构建失败、没有可启动产物的 `error` 返回 `APP_IN_ERROR`。
 
 屏幕占用按 owner 判定：
 
@@ -520,11 +546,14 @@ sequenceDiagram
 | 场景 | `error.stage` | `error.code` 示例 |
 | --- | --- | --- |
 | 构建或产物校验失败 | `building` | `BUILD_FAILED` |
+| 启动时 Render 判定产物不合法（HTTP 422、`INVALID_ARTIFACT`） | `starting` | `ARTIFACT_INVALID`（不可重试） |
 | 应用启动或健康检查失败 | `starting` | `START_FAILED` |
 | 启动过程中屏幕不可达 | `starting` | `TARGET_UNREACHABLE` |
 | 启动过程中投屏超时 | `starting` | `PROJECTION_TIMEOUT` |
 | 应用运行后进程异常退出 | `running` | `APP_EXITED` |
 | 应用运行后投屏断开 | `running` | `PROJECTION_DISCONNECTED` |
+
+`ARTIFACT_INVALID` 表示产物结构或启动契约不合法（例如入口不是 `app/app.js`、缺必填文件、`launch.json` 非法），由 Render 的 `422 INVALID_ARTIFACT` 映射而来；产物下载地址缺失也归入这一类。重试 `start-app` 不会成功：应先 `update-app` 让构建端重新交付，或重新 `create-app`。`START_FAILED` 只表示应用进程启动或健康检查失败，不再承载产物结构错误。
 
 `error.message` 可选，用于补充失败原因；`error.last_agent_message` 保留最近一次 agent 消息。
 
@@ -544,7 +573,8 @@ sequenceDiagram
 | `TARGET_BUSY` | `start-app` | 目标屏幕被其他应用或无法归属的投屏会话占用 |
 | `TARGET_UNREACHABLE` | `start-app` | 屏幕不存在、离线或无法访问 |
 | `ARTIFACT_MISSING` | `start-app` | 应用包已丢失，需要重新创建 |
-| `START_FAILED` | `start-app` | 应用进程启动失败 |
+| `ARTIFACT_INVALID` | `start-app` | Render 判定产物结构或启动契约不合法（422）；重试无效，需要 `update-app` 或 `create-app` |
+| `START_FAILED` | `start-app` | 应用进程启动或健康检查失败 |
 | `STREAM_START_FAILED` | `start-app` | 应用媒体流未就绪 |
 | `CLEANUP_PENDING` | `start-app`, `stop-app` | 上次启动结果还在核对或资源正在清理，稍后重试 |
 | `STOP_FAILED` | `stop-app` | 停止进程或释放屏幕占用失败 |
@@ -558,15 +588,16 @@ sequenceDiagram
 
 `CLEANUP_PENDING` 是临时状态：屏幕和资源还在核对或清理，稍后用同一 `app_id` 重试即可，不要重新 `create-app`。`APP_NOT_FOUND` 同时覆盖“不存在”和“不属于当前设备和智能体”，控制面不区分两者，避免泄露其他设备的应用是否存在。
 
-Portal 模式下，身份校验失败发生在建立 SSE 或 POST 消息之前，不属于工具错误：
+Portal 模式下，身份校验失败发生在进入工具层之前，不属于工具错误（`/mcp` 每个请求都校验，`/sse` 建连时校验，`/mcp/message` 每次 POST 校验）：
 
 | HTTP | `code` | 场景 |
 | --- | --- | --- |
-| `400` | `MISSING_IDENTITY` | `/sse` 缺少任一 `X-Linx-*` 头 |
+| `400` | `MISSING_IDENTITY` | `/mcp` 或 `/sse` 缺少任一 `X-Linx-*` 头 |
 | `401` | — | 配置了 MCP Token（Portal 模式始终有）但 Bearer token 缺失或错误 |
 | `403` | `IDENTITY_MISMATCH` | `/mcp/message` 的头缺失或与 SSE 会话不一致 |
 | `403` | `OWNER_NOT_FOUND` | 设备不存在，或 `(MAC, AgentID)` 无法匹配 |
 | `403` | `IDENTITY_NOT_REGISTERED` | 设备存在但尚未完成开通（`state != registered`） |
 | `403` | `USER_DISABLED` | 设备所属账号已被停用 |
+| `503` | `IDENTITY_CHECK_FAILED` | 身份校验器自身失败（例如数据库不可用），请求未进入工具层 |
 
 身份通过后，工具层仍按 owner 校验应用与屏幕；跨 owner 的应用返回 `APP_NOT_FOUND`，跨 owner 的 `force` 返回 `TARGET_BUSY`。
