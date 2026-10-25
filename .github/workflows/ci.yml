@@ -10,8 +10,20 @@ permissions:
 
 jobs:
   test:
-    name: Test
+    name: Test (${{ matrix.program }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - program: casting
+            packages: ./cmd/casting/... ./internal/casting/... ./pkg/casting/...
+          - program: gateway
+            packages: ./cmd/gateway/... ./internal/gateway/... ./pkg/agentapi/...
+          - program: render
+            packages: ./cmd/render/... ./internal/render/... ./pkg/render/... ./pkg/canvas/...
+          - program: voiceentry
+            packages: ./cmd/voiceentry/... ./internal/voiceentry/...
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,14 +38,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y lsof
 
       - name: Run tests with coverage
-        run: go test ./... -race -covermode=atomic -coverprofile=coverage.out
+        run: |
+          packages="${{ matrix.packages }}"
+          go test $packages -race -count=1 -covermode=atomic \
+            -coverpkg="$(echo "$packages" | tr ' ' ',')" \
+            -coverprofile=coverage-${{ matrix.program }}.out
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.out
-          flags: unittests
+          files: ./coverage-${{ matrix.program }}.out
+          flags: ${{ matrix.program }}
+          name: ${{ matrix.program }}
           fail_ci_if_error: false
 
   lint:

@@ -11,7 +11,11 @@
 
 <p align="center">
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white" alt="Go"></a>
-  <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://codecov.io/gh/open-anywhere/open-anywhere/graph/badge.svg?token=U6SNW7NYZQ" alt="codecov"></a>
+  <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;label=coverage" alt="coverage"></a>
+  <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=casting&amp;label=casting" alt="casting coverage"></a>
+  <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=gateway&amp;label=gateway" alt="gateway coverage"></a>
+  <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=render&amp;label=render" alt="render coverage"></a>
+  <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=voiceentry&amp;label=voiceentry" alt="voiceentry coverage"></a>
 </p>
 
 ---
@@ -47,14 +51,6 @@ go run ./cmd/casting -addr :8080 -interface en0
 ```
 
 接口、目录组织和测试说明见 [Casting 服务](docs/casting.md)。
-
-没有真实电视时，可以启动模拟电视：
-
-```sh
-go run ./cmd/mock-tv -addr :8095 -iface en0
-```
-
-打开 <http://127.0.0.1:8095/> 查看画面。Casting 会发现名为 `Mock TV`、ID 为 `dlna-open-anywhere-mock-tv` 的屏幕。参数、Gateway 接入和限制见 [模拟电视](docs/mock-tv.md)。
 
 运行 Render（需 Node.js、Chromium、FFmpeg 和 lsof）：
 
