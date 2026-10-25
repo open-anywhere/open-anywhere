@@ -267,10 +267,67 @@ func (c *Client) Voices(ctx context.Context) ([]Voice, error) {
 	return data.Voices, nil
 }
 
+// Language is one language an agent can speak.
+type Language struct {
+	Name string `json:"language"`
+	Code string `json:"lang_code"`
+}
+
+// Languages lists the languages the platform supports.
+func (c *Client) Languages(ctx context.Context) ([]Language, error) {
+	var data struct {
+		Languages []Language `json:"languages"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/languages", nil, &data); err != nil {
+		return nil, err
+	}
+	return data.Languages, nil
+}
+
+// LLMModel is one large language model an agent can use.
+type LLMModel struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Comment string `json:"comment"`
+}
+
+// LLMModels lists the public large language models. Private models belong to
+// the platform account and are not offered to portal users.
+func (c *Client) LLMModels(ctx context.Context) ([]LLMModel, error) {
+	var data struct {
+		Publics []LLMModel `json:"publics"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/agents/models/llm", nil, &data); err != nil {
+		return nil, err
+	}
+	return data.Publics, nil
+}
+
+// AgentExtra holds the optional tuning knobs under an agent's "extra". Every
+// field is optional: the platform keeps what is not sent.
+type AgentExtra struct {
+	LLM struct {
+		Temperature *float64 `json:"temperature,omitempty"`
+		MaxTokens   *int     `json:"max_tokens,omitempty"`
+	} `json:"llm"`
+	Voice struct {
+		Volume *int     `json:"volume,omitempty"`
+		Speed  *float64 `json:"speed,omitempty"`
+	} `json:"voice"`
+	Goodbye struct {
+		IdleTimeoutSeconds *int `json:"idle_timeout_seconds,omitempty"`
+	} `json:"goodbye"`
+	DisableGreeting *bool `json:"disable_greeting,omitempty"`
+}
+
 // AgentInfo is the part of an agent a portal user may see and change.
 type AgentInfo struct {
-	AssistantName string `json:"assistantName"`
-	TTSVoiceID    string `json:"ttsVoiceId"`
+	AssistantName string     `json:"assistantName"`
+	TTSVoiceID    string     `json:"ttsVoiceId"`
+	LLMModelID    string     `json:"llmModelId"`
+	MemModelID    string     `json:"memModelId"`
+	LangCode      string     `json:"langCode"`
+	Extra         AgentExtra `json:"extra"`
 }
 
 // GetAgent reads an agent's configuration.
@@ -283,19 +340,72 @@ func (c *Client) GetAgent(ctx context.Context, agentID string) (AgentInfo, error
 	return info, err
 }
 
-// UpdateAgent changes only the fields that are set. The platform keeps every
-// field that is left out, so the prompt and models are never touched.
-func (c *Client) UpdateAgent(ctx context.Context, agentID string, assistantName, ttsVoiceID *string) error {
+// AgentPatch lists the fields to change. A nil field is left out of the
+// request and the platform keeps its value. The system prompt and the intent
+// model are deliberately absent: the prompt tells the agent how to drive the
+// application MCP, so it never changes through this path.
+type AgentPatch struct {
+	AssistantName *string
+	TTSVoiceID    *string
+	LLMModelID    *string
+	MemModelID    *string
+	LangCode      *string
+	Extra         *AgentExtra
+}
+
+func (p AgentPatch) body() map[string]any {
+	body := map[string]any{}
+	set := func(key string, v *string) {
+		if v != nil {
+			body[key] = *v
+		}
+	}
+	set("assistantName", p.AssistantName)
+	set("ttsVoiceId", p.TTSVoiceID)
+	set("llmModelId", p.LLMModelID)
+	set("memModelId", p.MemModelID)
+	set("langCode", p.LangCode)
+	if p.Extra != nil {
+		extra := map[string]any{}
+		llm := map[string]any{}
+		if p.Extra.LLM.Temperature != nil {
+			llm["temperature"] = *p.Extra.LLM.Temperature
+		}
+		if p.Extra.LLM.MaxTokens != nil {
+			llm["max_tokens"] = *p.Extra.LLM.MaxTokens
+		}
+		if len(llm) > 0 {
+			extra["llm"] = llm
+		}
+		voice := map[string]any{}
+		if p.Extra.Voice.Volume != nil {
+			voice["volume"] = *p.Extra.Voice.Volume
+		}
+		if p.Extra.Voice.Speed != nil {
+			voice["speed"] = *p.Extra.Voice.Speed
+		}
+		if len(voice) > 0 {
+			extra["voice"] = voice
+		}
+		if p.Extra.Goodbye.IdleTimeoutSeconds != nil {
+			extra["goodbye"] = map[string]any{"idle_timeout_seconds": *p.Extra.Goodbye.IdleTimeoutSeconds}
+		}
+		if p.Extra.DisableGreeting != nil {
+			extra["disable_greeting"] = *p.Extra.DisableGreeting
+		}
+		if len(extra) > 0 {
+			body["extra"] = extra
+		}
+	}
+	return body
+}
+
+// UpdateAgent changes only the fields that are set.
+func (c *Client) UpdateAgent(ctx context.Context, agentID string, patch AgentPatch) error {
 	if strings.TrimSpace(agentID) == "" {
 		return errors.New("linx: agent id is required")
 	}
-	body := map[string]string{}
-	if assistantName != nil {
-		body["assistantName"] = *assistantName
-	}
-	if ttsVoiceID != nil {
-		body["ttsVoiceId"] = *ttsVoiceID
-	}
+	body := patch.body()
 	if len(body) == 0 {
 		return nil
 	}

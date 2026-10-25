@@ -55,9 +55,32 @@ export interface Voice {
   styles?: string[]
 }
 
+export interface AgentOption {
+  id: string
+  name: string
+  comment?: string
+}
+
+export interface AgentOptions {
+  voices: Voice[]
+  languages: AgentOption[]
+  llm_models: AgentOption[]
+  memory_modes: AgentOption[]
+}
+
+// The numeric fields are absent when the platform reports no value for them.
 export interface AgentSettings {
   assistant_name: string
   tts_voice_id: string
+  lang_code: string
+  llm_model_id: string
+  mem_model_id: string
+  voice_volume?: number
+  voice_speed?: number
+  llm_temperature?: number
+  llm_max_tokens?: number
+  idle_timeout_seconds?: number
+  disable_greeting?: boolean
 }
 
 export type AppState = 'building' | 'idle' | 'running' | 'error'
@@ -414,7 +437,7 @@ export const api = {
     postJSON<{ user: User }>('/login', { username, password }),
   logout: () => postJSON<void>('/logout', {}),
   createDevice: (input: CreateDeviceInput = {}) => postJSON<{ device: Device }>('/devices', input),
-  voices: () => request<{ voices: Voice[] }>('/voices'),
+  agentOptions: () => request<AgentOptions>('/agent-options'),
   getAgentSettings: (deviceId: string) =>
     request<{ agent: AgentSettings }>(`/devices/${encodeURIComponent(deviceId)}/agent`),
   updateAgentSettings: (deviceId: string, input: Partial<AgentSettings>) =>

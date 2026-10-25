@@ -213,9 +213,9 @@ sequenceDiagram
 | `GET` | `/api/portal/me` | 当前用户（含 role/status）与设备列表 |
 | `GET` | `/api/portal/devices` | 当前用户的智能体设备列表 |
 | `POST` | `/api/portal/devices` | 添加设备：`{kind: virtual\|physical, name?, activation_code?, agent_device_id?}`；虚拟设备返回 `202`，硬件返回 `201` |
-| `GET` | `/api/portal/voices` | 灵矽平台可选的音色列表 |
+| `GET` | `/api/portal/agent-options` | 用户可选项：音色、语言、公开大模型、记忆模式 |
 | `GET` | `/api/portal/devices/{id}/agent` | 读取设备所属智能体的名称与音色 |
-| `PUT` | `/api/portal/devices/{id}/agent` | 修改智能体名称（1–20 个字符）与音色，只提交变化的字段；系统提示词与模型不开放，因为提示词决定了 MCP 工具的调用方式 |
+| `PUT` | `/api/portal/devices/{id}/agent` | 修改智能体：`assistant_name`（1–20 字符）、`tts_voice_id`、`lang_code`、`llm_model_id`、`mem_model_id`、`voice_volume`（0–100）、`voice_speed`（0.5–2.0）、`llm_temperature`（0–1.9）、`llm_max_tokens`（1–8192）、`idle_timeout_seconds`（60–3600）、`disable_greeting`。只提交变化的字段；音色、语言、模型必须在可选项里，私有模型不开放。系统提示词与意图识别模型不开放：提示词决定智能体如何调用 MCP 工具，意图识别决定它能否调用工具 |
 | `DELETE` | `/api/portal/devices/{id}` | 移除设备，`?force=true` 在灵矽解绑失败时仍移除；返回 `204` |
 | `GET` | `/api/portal/devices/{id}` | 设备开通详情与语音状态 |
 | `POST` | `/api/portal/devices/{id}/retry` | 重试开通；已注册设备则重启语音 |

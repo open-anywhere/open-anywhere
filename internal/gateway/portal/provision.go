@@ -290,13 +290,31 @@ func (p *Provisioner) AgentInfo(ctx context.Context, agentID string) (linx.Agent
 	return client.GetAgent(ctx, agentID)
 }
 
-// UpdateAgent changes an agent's assistant name and/or voice.
-func (p *Provisioner) UpdateAgent(ctx context.Context, agentID string, assistantName, ttsVoiceID *string) error {
+// Languages lists the languages a user can pick for an agent.
+func (p *Provisioner) Languages(ctx context.Context) ([]linx.Language, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.Languages(ctx)
+}
+
+// LLMModels lists the language models a user can pick for an agent.
+func (p *Provisioner) LLMModels(ctx context.Context) ([]linx.LLMModel, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.LLMModels(ctx)
+}
+
+// UpdateAgent changes the user-adjustable fields of an agent.
+func (p *Provisioner) UpdateAgent(ctx context.Context, agentID string, patch linx.AgentPatch) error {
 	client, err := p.client(ctx)
 	if err != nil {
 		return err
 	}
-	return client.UpdateAgent(ctx, agentID, assistantName, ttsVoiceID)
+	return client.UpdateAgent(ctx, agentID, patch)
 }
 
 // UnbindHardware releases hardware from the platform account. Failure is

@@ -89,7 +89,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/portal/devices/{id}", a.withUser(a.deleteDevice))
 	mux.HandleFunc("GET /api/portal/devices/{id}/agent", a.withUser(a.getDeviceAgent))
 	mux.HandleFunc("PUT /api/portal/devices/{id}/agent", a.withUser(a.updateDeviceAgent))
-	mux.HandleFunc("GET /api/portal/voices", a.withUser(a.listVoices))
+	mux.HandleFunc("GET /api/portal/agent-options", a.withUser(a.listAgentOptions))
 	mux.HandleFunc("POST /api/portal/devices/{id}/retry", a.withUser(a.retryDevice))
 	mux.HandleFunc("POST /api/portal/devices/{id}/disconnect", a.withUser(a.disconnectDevice))
 	mux.HandleFunc("POST /api/portal/devices/{id}/reconnect", a.withUser(a.reconnectDevice))
