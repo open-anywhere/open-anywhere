@@ -9,9 +9,63 @@ coverage:
         target: 80%
 
 comment:
-  layout: "reach,diff,flags,files"
+  layout: "reach,diff,flags,components,files"
   behavior: default
   require_changes: false
+
+# 每个 Go 程序单独上传一份覆盖率，flag 与 CI 的 program 一一对应。
+# 各程序的包划分也决定了 Codecov 上对应的 component。
+flags:
+  casting:
+    paths:
+      - "cmd/casting/**"
+      - "internal/casting/**"
+      - "pkg/casting/**"
+  gateway:
+    paths:
+      - "cmd/gateway/**"
+      - "internal/gateway/**"
+      - "pkg/agentapi/**"
+  render:
+    paths:
+      - "cmd/render/**"
+      - "internal/render/**"
+      - "pkg/render/**"
+      - "pkg/canvas/**"
+  voiceentry:
+    paths:
+      - "cmd/voiceentry/**"
+      - "internal/voiceentry/**"
+  render-e2e:
+    paths:
+      - "internal/render/**"
+
+component_management:
+  individual_components:
+    - component_id: casting
+      name: casting
+      paths:
+        - "cmd/casting/**"
+        - "internal/casting/**"
+        - "pkg/casting/**"
+    - component_id: gateway
+      name: gateway
+      paths:
+        - "cmd/gateway/**"
+        - "internal/gateway/**"
+        - "pkg/agentapi/**"
+    - component_id: render
+      name: render
+      paths:
+        - "cmd/render/**"
+        - "internal/render/**"
+        - "pkg/render/**"
+        - "pkg/canvas/**"
+    - component_id: voiceentry
+      name: voiceentry
+      paths:
+        - "cmd/voiceentry/**"
+        - "internal/voiceentry/**"
 
 # voiceentry 的 audio player/source 和 media.go 只是 ffplay/ffmpeg/libopus 的
 # 封装，单元测试环境没有这些程序，测试里用假的实现代替

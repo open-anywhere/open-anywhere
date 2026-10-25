@@ -12,7 +12,7 @@ ARGS        ?=
 
 .PHONY: help deps tidy portal-install fmt fmt-check vet test cover e2e \
         portal-typecheck portal-build portal-dev check check-all \
-        build build-gateway build-gateway-embed run run-casting run-render run-mock-tv run-voiceentry clean
+        build build-gateway build-gateway-embed run run-casting run-render run-voiceentry clean
 
 ##@ 通用
 
@@ -93,9 +93,6 @@ run-casting: ## 启动 Casting，例：make run-casting ARGS="-addr :8080 -inter
 run-render: ## 启动 Render，例：make run-render ARGS="-addr :8090 -public-url http://192.168.1.20:8090"
 	$(GO) run ./cmd/render $(ARGS)
 
-run-mock-tv: ## 启动模拟电视
-	$(GO) run ./cmd/mock-tv $(ARGS)
-
 run-voiceentry: ## 启动现场语音入口
 	$(GO) run ./cmd/voiceentry -serve $(ARGS)
 
@@ -105,4 +102,4 @@ portal-dev: ## 启动 Portal 前端开发服务器
 ##@ 清理
 
 clean: ## 删除构建产物（bin、coverage、portal/dist、嵌入目录）
-	rm -rf bin coverage.out coverage.html render-e2e-coverage.out $(PORTAL_DIR)/dist internal/gateway/portal/webdist
+	rm -rf bin coverage.out coverage.html coverage-*.out render-e2e-coverage.out $(PORTAL_DIR)/dist internal/gateway/portal/webdist

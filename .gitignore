@@ -1,6 +1,7 @@
 bin/
 coverage.out
 coverage.html
+coverage-*.out
 .render-data/
 e2e/artifacts/
 e2e/results/

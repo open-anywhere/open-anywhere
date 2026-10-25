@@ -25,15 +25,73 @@ jobs:
       - name: Install port inspection dependency
         run: sudo apt-get update && sudo apt-get install -y lsof
 
-      - name: Run tests with coverage
-        run: go test ./... -race -covermode=atomic -coverprofile=coverage.out
+      # 四个作用域按顺序执行，共用同一个 Go 构建缓存与依赖，避免重复下载。
+      - name: Test casting with coverage
+        env:
+          PACKAGES: ./cmd/casting/... ./internal/casting/... ./pkg/casting/...
+        run: |
+          go test $PACKAGES -race -count=1 -covermode=atomic \
+            -coverpkg="$(echo "$PACKAGES" | tr ' ' ',')" \
+            -coverprofile=coverage-casting.out
 
-      - name: Upload coverage to Codecov
+      - name: Test gateway with coverage
+        env:
+          PACKAGES: ./cmd/gateway/... ./internal/gateway/... ./pkg/agentapi/...
+        run: |
+          go test $PACKAGES -race -count=1 -covermode=atomic \
+            -coverpkg="$(echo "$PACKAGES" | tr ' ' ',')" \
+            -coverprofile=coverage-gateway.out
+
+      - name: Test render with coverage
+        env:
+          PACKAGES: ./cmd/render/... ./internal/render/... ./pkg/render/... ./pkg/canvas/...
+        run: |
+          go test $PACKAGES -race -count=1 -covermode=atomic \
+            -coverpkg="$(echo "$PACKAGES" | tr ' ' ',')" \
+            -coverprofile=coverage-render.out
+
+      - name: Test voiceentry with coverage
+        env:
+          PACKAGES: ./cmd/voiceentry/... ./internal/voiceentry/...
+        run: |
+          go test $PACKAGES -race -count=1 -covermode=atomic \
+            -coverpkg="$(echo "$PACKAGES" | tr ' ' ',')" \
+            -coverprofile=coverage-voiceentry.out
+
+      - name: Upload casting coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.out
-          flags: unittests
+          files: ./coverage-casting.out
+          flags: casting
+          name: casting
+          fail_ci_if_error: false
+
+      - name: Upload gateway coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-gateway.out
+          flags: gateway
+          name: gateway
+          fail_ci_if_error: false
+
+      - name: Upload render coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-render.out
+          flags: render
+          name: render
+          fail_ci_if_error: false
+
+      - name: Upload voiceentry coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-voiceentry.out
+          flags: voiceentry
+          name: voiceentry
           fail_ci_if_error: false
 
   lint:
