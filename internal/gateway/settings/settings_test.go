@@ -399,3 +399,88 @@ func TestMaskedJSONOmitsActorAndSecrets(t *testing.T) {
 }
 
 func ptr[T any](value T) *T { return &value }
+
+func TestLinxAgentTemplateDefaultsAndUpdates(t *testing.T) {
+	provider, _ := newProvider(t)
+	ctx := context.Background()
+	snapshot, err := provider.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Linx.MCPName != DefaultLinxMCPName || snapshot.Linx.LLMModelID != DefaultLinxLLMModelID ||
+		snapshot.Linx.AssistantName != DefaultLinxAssistantName {
+		t.Fatalf("defaults not applied: %+v", snapshot.Linx)
+	}
+	name, mcpURL := "阿灵", "https://gw.example.com/mcp"
+	err = provider.Update(ctx, Patch{Linx: &LinxPatch{AssistantName: &name, PublicMCPURL: &mcpURL}}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = provider.Snapshot(ctx)
+	if snapshot.Linx.AssistantName != "阿灵" || snapshot.Linx.PublicMCPURL != mcpURL {
+		t.Fatalf("snapshot = %+v", snapshot.Linx)
+	}
+	masked, err := provider.Masked(ctx)
+	if err != nil || masked.Linx.PublicMCPURL != mcpURL || masked.Linx.AssistantName != "阿灵" {
+		t.Fatalf("masked = %+v err=%v", masked.Linx, err)
+	}
+}
+
+func TestEnsureMCPTokenKeepsStoredValueAndRotates(t *testing.T) {
+	provider, db := newProvider(t)
+	ctx := context.Background()
+	if err := provider.EnsureMCPToken(ctx, "legacy-token"); err != nil {
+		t.Fatal(err)
+	}
+	token, err := provider.MCPToken(ctx)
+	if err != nil || token != "legacy-token" {
+		t.Fatalf("token = %q err=%v", token, err)
+	}
+	rows, _ := db.PlatformSettings(ctx)
+	if strings.Contains(rows[KeyLinxMCPToken].Value, "legacy-token") || !rows[KeyLinxMCPToken].IsSecret {
+		t.Fatalf("token stored in clear: %+v", rows[KeyLinxMCPToken])
+	}
+	if err := provider.EnsureMCPToken(ctx, "other"); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := provider.MCPToken(ctx); again != "legacy-token" {
+		t.Fatalf("EnsureMCPToken overwrote the stored token: %q", again)
+	}
+	if err := provider.Update(ctx, Patch{Linx: &LinxPatch{RotateMCPToken: true}}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	rotated, _ := provider.MCPToken(ctx)
+	if rotated == "" || rotated == "legacy-token" || len(rotated) != 64 {
+		t.Fatalf("rotated token = %q", rotated)
+	}
+	masked, _ := provider.Masked(ctx)
+	if !masked.Linx.MCPToken.Configured {
+		t.Fatalf("masked token = %+v", masked.Linx.MCPToken)
+	}
+}
+
+func TestEnsureMCPTokenGeneratesWhenNoLegacyValue(t *testing.T) {
+	provider, _ := newProvider(t)
+	ctx := context.Background()
+	if err := provider.EnsureMCPToken(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if token, err := provider.MCPToken(ctx); err != nil || len(token) != 64 {
+		t.Fatalf("token = %q err=%v", token, err)
+	}
+}
+
+func TestMCPAddressChangeClearsCachedMCPResources(t *testing.T) {
+	provider, db := newProvider(t)
+	ctx := context.Background()
+	if err := db.SetPortalSetting(ctx, "linx.mcp_server_id", "srv"); err != nil {
+		t.Fatal(err)
+	}
+	mcpURL := "https://gw.example.com/mcp"
+	if err := provider.Update(ctx, Patch{Linx: &LinxPatch{PublicMCPURL: &mcpURL}}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.PortalSetting(ctx, "linx.mcp_server_id"); err == nil {
+		t.Fatal("cached MCP server survived an address change")
+	}
+}

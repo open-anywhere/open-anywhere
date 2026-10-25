@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -243,6 +245,198 @@ func (c *Client) EnsureMCP(ctx context.Context, spec MCPSpec) (serverID, instanc
 	return "", "", errors.New("linx: created MCP instance was not found")
 }
 
+// Voice is one selectable text-to-speech voice.
+type Voice struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Demo string `json:"demo"`
+	// Tier is "free" or "pro"; pro voices cost more to run.
+	Tier string `json:"tier"`
+	Tags struct {
+		Gender    string   `json:"gender"`
+		Age       string   `json:"age"`
+		Styles    []string `json:"styles"`
+		Languages []string `json:"languages"`
+	} `json:"tags"`
+}
+
+// Voices lists the voices the platform account can assign to an agent.
+func (c *Client) Voices(ctx context.Context) ([]Voice, error) {
+	var data struct {
+		Voices []Voice `json:"voices"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/voices", nil, &data); err != nil {
+		return nil, err
+	}
+	return data.Voices, nil
+}
+
+// Language is one language an agent can speak.
+type Language struct {
+	Name string `json:"language"`
+	Code string `json:"lang_code"`
+}
+
+// Languages lists the languages the platform supports.
+func (c *Client) Languages(ctx context.Context) ([]Language, error) {
+	var data struct {
+		Languages []Language `json:"languages"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/languages", nil, &data); err != nil {
+		return nil, err
+	}
+	return data.Languages, nil
+}
+
+// LLMModel is one large language model an agent can use.
+type LLMModel struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Comment string `json:"comment"`
+}
+
+// LLMModels lists the public large language models. Private models belong to
+// the platform account and are not offered to portal users.
+func (c *Client) LLMModels(ctx context.Context) ([]LLMModel, error) {
+	var data struct {
+		Publics []LLMModel `json:"publics"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/agents/models/llm", nil, &data); err != nil {
+		return nil, err
+	}
+	return data.Publics, nil
+}
+
+// AgentExtra holds the optional tuning knobs under an agent's "extra". Every
+// field is optional: the platform keeps what is not sent.
+type AgentExtra struct {
+	LLM struct {
+		Temperature *float64 `json:"temperature,omitempty"`
+		MaxTokens   *int     `json:"max_tokens,omitempty"`
+	} `json:"llm"`
+	Voice struct {
+		Volume *int     `json:"volume,omitempty"`
+		Speed  *float64 `json:"speed,omitempty"`
+	} `json:"voice"`
+	Goodbye struct {
+		IdleTimeoutSeconds *int `json:"idle_timeout_seconds,omitempty"`
+	} `json:"goodbye"`
+	DisableGreeting *bool `json:"disable_greeting,omitempty"`
+}
+
+// AgentInfo is the part of an agent a portal user may see and change.
+type AgentInfo struct {
+	AssistantName string     `json:"assistantName"`
+	TTSVoiceID    string     `json:"ttsVoiceId"`
+	LLMModelID    string     `json:"llmModelId"`
+	MemModelID    string     `json:"memModelId"`
+	LangCode      string     `json:"langCode"`
+	SystemPrompt  string     `json:"systemPrompt"`
+	// ChatHistoryConf is 0 for no chat log, 1 for text only, 2 for text and audio.
+	ChatHistoryConf *int       `json:"chatHistoryConf"`
+	Extra           AgentExtra `json:"extra"`
+}
+
+// GetAgent reads an agent's configuration.
+func (c *Client) GetAgent(ctx context.Context, agentID string) (AgentInfo, error) {
+	var info AgentInfo
+	if strings.TrimSpace(agentID) == "" {
+		return info, errors.New("linx: agent id is required")
+	}
+	err := c.do(ctx, http.MethodGet, "/xiaozhi/agent/"+url.PathEscape(agentID), nil, &info)
+	return info, err
+}
+
+// AgentPatch lists the fields to change. A nil field is left out of the
+// request and the platform keeps its value. The system prompt and the intent
+// model are deliberately absent: the prompt tells the agent how to drive the
+// application MCP, so it never changes through this path.
+type AgentPatch struct {
+	AssistantName *string
+	TTSVoiceID    *string
+	LLMModelID    *string
+	MemModelID    *string
+	LangCode      *string
+	SystemPrompt    *string
+	ChatHistoryConf *int
+	Extra           *AgentExtra
+}
+
+func (p AgentPatch) body() map[string]any {
+	body := map[string]any{}
+	set := func(key string, v *string) {
+		if v != nil {
+			body[key] = *v
+		}
+	}
+	set("assistantName", p.AssistantName)
+	set("ttsVoiceId", p.TTSVoiceID)
+	set("llmModelId", p.LLMModelID)
+	set("memModelId", p.MemModelID)
+	set("langCode", p.LangCode)
+	set("systemPrompt", p.SystemPrompt)
+	if p.ChatHistoryConf != nil {
+		body["chatHistoryConf"] = *p.ChatHistoryConf
+	}
+	if p.Extra != nil {
+		extra := map[string]any{}
+		llm := map[string]any{}
+		if p.Extra.LLM.Temperature != nil {
+			llm["temperature"] = *p.Extra.LLM.Temperature
+		}
+		if p.Extra.LLM.MaxTokens != nil {
+			llm["max_tokens"] = *p.Extra.LLM.MaxTokens
+		}
+		if len(llm) > 0 {
+			extra["llm"] = llm
+		}
+		voice := map[string]any{}
+		if p.Extra.Voice.Volume != nil {
+			voice["volume"] = *p.Extra.Voice.Volume
+		}
+		if p.Extra.Voice.Speed != nil {
+			voice["speed"] = *p.Extra.Voice.Speed
+		}
+		if len(voice) > 0 {
+			extra["voice"] = voice
+		}
+		if p.Extra.Goodbye.IdleTimeoutSeconds != nil {
+			extra["goodbye"] = map[string]any{"idle_timeout_seconds": *p.Extra.Goodbye.IdleTimeoutSeconds}
+		}
+		if p.Extra.DisableGreeting != nil {
+			extra["disable_greeting"] = *p.Extra.DisableGreeting
+		}
+		if len(extra) > 0 {
+			body["extra"] = extra
+		}
+	}
+	return body
+}
+
+// UpdateAgent changes only the fields that are set.
+func (c *Client) UpdateAgent(ctx context.Context, agentID string, patch AgentPatch) error {
+	if strings.TrimSpace(agentID) == "" {
+		return errors.New("linx: agent id is required")
+	}
+	body := patch.body()
+	if len(body) == 0 {
+		return nil
+	}
+	return c.do(ctx, http.MethodPut, "/xiaozhi/agent/"+url.PathEscape(agentID), body, nil)
+}
+
+// UpdateMCPInstance rewrites the address and bearer token of an existing MCP
+// instance (PUT /v1/mcps/{id}), so a rotated token reaches agents that
+// already use it.
+func (c *Client) UpdateMCPInstance(ctx context.Context, instanceID string, spec MCPSpec) error {
+	if strings.TrimSpace(instanceID) == "" {
+		return errors.New("linx: MCP instance id is required")
+	}
+	body := mcpInstanceBody(spec, "")
+	delete(body, "mcp_id")
+	return c.do(ctx, http.MethodPut, "/v1/mcps/"+url.PathEscape(instanceID), body, nil)
+}
+
 // AttachMCP replaces an agent's MCP bindings with mcpIDs.
 func (c *Client) AttachMCP(ctx context.Context, agentID string, mcpIDs []string) error {
 	if strings.TrimSpace(agentID) == "" {
@@ -257,33 +451,69 @@ func (c *Client) AttachMCP(ctx context.Context, agentID string, mcpIDs []string)
 // BindDevice binds a device behind an activation code to an agent. An already
 // bound device (HTTP 409) is not an error for the caller.
 func (c *Client) BindDevice(ctx context.Context, agentID, code string) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/xiaozhi/device/bind/"+agentID+"/"+code, nil)
+	_, err := c.bind(ctx, agentID, code, true)
+	return err
+}
+
+// BindHardware binds physical hardware to an agent and returns the MAC address
+// the platform reports for it. A device that is already bound is an error here
+// (unlike BindDevice): without the platform's answer the MAC is unknown, so
+// the portal cannot tell which hardware the code belongs to.
+func (c *Client) BindHardware(ctx context.Context, agentID, code string) (string, error) {
+	mac, err := c.bind(ctx, agentID, code, false)
 	if err != nil {
-		return err
+		return "", err
+	}
+	if strings.TrimSpace(mac) == "" {
+		return "", &Error{Message: "platform bound the device but returned no MAC address"}
+	}
+	return strings.TrimSpace(mac), nil
+}
+
+func (c *Client) bind(ctx context.Context, agentID, code string, tolerateConflict bool) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/xiaozhi/device/bind/"+url.PathEscape(agentID)+"/"+url.PathEscape(code), nil)
+	if err != nil {
+		return "", err
 	}
 	request.Header.Set("Authorization", "Bearer "+c.apiKey)
 	response, err := c.http.Do(request)
 	if err != nil {
-		return &Error{Message: "bind request failed", Cause: err}
+		return "", &Error{Message: "bind request failed", Cause: err}
 	}
 	defer response.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<16))
-	if response.StatusCode == http.StatusConflict {
-		return nil
-	}
 	var envelope struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
+		Data struct {
+			MACAddress string `json:"macAddress"`
+		} `json:"data"`
 	}
 	_ = json.Unmarshal(body, &envelope)
+	if response.StatusCode == http.StatusConflict {
+		if tolerateConflict {
+			return "", nil
+		}
+		return "", &Error{Status: response.StatusCode, Code: envelope.Code, Message: "device is already bound"}
+	}
 	if response.StatusCode >= 200 && response.StatusCode < 300 && envelope.Code == 0 {
-		return nil
+		return envelope.Data.MACAddress, nil
 	}
 	message := envelope.Msg
 	if message == "" {
 		message = "platform refused the device binding"
 	}
-	return &Error{Status: response.StatusCode, Code: envelope.Code, Message: message}
+	return "", &Error{Status: response.StatusCode, Code: envelope.Code, Message: message}
+}
+
+// UnbindDevice releases hardware from the platform account so its activation
+// code can be used again.
+func (c *Client) UnbindDevice(ctx context.Context, mac string) error {
+	if strings.TrimSpace(mac) == "" {
+		return errors.New("linx: device id is required")
+	}
+	return c.do(ctx, http.MethodPost, "/xiaozhi/device/unbind", map[string]string{"deviceId": mac}, nil)
 }
 
 // ReportOTA reports a device identity and returns the platform's answer.
@@ -306,9 +536,67 @@ type platformServer struct {
 }
 
 type platformInstance struct {
-	ID    string `json:"id"`
-	MCPID string `json:"mcp_id"`
-	Name  string `json:"name"`
+	ID        string `json:"id"`
+	MCPID     string `json:"mcp_id"`
+	Name      string `json:"name"`
+	Desc      string `json:"desc"`
+	LogoURL   string `json:"logo_url"`
+	IsPrivate bool   `json:"is_private"`
+}
+
+// MCPInstance is one MCP service opened on the platform account. Its ID is
+// what an agent binds to. The connection config, which holds the bearer
+// token, is deliberately not decoded.
+type MCPInstance = platformInstance
+
+// MCPInstances lists the MCP services opened on the platform account.
+func (c *Client) MCPInstances(ctx context.Context) ([]MCPInstance, error) {
+	return c.listInstances(ctx)
+}
+
+// AgentMCPs returns the instance IDs currently bound to an agent.
+func (c *Client) AgentMCPs(ctx context.Context, agentID string) ([]string, error) {
+	if strings.TrimSpace(agentID) == "" {
+		return nil, errors.New("linx: agent id is required")
+	}
+	var data struct {
+		Selected []struct {
+			ID string `json:"mcp_id"`
+		} `json:"selecteds"`
+	}
+	path := "/v1/agents/" + url.PathEscape(agentID) + "/mcps?include_unselected=true"
+	if err := c.do(ctx, http.MethodGet, path, nil, &data); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(data.Selected))
+	for _, item := range data.Selected {
+		ids = append(ids, item.ID)
+	}
+	return ids, nil
+}
+
+// ChatRecord is one saved chat line. ChatType is 1 for what the user said
+// and 2 for the agent's reply.
+type ChatRecord struct {
+	ChatType  int    `json:"chat_type"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ChatHistory returns the most recent saved chat lines of an agent, newest
+// first. Audio links and device identifiers are not decoded.
+func (c *Client) ChatHistory(ctx context.Context, agentID string, limit int) ([]ChatRecord, error) {
+	if strings.TrimSpace(agentID) == "" {
+		return nil, errors.New("linx: agent id is required")
+	}
+	var data struct {
+		Records []ChatRecord `json:"records"`
+	}
+	path := "/v1/agents/" + url.PathEscape(agentID) + "/chat-history?limit=" + strconv.Itoa(limit)
+	if err := c.do(ctx, http.MethodGet, path, nil, &data); err != nil {
+		return nil, err
+	}
+	return data.Records, nil
 }
 
 func (c *Client) listServers(ctx context.Context) ([]platformServer, error) {

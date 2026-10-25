@@ -362,3 +362,43 @@ func readApp(t *testing.T, path, id string) *app.App {
 	}
 	return nil
 }
+
+func TestMCPAuthFuncReadsTheTokenPerRequestAndFailsClosed(t *testing.T) {
+	current := "first"
+	var lookupErr error
+	handler := mcpAuthFunc(func(context.Context) (string, error) { return current, lookupErr }, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	call := func(token string) int {
+		request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	if call("first") != http.StatusNoContent || call("second") != http.StatusUnauthorized {
+		t.Fatal("initial token not enforced")
+	}
+	current = "second"
+	if call("second") != http.StatusNoContent || call("first") != http.StatusUnauthorized {
+		t.Fatal("rotated token not applied to the next request")
+	}
+	lookupErr = errors.New("database unavailable")
+	if call("second") != http.StatusUnauthorized {
+		t.Fatal("a failed token lookup must deny the request")
+	}
+}
+
+func TestBrowseURLUsesLocalhostForWildcardHosts(t *testing.T) {
+	for addr, want := range map[string]string{
+		":8090":           "http://localhost:8090",
+		"0.0.0.0:8091":    "http://localhost:8091",
+		"[::]:8092":       "http://localhost:8092",
+		"192.168.1.5:80":  "http://192.168.1.5:80",
+		"not-an-address":  "http://not-an-address",
+	} {
+		if got := browseURL(addr); got != want {
+			t.Errorf("browseURL(%q) = %q, want %q", addr, got, want)
+		}
+	}
+}

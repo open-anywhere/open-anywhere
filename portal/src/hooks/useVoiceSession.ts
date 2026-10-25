@@ -467,6 +467,8 @@ export function useVoiceSession(deviceId: string) {
     }
   }, [refreshStatus, startMicrophone, startPlayback, stopMicrophone, stopPlayback])
 
+  const clearEntries = useCallback(() => setEntries([]), [])
+
   const stop = useCallback(() => {
     stopMicrophone()
     stopPlayback()
@@ -538,6 +540,7 @@ export function useVoiceSession(deviceId: string) {
     supported: supportsVoiceCodecs(),
     start,
     stop,
+    clearEntries,
     pause,
     resume,
     abort,

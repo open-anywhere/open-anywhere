@@ -26,6 +26,7 @@ export interface Device {
   client_id: string
   agent_id: string
   agent_name: string
+  name: string
   state: DeviceState
   step: string
   error?: string
@@ -34,6 +35,81 @@ export interface Device {
   updated_at: string
   registered_at?: string
   voice: VoiceState
+}
+
+export interface CreateDeviceInput {
+  kind?: 'virtual' | 'physical'
+  name?: string
+  /** Code shown by the hardware; only for physical devices. */
+  activation_code?: string
+  /** Which of the account's agents the hardware joins. */
+  agent_device_id?: string
+}
+
+export interface Voice {
+  id: string
+  name: string
+  demo?: string
+  gender?: string
+  age?: string
+  styles?: string[]
+  languages?: string[]
+  tier?: string
+}
+
+export interface AgentOption {
+  id: string
+  name: string
+  comment?: string
+}
+
+/** One saved chat line of an agent. */
+export interface ChatLine {
+  role: 'user' | 'agent'
+  text: string
+  at: string
+}
+
+/** One MCP service on the Linx platform account. */
+export interface McpService {
+  id: string
+  name: string
+  desc?: string
+  logo_url?: string
+  private: boolean
+  /** The gateway's own service. Every agent keeps it. */
+  required: boolean
+  /** Offered by the administrator for users to add. */
+  shared: boolean
+  /** Only set on a user's view of their own agent. */
+  selected?: boolean
+}
+
+export interface AgentOptions {
+  voices: Voice[]
+  languages: AgentOption[]
+  llm_models: AgentOption[]
+  memory_modes: AgentOption[]
+  default_system_prompt: string
+}
+
+// The numeric fields are absent when the platform reports no value for them.
+export interface AgentSettings {
+  assistant_name: string
+  tts_voice_id: string
+  lang_code: string
+  llm_model_id: string
+  mem_model_id: string
+  voice_volume?: number
+  voice_speed?: number
+  llm_temperature?: number
+  llm_max_tokens?: number
+  idle_timeout_seconds?: number
+  disable_greeting?: boolean
+  /** The agent's full role description. */
+  system_prompt?: string
+  /** 0 no chat log, 1 text only, 2 text and audio. */
+  chat_history?: number
 }
 
 export type AppState = 'building' | 'idle' | 'running' | 'error'
@@ -177,7 +253,13 @@ export interface AdminOverview {
   users: { total: number; active: number; disabled: number; admins: number }
   agents: { total: number; registered: number; provisioning: number; error: number; disabled: number }
   apps: { total: number; running: number; building: number; error: number; idle: number }
-  platform: { agentapi: boolean; linx: boolean; services: boolean; registration_open: boolean }
+  platform: {
+    agentapi: boolean
+    linx: boolean
+    mcp: boolean
+    services: boolean
+    registration_open: boolean
+  }
 }
 
 export interface SecretState {
@@ -197,6 +279,13 @@ export interface PlatformSettings {
     api_base: string
     ota_url: string
     api_key: SecretState
+    public_mcp_url: string
+    mcp_name: string
+    mcp_token: SecretState
+    assistant_name: string
+    llm_model_id: string
+    mem_model_id: string
+    intent_model_id: string
   }
   services: {
     render_url: string
@@ -205,7 +294,7 @@ export interface PlatformSettings {
     casting_token: SecretState
   }
   registration: { open: boolean }
-  ready: { agentapi: boolean; linx: boolean; services: boolean }
+  ready: { agentapi: boolean; linx: boolean; mcp: boolean; services: boolean }
 }
 
 export interface SecretPatch {
@@ -225,6 +314,13 @@ export interface PlatformSettingsPatch {
     api_base?: string
     ota_url?: string
     api_key?: SecretPatch
+    public_mcp_url?: string
+    mcp_name?: string
+    assistant_name?: string
+    llm_model_id?: string
+    mem_model_id?: string
+    intent_model_id?: string
+    rotate_mcp_token?: boolean
   }
   services?: {
     render_url?: string
@@ -369,7 +465,31 @@ export const api = {
   login: (username: string, password: string) =>
     postJSON<{ user: User }>('/login', { username, password }),
   logout: () => postJSON<void>('/logout', {}),
-  createDevice: () => postJSON<{ device: Device }>('/devices'),
+  createDevice: (input: CreateDeviceInput = {}) => postJSON<{ device: Device }>('/devices', input),
+  agentOptions: () => request<AgentOptions>('/agent-options'),
+  getAgentSettings: (deviceId: string) =>
+    request<{ agent: AgentSettings }>(`/devices/${encodeURIComponent(deviceId)}/agent`),
+  updateAgentSettings: (deviceId: string, input: Partial<AgentSettings>) =>
+    request<{ agent: AgentSettings }>(`/devices/${encodeURIComponent(deviceId)}/agent`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  getChatHistory: (deviceId: string, limit = 30) =>
+    request<{ records: ChatLine[] }>(`/devices/${encodeURIComponent(deviceId)}/chat-history?limit=${limit}`),
+  getDeviceMcps: (deviceId: string) =>
+    request<{ required: McpService | null; available: McpService[] }>(
+      `/devices/${encodeURIComponent(deviceId)}/mcps`,
+    ),
+  setDeviceMcps: (deviceId: string, ids: string[]) =>
+    request<{ ids: string[] }>(`/devices/${encodeURIComponent(deviceId)}/mcps`, {
+      method: 'PUT',
+      body: JSON.stringify({ ids }),
+    }),
+  deleteDevice: (id: string, force = false) =>
+    request<void>(`/devices/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, {
+      method: 'DELETE',
+      body: '{}',
+    }),
   getDevice: (id: string) => request<{ device: Device }>(`/devices/${encodeURIComponent(id)}`),
   retryDevice: (id: string) =>
     postJSON<{ device: Device }>(`/devices/${encodeURIComponent(id)}/retry`),
@@ -414,6 +534,10 @@ export const api = {
 
 export const adminApi = {
   overview: () => adminRequest<AdminOverview>('/overview'),
+  mcp: () => adminRequest<{ provisioned: boolean; services: McpService[] }>('/mcp'),
+  setSharedMcp: (ids: string[]) =>
+    adminRequest<{ ids: string[] }>('/mcp/shared', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  syncMcp: () => adminRequest<{ synced: boolean }>('/mcp/sync', { method: 'POST', body: '{}' }),
   users: (params: { query?: string; status?: string; limit?: number; offset?: number }) => {
     const search = new URLSearchParams()
     if (params.query) search.set('query', params.query)
@@ -454,7 +578,7 @@ export const adminApi = {
   },
   settings: () => adminRequest<{ settings: PlatformSettings }>('/settings'),
   updateSettings: (patch: PlatformSettingsPatch) =>
-    adminRequest<{ settings: PlatformSettings }>('/settings', {
+    adminRequest<{ settings: PlatformSettings; warning?: string }>('/settings', {
       method: 'PUT',
       body: JSON.stringify(patch),
     }),

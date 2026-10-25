@@ -10,11 +10,11 @@ import { Alert, Button, Popconfirm, Result, Space, Spin } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearch } from '@tanstack/react-router'
 import type { Device } from '../../api'
-import { ApiError } from '../../api'
+import { ApiError, api } from '../../api'
 import { meQueryOptions } from '../../api/queries'
 import { VoiceTag } from '../../components/Tags'
 import { useDeviceConnection } from '../../hooks/useDeviceConnection'
-import { useVoiceSession } from '../../hooks/useVoiceSession'
+import { useVoiceSession, type TranscriptEntry } from '../../hooks/useVoiceSession'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { findDevice } from '../../lib/device'
 import { TranscriptFeed } from './components/TranscriptFeed'
@@ -110,6 +110,21 @@ export function CallPage() {
 
 function CallSession({ device }: { device: Device }) {
   const session = useVoiceSession(device.id)
+  // Saved chats, shown before what is said on this page. Empty while the agent
+  // does not save chats, so a failure here is not worth an error.
+  const history = useQuery({
+    queryKey: ['chat-history', device.id],
+    queryFn: () => api.getChatHistory(device.id),
+    staleTime: 0,
+    retry: false,
+  })
+  const saved: TranscriptEntry[] = (history.data?.records ?? []).map((line, index) => ({
+    id: -(index + 1),
+    type: line.role === 'user' ? 'stt' : 'tts',
+    role: line.role,
+    text: line.text,
+    at: Date.parse(line.at) || 0,
+  }))
   const { disconnect, reconnect } = useDeviceConnection()
   const offline = device.voice.state === 'offline'
   const voiceState = session.status?.state ?? device.voice.state
@@ -142,6 +157,8 @@ function CallSession({ device }: { device: Device }) {
                 loading={reconnect.isPending}
                 onClick={() => {
                   session.stop()
+                  session.clearEntries()
+                  void history.refetch()
                   reconnect.mutate(device.id)
                 }}
               >
@@ -206,7 +223,7 @@ function CallSession({ device }: { device: Device }) {
         {session.error ? <Alert type="error" showIcon message={session.error} /> : null}
 
         <section className="surface call-transcript-surface">
-          <TranscriptFeed entries={session.entries} />
+          <TranscriptFeed entries={[...saved, ...session.entries]} />
         </section>
 
         <VoiceControls

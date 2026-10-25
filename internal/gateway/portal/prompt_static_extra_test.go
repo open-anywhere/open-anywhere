@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"runtime"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +57,6 @@ func TestNewServiceBuildsThePortal(t *testing.T) {
 		Username:     "alice",
 		Password:     "password123",
 		SessionTTL:   time.Hour,
-		MCPToken:     "mcp-token",
 		SystemPrompt: "",
 	}, db, nil, nil, nil, nil)
 	if err != nil {
@@ -69,7 +69,8 @@ func TestNewServiceBuildsThePortal(t *testing.T) {
 		t.Fatalf("nil platform was reported as configured: %+v", service)
 	}
 	info, err := os.Stat(dataDir)
-	if err != nil || info.Mode().Perm() != 0o700 {
+	// Windows has no Unix permission bits.
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o700) {
 		t.Fatalf("data dir mode=%v err=%v", info, err)
 	}
 	if _, _, err := service.Auth.Login(ctx, Credentials{Username: "alice", Password: "password123"}, "agent", "10.0.0.1"); err != nil {

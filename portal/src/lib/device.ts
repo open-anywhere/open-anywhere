@@ -16,7 +16,7 @@ export function findDevice(devices: Device[] | undefined, id?: string): Device |
 }
 
 export function deviceLabel(device?: Device): string {
-  return device?.agent_name || device?.mac || '未命名设备'
+  return device?.name || device?.agent_name || device?.mac || '未命名设备'
 }
 
 export function deviceForApp(devices: Device[] | undefined, app: AppSummary): Device | undefined {

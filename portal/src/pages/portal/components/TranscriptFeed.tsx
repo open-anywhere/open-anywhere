@@ -37,7 +37,7 @@ export function TranscriptFeed({ entries }: { entries: TranscriptEntry[] }) {
     if (element) {
       element.scrollTop = element.scrollHeight
     }
-  }, [entries.length])
+  }, [entries.length, entries[entries.length - 1]?.id])
 
   if (!entries.length) {
     return (
