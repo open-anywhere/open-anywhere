@@ -421,7 +421,7 @@ data: {"type":"session.status_idle","id":"evt_01J...","stop_reason":{"type":"end
 消费规则：
 
 - 先注册消费者，再提交 `user.message`；即使首次连接晚于任务提交，回放也能补齐事件。
-- 按事件 `id` 去重；控制面持久化已处理事件 ID 的集合（或可排序的事件游标），重连后从头回放并跳过已处理事件。
+- 按事件 `id` 去重；控制面把最近处理的事件 ID 持久化为游标（`EventCursor`）。重连或重启后从头回放，跳过该 ID 之前的事件，命中后继续处理。当前只保存单个 ID：如果回放窗口已截断、找不到该 ID，游标不会命中，后续事件会被跳过，恢复流程无法察觉（见[控制面数据库设计](../database.md#5-data-快照格式)）。
 - 只有在观察到本轮 `user.message`、`session.status_running`、`agent.message` 或 `agent.thinking` 之后，才接受 `session.status_idle`；提交前回放的旧 `idle` 不能当作本轮完成。
 - 连接断开时按 1、2、4、8、15 秒退避重连，上限 30 秒；重连期间不重复发送 `user.message`。
 - 同一 `session_id` 只允许一个消费者推进状态；多副本部署时用 `app_id` 或 `session_id` 加分布式锁。
@@ -564,15 +564,16 @@ GET /v1/files/{file_id}/content
 
 | 检查项 | 规则 | 失败原因 |
 | --- | --- | --- |
-| 大小 | 压缩包不超过 100 MiB；技能以 80 MiB 为构建目标 | `ARTIFACT_TOO_LARGE` |
+| 大小 | 压缩包不超过 100 MiB，展开后总量不超过 100 MiB；技能以 80 MiB 为构建目标 | `ARTIFACT_TOO_LARGE` |
+| 条目 | 归档条目不超过 4096 个 | `INVALID_ARTIFACT` |
 | 归档路径 | 拒绝绝对路径、`..`、符号链接和硬链接；允许 `./` 前缀并在检查前归一化 | `INVALID_ARTIFACT` |
-| 根目录 | 必须包含 `app/`、`openapi.yaml`、`launch.json`，且没有 `outputs/` 这一层 | `INVALID_ARTIFACT` |
-| 入口 | `runtimeArgs` 中至少有一个参数指向 `app/` 内存在的文件 | `INVALID_ARTIFACT` |
-| 启动契约 | `runtimeExecutable=node`；`runtimeArgs` 非空且不含固定端口参数；`healthPath` 缺省或为 `/health`；`readyTimeoutMs` 为正整数且不超过运行端上限；`launch.json` 不含 `port` 字段 | `INVALID_ARTIFACT` |
+| 根目录 | 必须包含 `launch.json`、`openapi.yaml`、`app/app.js`、`app/package.json`、`app/public/index.html` 五个常规文件，且没有 `outputs/` 这一层 | `INVALID_ARTIFACT` |
+| 入口 | `runtimeArgs[0]` 必须等于 `app/app.js`；其余元素只能是 node 标志，不能出现 `--port` 或固定端口 | `INVALID_ARTIFACT` |
+| 启动契约 | `runtimeExecutable=node`；`healthPath` 缺省或为 `/health`；`readyTimeoutMs` 缺省（10000）或在 1–60000 之间；`launch.json` 不含 `port` 字段 | `INVALID_ARTIFACT` |
 | OpenAPI | 合法 OpenAPI 3.1；`paths` 只包含 `/api/*`；每个操作有唯一 `operationId`；`servers` 使用相对地址 | `INVALID_ARTIFACT` |
 | 完整性 | 下载字节数与 `size_bytes` 一致；gzip/tar 可读；存储后摘要与下载时计算的值一致 | `ARTIFACT_CORRUPT` |
 
-`app/` 必须非空；`package.json` 不是必需文件，但存在时必须是合法 JSON。OpenAPI 的 `message` 字段由技能和构建提示约束，控制面做结构检查；后续可以增加更严格的 schema 校验。
+`app/` 必须非空，上述五个文件缺一不可；`app/package.json` 必须是合法 JSON。`readyTimeoutMs` 的上限与 Render 的运行端限制一致（60000），构建期与运行期不再使用两个数字。OpenAPI 的 `message` 字段由技能和构建提示约束，控制面做结构检查；后续可以增加更严格的 schema 校验。
 
 校验成功后，控制面保留原始 `artifact.tar.gz`，同时解析 `openapi.yaml` 并存入应用注册表，后续 `send-request` 按该规范转发。
 

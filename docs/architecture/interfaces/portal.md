@@ -62,7 +62,7 @@ Portal 与 Gateway 同进程、同端口、同 SQLite：
 - 注册由平台设置 `registration.open` 控制，默认关闭。
 - 仅当 `registration.open` 尚无值时，配置 `portal.allow_registration: true` 才会把它 seed 为 `true`；此后以数据库为准，管理员可在 `/admin/settings` 修改。
 - 关闭时 `POST /api/portal/register` 返回 `403 REGISTRATION_CLOSED`。
-- 上线顺序：先完成租户隔离（MCP、屏幕、Service 全链路按 owner 校验）验证，再打开注册；否则新用户可能看到或停掉其他用户的应用。
+- 上线顺序：先完成租户隔离（MCP 身份、屏幕、Service 全链路按 owner 校验，Render 运行时隔离）验证，再打开注册。这是硬前置，不是建议：未隔离时新用户可能看到或停掉其他用户的应用，而 Render 当前没有鉴权与沙箱，MCP 也仍是全局 token。
 
 ### 3.2 注册流程
 
@@ -154,15 +154,15 @@ sequenceDiagram
 | 模式 | 行为 |
 | --- | --- |
 | `managed`（默认） | 使用管理员配置的平台默认 Render/Casting；读取绑定本身返回 `managed.available`，真正访问屏幕或启动应用时若平台未配置则返回 `SERVICE_NOT_CONFIGURED` |
-| `custom` | 用户填写两个公网地址：Render URL 与 Casting URL；可分别设置访问令牌 |
+| `custom` | 用户填写两个公网地址：Render URL 与 Casting URL；可分别设置访问令牌（当前只透传，服务端不校验） |
 
 约束与行为：
 
 - `custom` 必须同时有 Render URL 和 Casting URL，否则 `409 SERVICE_NOT_CONFIGURED`。
-- 可选令牌保存后只返回 `render_token_configured` / `casting_token_configured`，不回显明文；再次保存时省略或传空表示保留，`clear_render_token` / `clear_casting_token` 才显式清除。
+- 可选令牌保存后只返回 `render_token_configured` / `casting_token_configured`，不回显明文；再次保存时省略或传空表示保留，`clear_render_token` / `clear_casting_token` 才显式清除。**Render 与 Casting 当前不校验 `Authorization`**：令牌只是由 Gateway 透传，不能用它判断 custom 部署已受保护；用户自建服务必须自己加网络层访问控制。
 - 切换到 `managed` 会保留已保存的自定义地址与密文 token，方便切回；显式清除标记仍然生效。
 - 保存前检查该用户是否有运行中或待清理的应用；有则 `409 APPS_RUNNING`，要求先在屏幕页停止，避免旧实例失去清理地址。
-- 保存/测试的地址必须通过出站策略：只接受 `http`/`https`，拒绝 userinfo、fragment、非法端口，默认拒绝回环、私网、link-local、组播与 CGNAT 地址（本地调试可用 `services.allow_private_targets=true` 放行）。
+- 保存/测试的地址必须通过出站策略：只接受 `http`/`https`，拒绝 userinfo、fragment、非法端口，默认拒绝回环、私网、link-local、组播与 CGNAT 地址。本地调试或受信局域网部署可设置 `services.allow_private_targets=true` 放行；它同时放宽所有用户填写的地址，不要与开放注册同时使用。
 - 测试连接按用户限流 10 次/分钟（`429 SERVICE_TEST_RATE_LIMITED`）；省略 token 时使用已保存的密文。返回 Render/Casting 是否可达与屏幕数量，不返回屏幕详情。
 - 平台默认 Render/Casting 地址由管理员配置；管理员修改默认服务前，如果仍有依赖平台托管服务（`managed` 或无绑定记录）的应用处于运行中或待清理状态，返回 `409 APPS_RUNNING`，要求先停止。只使用自有服务的用户不受此限制。
 
@@ -305,7 +305,7 @@ POST /voice/{device_id}/abort
 | `INVALID_CONTENT_TYPE` | 415 | 写请求不是 JSON |
 | `INTERNAL` | 500 | 未分类内部错误，响应不包含内部细节 |
 
-MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MISSING_IDENTITY` 400、`IDENTITY_MISMATCH` 403、`OWNER_NOT_FOUND` / `IDENTITY_NOT_REGISTERED` / `USER_DISABLED` 403。Portal 模式下 MCP Token 始终存在：首次启动自动生成，加密保存在平台设置里。
+MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MISSING_IDENTITY` 400、`IDENTITY_MISMATCH` 403、`OWNER_NOT_FOUND` / `IDENTITY_NOT_REGISTERED` / `USER_DISABLED` 403、`IDENTITY_CHECK_FAILED` 503（校验器自身失败）。`/mcp` 每个请求都校验，`/sse` 建连时校验。Portal 模式下 MCP Token 始终存在：首次启动自动生成，加密保存在平台设置里。
 
 ## 7. 数据模型与迁移摘要
 
@@ -332,12 +332,12 @@ MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MIS
 
 - **RBAC**：`/api/admin/*` 全部经过 `withAdmin`；用户端接口不接受 `user_id` / `role` 参数；管理员操作只按目标 ID。
 - **归属**：设备、应用、屏幕、语音都按登录用户或 MCP `(DeviceID, AgentID)` 校验；跨用户访问一律 404，不暴露资源是否存在。
-- **MCP 身份**：Portal 模式要求 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id` 三头齐全，每次 POST 都与 SSE 会话精确一致，并查库确认设备存在、已注册、用户 active。MCP Token 在 Portal 模式下由平台生成。
-- **SSRF**：用户填写的 Render/Casting 地址、平台默认地址、连接测试、`SendRequest` 与 `AppBaseURL` 都走同一套 netguard 策略；DNS 与重定向在 dial 时复核，禁用环境代理。`services.allow_private_targets` 仅用于本地调试。
+- **MCP 身份**：Portal 模式要求 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id` 三头齐全；`/mcp` 每个请求独立校验，`/sse` 建连时校验，`/mcp/message` 每次 POST 与 SSE 会话精确一致，并查库确认设备存在、已注册、用户 active。MCP Token 在 Portal 模式下由平台生成。
+- **SSRF**：用户填写的 Render/Casting 地址、平台默认地址、连接测试、`SendRequest` 与 `AppBaseURL` 都走同一套 netguard 策略；DNS 与重定向在 dial 时复核，禁用环境代理。`services.allow_private_targets` 只用于本地调试或受信单租户的局域网部署，开启后会同时放宽所有用户填写的地址。
 - **密钥脱敏**：平台 API Key、用户服务 token、设备 token、`password_hash`、会话 hash、`credential_path`、`target_id`、`projection_session_id` 不出现在 API 响应、页面或日志中；秘密字段只返回是否已配置（平台设置另带更新时间/修改人），不回显明文。
 - **管理端 DTO 边界**：管理端用户/应用响应与页面不包含屏幕字段、用户服务绑定地址/token、prompt 正文或任何密钥；管理端没有屏幕接口。
 - **请求防护**：沿用同源检查 + JSON Content-Type；SQL 全部参数绑定；登录与注册限流；停用用户立即失效会话并拒绝 MCP。
-- **已知取舍**：MCP 仍使用全局 MCP Token；拿到 token 的人若能猜到已知 `(MAC, AgentID)` 仍可能冒充设备，当前没有 per-agent MCP 凭证。
+- **已知取舍（开放注册前的阻塞项）**：MCP 仍使用全局 MCP Token；拿到 token 的人只要能猜到已知 `(MAC, AgentID)` 就能冒充设备，泄露半径是**全平台的读写**（创建/修订/启动/停止应用、操作任意屏幕），当前没有 per-agent MCP 凭证。在这条改造完成前，注册开关保持关闭，MCP Token 按平台根凭证管理。
 
 ## 9. 非目标
 
@@ -360,7 +360,7 @@ portal:
   username: "admin"              # 管理员引导账号
   password: "<至少 8 个字符>"     # 建议用 PORTAL_PASSWORD 注入
   allow_registration: false      # 仅首次启动 seed 到 registration.open
-  cookie_secure: true            # 生产 HTTPS 置为 true
+  cookie_secure: true            # 默认 true；只有纯 HTTP 本地调试才显式改 false
 
 services:
   allow_private_targets: false   # 仅本地调试设为 true
@@ -372,7 +372,8 @@ services:
 - 先构建前端：`cd portal && pnpm install && pnpm build`；未构建时 `/` 返回 503。
 - 单文件部署：`make build-gateway-embed`（等价于 `go build -tags portalembed`）。`pnpm build` 会把 `portal/dist` 同步到 `internal/gateway/portal/webdist` 供 `go:embed` 使用，运行时把 `portal.web_embedded` 设为 `true`。未带 tag 的二进制配置该项会启动失败，避免误以为前端已内嵌。
 - 灵矽云必须能访问管理后台里填写的“公网 MCP 地址”；局域网地址不可达。新建 MCP 使用 Streamable HTTP，地址应以 `/mcp` 结尾；`/sse` 是旧版 Legacy SSE 端点，仅已有服务继续使用。
+- Render 与 Casting 不得直接暴露在公网：Render 没有鉴权与运行时隔离，Casting 没有用户鉴权。托管部署把它们放在受信网络或反向代理之后，并在完成租户隔离前保持注册关闭。
 - 浏览器麦克风要求 HTTPS 或 `localhost`。
 - 单进程、单 SQLite；一个数据库只对应一个 Gateway。
-- 备份时必须同时保留数据库与 `secret.key`（或 `GATEWAY_SECRET_KEY`）；WAL 模式下数据库用 SQLite `.backup`，不能只拷贝主文件。
+- 备份时必须同时保留数据库、`artifacts/`、`portal-data/devices/` 与 `secret.key`（或 `GATEWAY_SECRET_KEY`）；四者缺一不可，步骤见[部署与备份](../../operations/deploy.md)。WAL 模式下数据库用 SQLite `.backup`，不能只拷贝主文件；备份不是原子快照，恢复后按 deploy.md 对账。
 - 平台 AgentAPI/Linx（公网 MCP 地址、MCP 名称、助手名称、模型）/默认 Render/Casting 都在管理后台配置，字段下方说明了数据来源；MCP Token 首次启动自动生成，可在后台重新生成并同步到灵矽 MCP。`gateway.yaml` 中的对应值只在设置尚无值时 seed 一次，已有设置不会被覆盖，可以从文件里删除。

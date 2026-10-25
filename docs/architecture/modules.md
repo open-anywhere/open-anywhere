@@ -17,7 +17,7 @@
 | Portal | `portal/`、`internal/gateway/portal` | 多租户控制台与自助开通 | 邓军辉 |
 | AgentAPI 适配 | `pkg/agentapi`、`internal/gateway/build` | 把构建抽象成会话，不暴露沙箱细节 | 邓军辉 |
 
-外部依赖（不属于本仓库，但属于系统边界）：灵矽云（ASR/TTS/意图）、AgentAPI（托管编码 Agent 与沙箱）、屏幕与 AirPlay 协议。
+外部依赖（不属于本仓库，但属于系统边界）：灵矽云（ASR/TTS/意图）、AgentAPI（托管编码 Agent 与沙箱）、屏幕与 DLNA 协议。
 
 ## 2. 控制面 Gateway
 
@@ -27,8 +27,7 @@
 
 | 接口 | 使用方 | 形态 |
 | --- | --- | --- |
-| 应用管理 MCP | 灵矽云 | `get-screens`、`create-app`、`update-app`、`get-app-status`、`start-app`、`stop-app` |
-| 应用操作 MCP | 灵矽云 | `get-app-operations`、`send-request` |
+| 应用管理 MCP | 灵矽云 | typed 工具 + 兼容层工具，清单见[应用管理 MCP 2.1](interfaces/app-management-mcp.md#21-工具集) |
 | Portal HTTP API | 浏览器 | `/api/portal/*`、`/api/admin/*` |
 | 健康检查 | 运维 | `GET /healthz` |
 
@@ -36,12 +35,13 @@
 
 - MCP 工具面固定，不随应用数量增长；新应用只改变 `get-app-operations` 的返回值。
 - 一次语音回合不等待构建；构建是异步任务。
-- 跨 owner 的资源一律不可见，统一返回 404。
+- 跨 owner 的资源不可见：Portal HTTP API 统一返回 404；MCP 工具返回 `APP_NOT_FOUND` / `TARGET_BUSY`，不泄露资源是否存在。
 
 **内部子模块**
 
 | 子模块 | 职责 | 关键接口 |
 | --- | --- | --- |
+| `httpapi` | OpenAPI 操作执行与转发 | 操作调用与响应映射 |
 | `mcp` | MCP Server 与工具路由 | Tool 定义与调用 |
 | `service` | 编排、归属校验、屏幕占用 | 面向 MCP 的用例方法 |
 | `build` | 构建会话生命周期 | `Create` / `Update` / `Status` |
@@ -53,6 +53,8 @@
 | `endpoints` | 按 owner 解析 Render/Casting | `Resolve` / `ValidateOwner` |
 | `portal` | 注册、登录、角色、开通 | `/api/*` handler |
 | `settings` | 平台设置与密钥 | 读写设置、加解密 |
+| `secret` | 主密钥加载与 AES-256-GCM 密文封装 | 加解密、AAD 绑定 |
+| `config` | 配置加载与优先级 | YAML / 环境变量 / flag |
 | `netguard` | 出站策略 | 安全 Dial |
 | `store` | SQLite 持久化 | 仓储接口 |
 | `linx` | 灵矽平台客户端 | 智能体/设备开通 |
@@ -79,7 +81,7 @@
 
 **不变量**
 
-- 会话是会话级通道，应用是通道里的内容；切换应用不重建会话。
+- 会话是会话级通道，应用是通道里的内容。**当前切换应用会先停止旧会话再创建新会话**；在会话内更换 source 是后续目标，不要把它当成已实现能力。
 - 只负责协议控制与生命周期，不负责媒体内容。
 - 设备失联时释放占用，避免目标被永久占住。
 
@@ -115,10 +117,9 @@
 | 控制面 | AgentAPI | HTTP（构建会话） |
 | 控制面 | Render | HTTP |
 | 控制面 | Casting | HTTP |
-| Render | Casting | HTTP（媒体流投送） |
 | Portal | 控制面 | 同进程 HTTP API |
 
-禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。
+禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。Render 不调用 Casting：媒体流由电视直接拉取，投屏控制由控制面发起。
 
 ## 8. 全局不变量
 
@@ -126,7 +127,7 @@
 
 1. **MCP 面稳定，应用能力动态。** 不为每个应用注册工具。
 2. **构建慢而异步，控制快而同步。** 语音回合永不等待构建。
-3. **投屏是会话，应用是内容。** 换应用不换会话。
+3. **投屏是会话，应用是内容。** 会话承载应用；当前换应用会重建会话，复用会话是后续目标。
 4. **屏幕是显示器，不是运行时。** 应用逻辑不进显示面。
 5. **产物是不可信输入。** 结构、启动契约、OpenAPI 都要校验，Render 再校验一次。
 6. **状态属于它的所有者。** 控制面状态在 SQLite，应用状态在应用，投屏状态在会话。

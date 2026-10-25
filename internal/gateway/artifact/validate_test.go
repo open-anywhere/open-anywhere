@@ -3,6 +3,7 @@ package artifact
 import (
 	"archive/tar"
 	"compress/gzip"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,10 +105,39 @@ func TestValidateHonorsReadyTimeout(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsMaxReadyTimeout(t *testing.T) {
+	entries := validEntries()
+	entries[4].body = `{"name":"quiz","runtimeExecutable":"node","runtimeArgs":["app/app.js"],"readyTimeoutMs":60000}`
+	result, err := Validate(writeArchive(t, entries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Launch.ReadyTimeoutMS != MaxReadyTimeoutMS {
+		t.Fatalf("ready = %d", result.Launch.ReadyTimeoutMS)
+	}
+}
+
+func TestValidateRejectsTooManyEntries(t *testing.T) {
+	entries := validEntries()
+	for i := 0; len(entries) <= maxEntries; i++ {
+		entries = append(entries, entry{name: fmt.Sprintf("app/extra/%d.txt", i), body: "x"})
+	}
+	_, err := Validate(writeArchive(t, entries))
+	if err == nil || !IsCode(err, "INVALID_ARTIFACT") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d entries", maxEntries)) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateRejectsInvalidArchives(t *testing.T) {
 	tests := map[string]func([]entry) []entry{
 		"missing launch":  func(e []entry) []entry { return remove(e, "launch.json") },
 		"missing openapi": func(e []entry) []entry { return remove(e, "openapi.yaml") },
+		"missing app.js":  func(e []entry) []entry { return remove(e, "app/app.js") },
+		"missing package": func(e []entry) []entry { return remove(e, "app/package.json") },
+		"missing index":   func(e []entry) []entry { return remove(e, "app/public/index.html") },
 		"no app files":    func(e []entry) []entry { return remove(remove(e, "app/app.js"), "app/package.json") },
 		"outputs nesting": func(e []entry) []entry { return append(e, entry{name: "outputs/launch.json"}) },
 		"traversal":       func(e []entry) []entry { return append(e, entry{name: "../evil"}) },
@@ -131,6 +161,11 @@ func TestValidateRejectsInvalidArchives(t *testing.T) {
 			e[4].body = `{"name":"quiz","runtimeExecutable":"node","runtimeArgs":["openapi.yaml"]}`
 			return e
 		},
+		"entry is not app.js": func(e []entry) []entry {
+			e = append(e, entry{name: "app/main.js", body: "console.log('main')"})
+			e[4].body = `{"name":"quiz","runtimeExecutable":"node","runtimeArgs":["app/main.js"]}`
+			return e
+		},
 		"fixed port arg": func(e []entry) []entry {
 			e[4].body = `{"name":"quiz","runtimeExecutable":"node","runtimeArgs":["app/app.js","--port=8080"]}`
 			return e
@@ -144,7 +179,7 @@ func TestValidateRejectsInvalidArchives(t *testing.T) {
 			return e
 		},
 		"excessive ready timeout": func(e []entry) []entry {
-			e[4].body = `{"name":"quiz","runtimeExecutable":"node","runtimeArgs":["app/app.js"],"readyTimeoutMs":600001}`
+			e[4].body = `{"name":"quiz","runtimeExecutable":"node","runtimeArgs":["app/app.js"],"readyTimeoutMs":60001}`
 			return e
 		},
 		"unknown launch field": func(e []entry) []entry {
@@ -161,6 +196,10 @@ func TestValidateRejectsInvalidArchives(t *testing.T) {
 		},
 		"invalid package json": func(e []entry) []entry {
 			e[2].body = "{"
+			return e
+		},
+		"null package json": func(e []entry) []entry {
+			e[2].body = "null"
 			return e
 		},
 	}

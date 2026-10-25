@@ -78,7 +78,7 @@ Render 与 Casting 的接口本身不区分租户；控制面在多租户 Portal
 约定：
 
 - 一个用户最多一行 `portal_service_bindings`；`custom` 必须同时有 Render URL 与 Casting URL，否则 `SERVICE_NOT_CONFIGURED`。
-- 控制面把 token 作为 `Authorization: Bearer <token>` 附加到 Render/Casting 请求；没有 token 时不发该头。token 只参与客户端缓存键的哈希，不写日志、不进入 API 响应。
+- 控制面把 token 作为 `Authorization: Bearer <token>` 附加到 Render/Casting 请求；没有 token 时不发该头。token 只参与客户端缓存键的哈希，不写日志、不进入 API 响应。**Render 与 Casting 当前不解析也不校验这个头**：token 只是透传，配置它不会自动获得访问控制，`custom` 部署必须由网络层（防火墙、反向代理、mTLS）保护。
 - 客户端池按 `(URL, token)` 缓存 `render.Client` / `casting.Client`，上限 128；地址或 token 变化后旧客户端自然不再命中。
 - 平台默认地址与用户地址都在保存/测试时校验；`render.Client` 与 `casting.Client` 的 `Health(ctx)` 分别探测 `/healthz`（Render）与 Casting 健康接口，Portal 的服务测试复用同一套客户端。
 - 保存用户绑定前，如果该用户有运行中或待清理的应用，返回 `APPS_RUNNING`，要求先停止；管理员修改平台默认 Render/Casting（含 token）时，如果控制面上仍有任何用户存在活动资源，同样返回 `APPS_RUNNING`。
@@ -88,7 +88,7 @@ Render 与 Casting 的接口本身不区分租户；控制面在多租户 Portal
 
 - 只接受 `http` / `https`；拒绝缺少主机名、带 userinfo、带 fragment、端口非法的地址。
 - 默认拒绝回环、私网、link-local、组播、未指定地址、CGNAT（`100.64.0.0/10`）与 IPv6 ULA；保存时解析 DNS，连接时在自定义 `DialContext` 再解析并只连接允许的地址，`CheckRedirect` 同样复核，防止 DNS rebinding 与重定向绕过；环境代理被禁用。
-- 本地调试可在 `gateway.yaml` 设置 `services.allow_private_targets: true` 放行；该选项只应出现在开发环境，开启后用户可以访问部署所在内网。
+- 本地调试可在 `gateway.yaml` 设置 `services.allow_private_targets: true` 放行；局域网或自托管部署（例如 Render 在 `192.168.x.x`）必须显式打开它。该开关同时放宽 `custom` 用户填写的地址校验，只应在受信单租户环境使用；托管多租户平台应保持 `false`，把私网可达性留在平台配置里解决。
 - 控制面转发应用请求前也会校验 `AppBaseURL`，避免用户 Render 返回内网地址造成 SSRF。
 
 ## 2. 启动应用
@@ -131,9 +131,9 @@ Content-Type: application/json
 
 1. 校验输入，原子检查并登记 `app_id` 的活动实例及端口预留，创建关联该 `app_id` 的实例记录和独立工作目录。
 2. 下载并解压应用包，确认 artifact 根目录直接包含 `launch.json`、`openapi.yaml` 和 `app/`。下载、解压有大小和时间限制；归档条目不得逃逸工作目录。
-3. 校验启动契约和 OpenAPI，仅接受 `runtimeExecutable: "node"`；入口文件必须在包内。
+3. 校验启动契约和 OpenAPI，仅接受 `runtimeExecutable: "node"`；`runtimeArgs[0]` 必须等于 `app/app.js`，其余元素只能是 node 标志；`launch.json`、`openapi.yaml`、`app/app.js`、`app/package.json`、`app/public/index.html` 必须都存在。
 4. 以 artifact 根目录为 cwd，按 `runtimeArgs` 参数数组启动 Node.js，注入 `HOST=0.0.0.0` 和请求中的 `PORT`。通过进程 API 执行，不拼接 shell 命令或 `--port` 参数。
-5. 等待 `http://127.0.0.1:<port>/health` 返回 HTTP `200` 和 JSON `{"status":"ok"}`，并确认本次应用进程持续存活。就绪超时使用 `launch.json` 的 `readyTimeoutMs`，默认 10000 毫秒；运行端可设置上限。
+5. 等待 `http://127.0.0.1:<port>/health` 返回 HTTP `200` 和 JSON `{"status":"ok"}`，并确认本次应用进程持续存活。就绪超时使用 `launch.json` 的 `readyTimeoutMs`，默认 10000 毫秒，取值 1–60000。
 6. 使用独立 Chromium 页面打开 `http://127.0.0.1:<port>/`，等待页面成功加载并取得可捕获的画面。不能用持续网络空闲作为唯一就绪条件，因为页面可能使用 SSE 或轮询。
 7. 持续捕获页面、编码并提供 HTTP 媒体流。确认输出已经产生可用媒体数据后，实例进入 `ready`，启动请求返回成功。
 
@@ -317,6 +317,8 @@ Render 停止不会自动调用 Casting。控制面正常停止应用时应先�
 | 停止时资源清理失败 | `500` | `STOP_FAILED` |
 
 持续运行中的 `APP_EXITED`、`APP_UNHEALTHY`、`BROWSER_EXITED`、`STREAM_FAILED` 通过实例的 `error` 状态表达。查询成功仍返回 `200`，由响应中的实例状态说明业务失败。
+
+控制面把 `422 INVALID_ARTIFACT` 映射为 MCP 错误码 `ARTIFACT_INVALID`（不可重试，需要重新构建）；`502` 的 `APP_START_FAILED` / `APP_HEALTH_FAILED` 才映射为 `START_FAILED`。见[应用管理 MCP](app-management-mcp.md#9-错误模型)。
 
 ### 4.1 控制面侧的服务绑定错误
 

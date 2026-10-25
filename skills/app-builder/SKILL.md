@@ -60,7 +60,8 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 ## 启动契约
 
 - `launch.json` 只允许 `name`、`runtimeExecutable`、`runtimeArgs`、`healthPath`、`readyTimeoutMs` 五个字段，不能出现 `port` 或其他字段。
-- `runtimeExecutable` 固定为 `"node"`；`runtimeArgs` 必须引用 `app/` 内的入口文件，例如 `["app/app.js"]`。
+- `runtimeExecutable` 固定为 `"node"`；`runtimeArgs` 必须为 `["app/app.js"]`，可追加 node 标志，但第一个元素不能指向 `app/main.js` 等其他文件，也不能传 `--port`。
+- `readyTimeoutMs` 省略时默认 10000，允许范围 1–60000。
 - 应用必须读取环境变量 `PORT`；缺失或非法时向 stderr 说明原因并以非零状态退出。`HOST` 未设置时默认 `0.0.0.0`。不要写死端口或在参数中传 `--port`。
 - 必须实际实现 `GET /health`，就绪时返回 HTTP 200、`Content-Type: application/json` 和 `{"status":"ok"}`。
 - 收到 `SIGTERM` 后停止接受新请求，关闭 HTTP/SSE 连接和定时器并退出。

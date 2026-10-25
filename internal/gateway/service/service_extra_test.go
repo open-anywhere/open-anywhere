@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,6 +159,33 @@ func canceledContext() context.Context {
 	return ctx
 }
 
+func TestInvalidArtifactIsNotRetriedAndCanBeUpdated(t *testing.T) {
+	env := newTestEnv(t, nil)
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	entry := env.registry.Add(idleApp(t, owner))
+	entry.Update(func(value *app.App) {
+		value.SessionID = "sess_1"
+		value.Artifact.Path = "artifacts/app_1.tar.gz"
+		value.Artifact.SHA256 = strings.Repeat("a", 64)
+	})
+	env.render.errs = []error{&render.HTTPError{Status: http.StatusUnprocessableEntity, Code: render.CodeInvalidArtifact, Message: "launch.json is invalid"}}
+
+	ctx := context.Background()
+	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "ARTIFACT_INVALID" {
+		t.Fatalf("first start = %v", err)
+	}
+	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
+		t.Fatalf("a retry must be refused, got %v", err)
+	}
+	if got := len(env.render.requests()); got != 1 {
+		t.Fatalf("Render was called %d times", got)
+	}
+	result, err := env.svc.UpdateApp(ctx, owner, "app_1", "换一个入口写法")
+	if err != nil || result.State != app.StateBuilding {
+		t.Fatalf("update = %+v, %v", result, err)
+	}
+}
+
 func TestStartRuntimeFailures(t *testing.T) {
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	tests := map[string]struct {
@@ -169,7 +197,13 @@ func TestStartRuntimeFailures(t *testing.T) {
 				entry, _ := env.registry.Get("app_1")
 				entry.Update(func(value *app.App) { value.Artifact.DownloadURL = "" })
 			},
-			code: "START_FAILED",
+			code: "ARTIFACT_INVALID",
+		},
+		"invalid artifact": {
+			setup: func(env *testEnv) {
+				env.render.errs = []error{&render.HTTPError{Status: http.StatusUnprocessableEntity, Code: render.CodeInvalidArtifact, Message: "launch.json is invalid"}}
+			},
+			code: "ARTIFACT_INVALID",
 		},
 		"render not ready": {
 			setup: func(env *testEnv) {

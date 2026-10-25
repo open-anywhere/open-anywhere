@@ -1195,7 +1195,7 @@ func (s *Service) startRuntime(ctx context.Context, rt runtime, value app.App, t
 		return startBinding{}, &startFailure{Code: "TARGET_UNREACHABLE", Message: "目标屏幕不可达"}
 	}
 	if value.Artifact.DownloadURL == "" {
-		return startBinding{}, &startFailure{Code: "START_FAILED", Message: "应用产物不可用"}
+		return startBinding{}, &startFailure{Code: "ARTIFACT_INVALID", Message: "应用产物不可用，请修订后重新构建"}
 	}
 	startCtx, cancel := context.WithTimeout(ctx, s.cfg.StartTimeout)
 	defer cancel()
@@ -1235,7 +1235,7 @@ func (s *Service) startRuntime(ctx context.Context, rt runtime, value app.App, t
 			}
 			break
 		}
-		if render.IsCode(createErr, "PORT_IN_USE") || render.IsCode(createErr, "INVALID_REQUEST") || render.IsCode(createErr, "APP_ALREADY_RUNNING") {
+		if render.IsCode(createErr, "PORT_IN_USE") || render.IsCode(createErr, "INVALID_REQUEST") || render.IsCode(createErr, "APP_ALREADY_RUNNING") || render.IsInvalidArtifact(createErr) {
 			if err := s.updateRuntime(value.ID, func(a *app.App) { a.PendingRuntime = false }); err != nil {
 				return persistFailure(err)
 			}
@@ -1250,9 +1250,15 @@ func (s *Service) startRuntime(ctx context.Context, rt runtime, value app.App, t
 		if render.IsCode(createErr, "APP_ALREADY_RUNNING") {
 			return startBinding{}, &startFailure{Code: "APP_ALREADY_RUNNING", Message: "应用已有运行实例", Cause: createErr}
 		}
+		if render.IsInvalidArtifact(createErr) {
+			return startBinding{}, &startFailure{Code: "ARTIFACT_INVALID", Message: "应用产物无效，请修订后重新构建", Cause: createErr}
+		}
 		return startBinding{}, &startFailure{Code: "START_FAILED", Message: "应用启动失败", Cause: createErr}
 	}
 	if instance.State != render.StateReady {
+		if instance.Error != nil && instance.Error.Code == render.CodeInvalidArtifact {
+			return startBinding{}, &startFailure{Code: "ARTIFACT_INVALID", Message: "应用产物无效，请修订后重新构建"}
+		}
 		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "START_FAILED", Message: "应用未就绪"}
 	}
