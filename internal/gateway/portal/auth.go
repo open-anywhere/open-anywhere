@@ -25,9 +25,10 @@ const (
 	// SessionCookie is the portal's session cookie.
 	SessionCookie = "oa_portal"
 
-	passwordIterations = 600_000
-	passwordSaltBytes  = 16
-	passwordKeyBytes   = 32
+	// defaultPasswordIterations is the production PBKDF2 work factor.
+	defaultPasswordIterations = 600_000
+	passwordSaltBytes         = 16
+	passwordKeyBytes          = 32
 
 	maxLoginFailures = 5
 	loginWindow      = 10 * time.Minute
@@ -40,6 +41,11 @@ const (
 	registerDailyWindow     = 24 * time.Hour
 	maxHashConcurrency      = 4
 )
+
+// passwordIterations is the PBKDF2 work factor for new hashes. Tests lower it
+// in TestMain to keep the suite fast; hashes record their own iteration count,
+// so verification always uses the value stored with the hash.
+var passwordIterations = defaultPasswordIterations
 
 // AuthConfig configures account and session handling.
 type AuthConfig struct {

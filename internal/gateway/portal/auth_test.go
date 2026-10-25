@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func TestEnsureAdminCreatesAndUpdatesTheConfiguredAccount(t *testing.T) {
 		t.Fatal("the password was stored in clear text")
 	}
 	parts := strings.Split(user.PasswordHash, "$")
-	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" || parts[1] != "600000" {
+	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" || parts[1] != strconv.Itoa(passwordIterations) {
 		t.Fatalf("hash format=%q", user.PasswordHash)
 	}
 	if !verifyPassword(user.PasswordHash, "password123") || verifyPassword(user.PasswordHash, "wrong-password") {
