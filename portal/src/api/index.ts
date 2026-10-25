@@ -393,7 +393,7 @@ export const api = {
       credentials: 'same-origin',
     })
     if (!response.ok) {
-      let message = `无法读取 OpenAPI 文档（HTTP ${response.status}）`
+      let message = `暂时无法读取接口文档（HTTP ${response.status}）`
       try {
         const body = await response.json()
         message = body?.error?.message || message

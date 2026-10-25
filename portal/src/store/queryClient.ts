@@ -14,12 +14,14 @@ function redirectTo(to: string) {
 // stale tenant data on screen.
 function handleAPIError(error: unknown) {
   if (!(error instanceof ApiError)) return
-  if (error.status === 401 && !error.authRequest) {
+  const path = window.location.pathname
+  // Public pages probe the session to show the right navigation, but a 401
+  // there only means "not signed in" and must not bounce visitors to login.
+  const protectedPage = path === '/portal' || path.startsWith('/portal/') || path === '/admin' || path.startsWith('/admin/')
+  if (error.status === 401 && !error.authRequest && protectedPage) {
     queryClient.clear()
-    if (!window.location.pathname.startsWith('/login')) {
-      const next = window.location.pathname + window.location.search
-      redirectTo(`/login?redirect=${encodeURIComponent(next)}`)
-    }
+    const next = window.location.pathname + window.location.search
+    redirectTo(`/login?redirect=${encodeURIComponent(next)}`)
     return
   }
   if (error.status === 403 && error.code === 'ADMIN_REQUIRED') {

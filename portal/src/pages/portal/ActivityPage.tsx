@@ -7,7 +7,6 @@ import { appsQueryOptions, meQueryOptions } from '../../api/queries'
 import { EmptyState } from '../../components/EmptyState'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { deriveActivity, type ActivityItem } from '../../lib/activity'
-import { stepLabels } from '../../lib/format'
 import { ActivityEntry } from './components/ActivityEntry'
 import { PageHeader } from './components/PageHeader'
 
@@ -46,7 +45,7 @@ function groupByDay(items: ActivityItem[]): { key: string; label: string; items:
 }
 
 export function ActivityPage() {
-  usePageTitle('活动')
+  usePageTitle('动态')
   const me = useQuery({
     ...meQueryOptions,
     refetchInterval: (query) =>
@@ -71,9 +70,9 @@ export function ActivityPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Activity"
-        title="活动"
-        description="智能体开通与应用构建、投屏的时间线。"
+        eyebrow="动态"
+        title="动态"
+        description="你的智能体和应用，都做过什么。"
         actions={
           <Button
             icon={<ClockCircleOutlined />}
@@ -88,16 +87,12 @@ export function ActivityPage() {
         }
       />
 
-      <div className="hint-note">
-        活动由智能体与应用的当前时间戳汇总，不含逐条操作日志；应用历史还会受 Gateway 的历史条数限制。
-      </div>
-
       {error ? (
         <Alert
           type="error"
           showIcon
           className="panel-alert"
-          message="无法加载活动"
+          message="暂时无法加载动态"
           description={error instanceof ApiError ? error.message : String(error)}
         />
       ) : null}
@@ -115,8 +110,8 @@ export function ActivityPage() {
               <Link to="/portal/agents" className="ongoing-item" key={device.id}>
                 <SyncOutlined spin className="ongoing-icon" />
                 <span>
-                  <strong>正在开通 {device.agent_name || device.mac}</strong>
-                  <small>{stepLabels[device.step] ?? device.step}</small>
+                  <strong>正在准备 {device.agent_name || device.mac}</strong>
+                  <small>准备好后就可以开始对话</small>
                 </span>
               </Link>
             ))}
@@ -129,8 +124,8 @@ export function ActivityPage() {
               >
                 <SyncOutlined spin className="ongoing-icon" />
                 <span>
-                  <strong>正在构建「{app.title || app.name || '未命名应用'}」</strong>
-                  <small>{app.progress || '等待构建结果'}</small>
+                  <strong>正在生成「{app.title || app.name || '未命名应用'}」</strong>
+                  <small>{app.progress || '完成后会自动出现在屏幕上'}</small>
                 </span>
               </Link>
             ))}
@@ -161,8 +156,8 @@ export function ActivityPage() {
         <section className="surface">
           <EmptyState
             icon={<HistoryOutlined />}
-            title="还没有活动"
-            description="创建智能体、通过语音生成应用之后，这里会记录关键的时间点。"
+            title="还没有动态"
+            description="开口说出第一个想法之后，这里会留下它的记录。"
           />
         </section>
       ) : null}

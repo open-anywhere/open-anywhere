@@ -49,8 +49,8 @@ export function VoiceControls({
       <div className="voice-controls">
         <div className="voice-controls-note">
           {supported
-            ? '通话使用浏览器 WebCodecs 编解码 Opus 音频，需要麦克风权限。'
-            : '当前浏览器不支持 WebCodecs 音频，请使用 Chrome 或 Edge，并通过 localhost 或 HTTPS 访问。'}
+            ? '开口就好。浏览器会请求麦克风权限。'
+            : '当前浏览器不支持语音对话，请使用最新版 Chrome 或 Edge 打开。'}
         </div>
         <Button
           type="primary"
@@ -60,7 +60,7 @@ export function VoiceControls({
           disabled={!supported}
           onClick={onStart}
         >
-          开始通话
+          开始对话
         </Button>
       </div>
     )
@@ -107,7 +107,7 @@ export function VoiceControls({
         <span>{volume}%</span>
       </div>
       <Button danger icon={<PhoneOutlined />} onClick={onStop}>
-        结束通话
+        结束对话
       </Button>
     </div>
   )

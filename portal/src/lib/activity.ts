@@ -29,8 +29,8 @@ export function deriveActivity(devices: Device[], apps: AppSummary[]): ActivityI
       id: `device-created-${device.id}`,
       at: device.created_at,
       kind: 'device-created',
-      title: '创建智能体',
-      detail: device.agent_name || device.mac,
+      title: '智能体已创建',
+      detail: device.agent_name || '你的智能体',
       deviceId: device.id,
     })
     if (device.registered_at) {
@@ -38,8 +38,8 @@ export function deriveActivity(devices: Device[], apps: AppSummary[]): ActivityI
         id: `device-registered-${device.id}`,
         at: device.registered_at,
         kind: 'device-registered',
-        title: '智能体完成注册',
-        detail: device.agent_name || device.mac,
+        title: '智能体准备好了',
+        detail: device.agent_name || '你的智能体',
         deviceId: device.id,
       })
     }
@@ -51,7 +51,7 @@ export function deriveActivity(devices: Device[], apps: AppSummary[]): ActivityI
         id: `app-build-started-${app.app_id}`,
         at: app.build_started_at,
         kind: 'app-build-started',
-        title: `开始构建「${name}」`,
+        title: `开始生成「${name}」`,
         appId: app.app_id,
       })
     }
@@ -60,7 +60,7 @@ export function deriveActivity(devices: Device[], apps: AppSummary[]): ActivityI
         id: `app-built-${app.app_id}`,
         at: app.built_at,
         kind: 'app-built',
-        title: `「${name}」构建完成`,
+        title: `「${name}」生成完成`,
         appId: app.app_id,
       })
     }
@@ -69,7 +69,7 @@ export function deriveActivity(devices: Device[], apps: AppSummary[]): ActivityI
         id: `app-started-${app.app_id}`,
         at: app.started_at,
         kind: 'app-started',
-        title: `「${name}」开始投屏`,
+        title: `「${name}」开始播放`,
         appId: app.app_id,
       })
     }
@@ -78,7 +78,7 @@ export function deriveActivity(devices: Device[], apps: AppSummary[]): ActivityI
         id: `app-stopped-${app.app_id}`,
         at: app.stopped_at,
         kind: 'app-stopped',
-        title: `「${name}」停止投屏`,
+        title: `「${name}」停止播放`,
         appId: app.app_id,
       })
     }

@@ -45,18 +45,18 @@ export function OverviewPage() {
   const createDevice = useMutation({
     mutationFn: api.createDevice,
     onSuccess: () => {
-      message.success('正在为你创建智能体')
+      message.success('正在准备你的智能体')
       queryClient.invalidateQueries({ queryKey: ['me'] })
     },
     onError: (error) => {
-      message.error(error instanceof ApiError ? error.message : '创建智能体失败')
+      message.error(error instanceof ApiError ? error.message : '暂时无法创建智能体')
     },
   })
 
   const retryDevice = useMutation({
     mutationFn: (id: string) => api.retryDevice(id),
     onSuccess: () => {
-      message.info('已重新开始开通流程')
+      message.info('已重新开始准备')
       queryClient.invalidateQueries({ queryKey: ['me'] })
     },
     onError: (error) => {
@@ -92,9 +92,9 @@ export function OverviewPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Portal"
+        eyebrow="我的空间"
         title={`你好，${me.data?.user.username ?? ''}`}
-        description="智能体、应用、屏幕与这场活动的实时状态都在这里。"
+        description="你的智能体、做过的应用，和身边的屏幕，都在这里。"
         actions={
           <Space wrap>
             <Button icon={<ReloadOutlined />} loading={refreshing} onClick={refreshAll}>
@@ -102,7 +102,7 @@ export function OverviewPage() {
             </Button>
             {device?.state === 'registered' ? (
               <Button type="primary" icon={<AudioOutlined />} onClick={() => call(device.id)}>
-                发起通话
+                开始对话
               </Button>
             ) : null}
           </Space>
@@ -114,7 +114,7 @@ export function OverviewPage() {
           type="error"
           showIcon
           className="panel-alert"
-          message="无法加载账号与智能体信息"
+          message="暂时无法加载你的空间"
           description={me.error.message}
         />
       ) : null}
@@ -124,11 +124,11 @@ export function OverviewPage() {
           type="warning"
           showIcon
           className="panel-alert"
-          message="屏幕服务还没有准备好"
-          description="应用可以继续生成，但暂时不能启动和投屏。请先完成服务绑定，或联系管理员配置平台默认服务。"
+          message="投屏服务还没有准备好"
+          description="应用可以继续生成，但暂时不能出现在屏幕上。可以先检查屏幕连接，或稍后再试。"
           action={
             <Link to="/portal/services">
-              <Button size="small">去绑定服务</Button>
+              <Button size="small">检查连接</Button>
             </Link>
           }
         />
@@ -139,14 +139,14 @@ export function OverviewPage() {
           icon={<RobotOutlined />}
           label="智能体"
           value={devices.length}
-          note={devices.length ? `${registered} 个已注册` : '尚未创建'}
+          note={devices.length ? `${registered} 个已准备好` : '尚未创建'}
           tone="primary"
         />
         <StatTile
           icon={<AppstoreOutlined />}
           label="应用"
           value={appList.length}
-          note={appList.length ? `${running} 个正在展示 · ${building} 个构建中` : '暂无应用'}
+          note={appList.length ? `${running} 个正在播放 · ${building} 个生成中` : '暂无应用'}
         />
         <StatTile
           icon={<DesktopOutlined />}
@@ -165,7 +165,7 @@ export function OverviewPage() {
           icon={<ThunderboltOutlined />}
           label="进行中"
           value={building + provisioning}
-          note={building + provisioning ? `${building} 个构建 · ${provisioning} 个开通` : '没有进行中的任务'}
+          note={building + provisioning ? `${building} 个生成 · ${provisioning} 个准备` : '没有进行中的任务'}
           tone={building + provisioning ? 'warning' : 'neutral'}
         />
       </div>
@@ -173,13 +173,13 @@ export function OverviewPage() {
       {services.data ? (
         <div className="service-status">
           <CloudServerOutlined aria-hidden="true" />
-          <span>屏幕服务</span>
-          <Tag>{services.data.mode === 'custom' ? '自有服务' : '平台托管'}</Tag>
+          <span>投屏服务</span>
+          <Tag>{services.data.mode === 'custom' ? '自己接入' : '平台提供'}</Tag>
           <Tag color={services.data.ready ? 'green' : 'orange'}>
             {services.data.ready ? '已就绪' : '未就绪'}
           </Tag>
           <Link to="/portal/services" className="text-link">
-            管理服务
+            管理连接
           </Link>
         </div>
       ) : null}
@@ -189,10 +189,10 @@ export function OverviewPage() {
           <div className="section-header">
             <div>
               <h2>我的智能体</h2>
-              <p>通过语音创建应用、控制屏幕的那个智能体。</p>
+              <p>听你说话、为你准备应用、控制屏幕。</p>
             </div>
             <Link to="/portal/agents" className="text-link">
-              智能体管理
+              管理智能体
             </Link>
           </div>
           <DevicePanel
@@ -209,7 +209,7 @@ export function OverviewPage() {
           <div className="section-header">
             <div>
               <h2>屏幕</h2>
-              <p>身边正在或可以被投屏的显示设备。</p>
+              <p>身边的电视与投影，以及它们此刻正在播放的内容。</p>
             </div>
             <Link to="/portal/screens" className="text-link">
               全部屏幕
@@ -236,7 +236,7 @@ export function OverviewPage() {
             <EmptyState
               icon={<DesktopOutlined />}
               title="还没有发现屏幕"
-              description="屏幕由投屏服务自动发现。投屏动作通过语音触发，不需要在 Portal 里手动操作。"
+              description="确认电视或投影已经打开，并和投屏服务连在一起，然后刷新。"
             />
           )}
         </section>
@@ -245,8 +245,8 @@ export function OverviewPage() {
       <section className="surface">
         <div className="section-header">
           <div>
-            <h2>最近应用</h2>
-            <p>由语音生成、正在构建或已经投上屏幕的应用。</p>
+            <h2>最近的应用</h2>
+            <p>为不同场合生成的应用，以及它们此刻的状态。</p>
           </div>
           <Link to="/portal/apps" className="text-link">
             全部应用
@@ -284,16 +284,16 @@ export function OverviewPage() {
         ) : (
           <EmptyState
             icon={<PlusOutlined />}
-            title={device ? '还没有应用' : '先创建你的智能体'}
+            title={device ? '还没有应用' : '先准备好你的智能体'}
             description={
               device?.state === 'registered'
-                ? '点「发起通话」，直接对智能体说出你想做的事。'
-                : '智能体完成开通后，就可以发起通话并创建应用了。'
+                ? '点「开始对话」，直接对它说出你想做的事。'
+                : '智能体准备好之后，就可以开口说出第一个想法。'
             }
             action={
               device?.state === 'registered' ? (
                 <Button type="primary" icon={<AudioOutlined />} onClick={() => call(device.id)}>
-                  发起通话
+                  开始对话
                 </Button>
               ) : !device ? (
                 <Button
@@ -302,7 +302,7 @@ export function OverviewPage() {
                   loading={createDevice.isPending}
                   onClick={() => createDevice.mutate()}
                 >
-                  创建我的智能体
+                  准备好我的智能体
                 </Button>
               ) : null
             }

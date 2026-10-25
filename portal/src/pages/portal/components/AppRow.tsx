@@ -17,9 +17,9 @@ export function AppRow({
   const title = app.title || app.name || '未命名应用'
   const description =
     app.state === 'building'
-      ? app.progress || '正在构建，完成后会自动投到屏幕上'
+      ? app.progress || '正在生成，完成后会自动出现在屏幕上'
       : app.state === 'error'
-        ? app.error?.message || app.error?.last_agent_message || '应用遇到问题，查看详情以排查'
+        ? app.error?.message || app.error?.last_agent_message || '生成时遇到了问题，打开详情看看'
         : app.summary || '这个应用还没有描述'
 
   return (
@@ -35,9 +35,9 @@ export function AppRow({
         </div>
         <p className="data-row-description">{description}</p>
         <div className="data-row-meta">
-          <span>{device ? deviceLabel(device) : app.device_id || '未绑定智能体'}</span>
-          <span>{app.operation_count ? `${app.operation_count} 个操作` : '暂无操作'}</span>
-          <span>{app.built_at ? `构建于 ${formatDate(app.built_at)}` : '构建中'}</span>
+          <span>{device ? deviceLabel(device) : '没有关联的智能体'}</span>
+          <span>{app.operation_count ? `${app.operation_count} 个动作` : '还没有动作'}</span>
+          <span>{app.built_at ? `生成于 ${formatDate(app.built_at)}` : '生成中'}</span>
           {app.screen_id ? <span>{screenName || '已在屏幕上'}</span> : null}
         </div>
       </div>

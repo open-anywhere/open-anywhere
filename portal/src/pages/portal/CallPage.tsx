@@ -18,7 +18,7 @@ import { TranscriptFeed } from './components/TranscriptFeed'
 import { VoiceControls } from './components/VoiceControls'
 
 export function CallPage() {
-  usePageTitle('通话')
+  usePageTitle('对话')
   const search = useSearch({ from: '/portal/call' })
   const me = useQuery(meQueryOptions)
   const device = findDevice(me.data?.devices, search.device)
@@ -28,7 +28,7 @@ export function CallPage() {
       <div className="call-page">
         <div className="call-loading">
           <Spin size="large" />
-          <p>正在准备语音运行时…</p>
+          <p>正在准备…</p>
         </div>
       </div>
     )
@@ -57,7 +57,7 @@ export function CallPage() {
         <Result
           status="warning"
           title="找不到这个智能体"
-          subTitle="链接中的智能体不存在，或不属于当前账号。请从智能体页重新发起通话。"
+          subTitle="它可能已经不存在了。回到智能体页重新开始。"
           extra={
             <Link to="/portal/agents">
               <Button type="primary">返回智能体</Button>
@@ -73,11 +73,11 @@ export function CallPage() {
       <div className="call-page call-result">
         <Result
           icon={<PhoneOutlined />}
-          title="还没有可用的智能体"
-          subTitle="先创建智能体，完成后就能在这里直接通话。"
+          title="还没有准备好你的智能体"
+          subTitle="先准备好它，然后就能直接开口说话。"
           extra={
             <Link to="/portal/agents">
-              <Button type="primary">去创建智能体</Button>
+              <Button type="primary">去准备智能体</Button>
             </Link>
           }
         />
@@ -90,11 +90,11 @@ export function CallPage() {
       <div className="call-page call-result">
         <Result
           icon={<RobotOutlined />}
-          title="智能体还在开通中"
-          subTitle="智能体开通完成后，语音运行时就会准备好。"
+          title="智能体还在准备中"
+          subTitle="再等一会儿，它就能听见你了。"
           extra={
             <Link to="/portal/agents">
-              <Button type="primary">查看开通进度</Button>
+              <Button type="primary">查看准备进度</Button>
             </Link>
           }
         />
@@ -124,12 +124,12 @@ function CallSession({ device }: { device: Device }) {
             </span>
             <div>
               <h1>{device.agent_name || '你的智能体'}</h1>
-              <p className="mono">MAC {device.mac}</p>
+              <p className="muted-text">随时可以开口。</p>
             </div>
           </div>
           <div className="call-status">
             <VoiceTag state={voiceState} connected={connected} />
-            <span className="muted-text">{connected ? '语音运行时已连接' : '语音运行时未连接'}</span>
+            <span className="muted-text">{connected ? '已连接' : '未连接'}</span>
           </div>
         </header>
 
@@ -137,8 +137,8 @@ function CallSession({ device }: { device: Device }) {
           <Alert
             type="warning"
             showIcon
-            message="当前浏览器不支持语音通话"
-            description="通话使用 WebCodecs 编解码 Opus 音频，请使用 Chrome 或 Edge，并通过 localhost 或 HTTPS 访问。"
+            message="当前浏览器不支持语音对话"
+            description="请使用最新版 Chrome 或 Edge 打开这个页面。"
           />
         ) : null}
 
@@ -146,7 +146,7 @@ function CallSession({ device }: { device: Device }) {
           <Alert
             type="warning"
             showIcon
-            message="语音运行时暂时不可用"
+            message="智能体暂时没有响应"
             description={session.statusError}
             action={
               <Link to="/portal/agents">
@@ -184,7 +184,7 @@ function CallSession({ device }: { device: Device }) {
         />
 
         <p className="call-hint">
-          <AudioOutlined /> 浏览器会请求麦克风权限；语音运行时在服务端常驻，结束通话只会停止本页的录音与播放。
+          <AudioOutlined /> 浏览器会请求麦克风权限。结束对话只会停止这一页的声音。
         </p>
       </div>
     </div>

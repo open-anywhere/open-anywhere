@@ -30,7 +30,7 @@ function NotFound() {
         subTitle="这个地址没有对应的页面。"
         extra={
           <Button type="primary" href="/portal">
-            进入 Portal
+            回到我的空间
           </Button>
         }
       />
@@ -201,7 +201,7 @@ const callRoute = createRoute({
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/admin',
-  component: lazyRouteComponent(() => import('../components/layout/AdminLayout'), 'AdminLayout'),
+  component: lazyRouteComponent(() => import('../components/layout/PortalLayout'), 'PortalLayout'),
   beforeLoad: requireAdmin,
 })
 

@@ -59,24 +59,24 @@ export function LoginPage() {
   return (
     <div className="login-page">
       <section className="login-story">
-        <Brand subtitle="Portal" />
+        <Brand />
         <div>
-          <span className="eyebrow">Your agent, your screen</span>
+          <span className="eyebrow">说出需要 · 现场生成 · 抬头参与</span>
           <h1>
-            登录之后，
+            一句话，
             <br />
-            智能体和屏幕都会
+            让这一刻的现场
             <br />
-            为这场活动准备好。
+            亮起来。
           </h1>
           <p>
-            注册之后，系统会自动创建并开通你的智能体。你只需要开口描述想做的事，
-            应用就会出现在身边的屏幕上。
+            朋友聚会、家庭时光、团队讨论。只要你说清楚此刻想做什么，
+            应用就会现做现用，出现在身边的屏幕上。
           </p>
           <div className="login-points">
-            <span>注册即获得一个专属智能体</span>
-            <span>在 Portal 里直接发起语音通话</span>
-            <span>查看应用、屏幕、服务与活动时间线</span>
+            <span>不用下载与安装，有块屏幕就能开场</span>
+            <span>说一句话，应用当场生成</span>
+            <span>用声音主持全程，大家抬头就能参与</span>
           </div>
         </div>
         <Link to="/" className="login-back">
@@ -90,10 +90,10 @@ export function LoginPage() {
         </div>
         <div className="login-card">
           <h2>欢迎回来</h2>
-          <p className="sub">管理员和普通用户使用同一个入口登录。</p>
+          <p className="sub">登录后，继续你的下一场活动。</p>
           {switching && me.data?.user ? (
             <p className="sub">
-              当前已登录为 {me.data.user.username}。登录其他账号会替换当前会话。
+              当前登录的是 {me.data.user.username}。继续登录会替换当前账号。
             </p>
           ) : null}
 
@@ -146,7 +146,7 @@ export function LoginPage() {
           </Form>
 
           <p className="login-switch">
-            还没有账号？<Link to="/register">免费注册</Link>
+            还没有账号？<Link to="/register">免费开始</Link>
           </p>
         </div>
       </section>

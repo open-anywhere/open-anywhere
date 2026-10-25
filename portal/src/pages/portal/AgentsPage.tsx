@@ -25,18 +25,18 @@ export function AgentsPage() {
   const createDevice = useMutation({
     mutationFn: api.createDevice,
     onSuccess: () => {
-      message.success('正在为你创建智能体')
+      message.success('正在准备你的智能体')
       queryClient.invalidateQueries({ queryKey: ['me'] })
     },
     onError: (error) => {
-      message.error(error instanceof ApiError ? error.message : '创建智能体失败')
+      message.error(error instanceof ApiError ? error.message : '暂时无法创建智能体')
     },
   })
 
   const retryDevice = useMutation({
     mutationFn: (id: string) => api.retryDevice(id),
     onSuccess: () => {
-      message.info('已重新开始开通流程')
+      message.info('已重新开始准备')
       queryClient.invalidateQueries({ queryKey: ['me'] })
     },
     onError: (error) => {
@@ -53,7 +53,7 @@ export function AgentsPage() {
       <PageHeader
         eyebrow="Agents"
         title="智能体"
-        description="注册后自动创建。这里可以看到开通进度、绑定的 Linx 智能体与语音运行状态。"
+        description="看看它是否准备好，随时开口和它说话。"
         actions={
           <Space>
             <Button icon={<ReloadOutlined />} loading={me.isFetching} onClick={() => me.refetch()}>
@@ -68,7 +68,7 @@ export function AgentsPage() {
           type="error"
           showIcon
           className="panel-alert"
-          message="无法加载智能体信息"
+          message="暂时无法加载你的智能体"
           description={me.error.message}
         />
       ) : null}
@@ -90,8 +90,8 @@ export function AgentsPage() {
                 <div className="device-apps">
                   <div className="section-header">
                     <div>
-                      <h2>这个智能体的应用</h2>
-                      <p>通过语音创建，并自动归属到这个智能体。</p>
+                      <h2>它为这些场合做过的应用</h2>
+                      <p>每一个都来自你的一句话。</p>
                     </div>
                     <Link to="/portal/apps" className="text-link">
                       全部应用

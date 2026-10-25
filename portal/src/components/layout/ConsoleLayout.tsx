@@ -1,9 +1,4 @@
-import {
-  ControlOutlined,
-  LogoutOutlined,
-  MenuOutlined,
-  UserOutlined,
-} from '@ant-design/icons'
+import { LogoutOutlined, MenuOutlined, UserOutlined } from '@ant-design/icons'
 import { App as AntApp, Avatar, Button, Drawer, Dropdown } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
@@ -34,88 +29,86 @@ export interface ConsoleNavItem {
   exact?: boolean
 }
 
+// ConsoleNavGroup renders one labelled block of navigation links. The title is
+// optional so the portal links stay a plain list.
+export interface ConsoleNavGroup {
+  title?: string
+  items: readonly ConsoleNavItem[]
+}
+
 interface ConsoleLayoutProps {
-  mode: 'portal' | 'admin'
-  navItems: readonly ConsoleNavItem[]
+  groups: readonly ConsoleNavGroup[]
 }
 
 function NavList({
-  navItems,
+  groups,
   onNavigate,
 }: {
-  navItems: readonly ConsoleNavItem[]
+  groups: readonly ConsoleNavGroup[]
   onNavigate?: () => void
 }) {
   return (
-    <nav className="portal-nav" aria-label="Portal 导航">
-      {navItems.map((item) => (
-        <Link
-          key={item.to}
-          to={item.to}
-          className="portal-nav-link"
-          activeOptions={{ exact: item.exact }}
-          activeProps={{ className: 'portal-nav-link active', 'aria-current': 'page' }}
-          onClick={onNavigate}
-        >
-          <span className="portal-nav-icon" aria-hidden="true">
-            {item.icon}
-          </span>
-          <span>{item.label}</span>
-        </Link>
+    <nav className="portal-nav" aria-label="控制台导航">
+      {groups.map((group, index) => (
+        <div className="portal-nav-group" key={group.title ?? `group-${index}`}>
+          {group.title ? <div className="portal-nav-title">{group.title}</div> : null}
+          {group.items.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className="portal-nav-link"
+              activeOptions={{ exact: item.exact }}
+              activeProps={{ className: 'portal-nav-link active', 'aria-current': 'page' }}
+              onClick={onNavigate}
+            >
+              <span className="portal-nav-icon" aria-hidden="true">
+                {item.icon}
+              </span>
+              <span>{item.label}</span>
+            </Link>
+          ))}
+        </div>
       ))}
     </nav>
   )
 }
 
 interface SidebarProps {
-  mode: 'portal' | 'admin'
-  navItems: readonly ConsoleNavItem[]
+  groups: readonly ConsoleNavGroup[]
   username: string
   role: string
+  adminArea: boolean
   loggingOut: boolean
   onLogout: () => void
-  onSwitchConsole: () => void
   onNavigate?: () => void
 }
 
 function Sidebar({
-  mode,
-  navItems,
+  groups,
   username,
   role,
+  adminArea,
   loggingOut,
   onLogout,
-  onSwitchConsole,
   onNavigate,
 }: SidebarProps) {
-  const adminConsole = mode === 'admin'
   return (
     <div className="portal-sidebar-inner">
       <div className="portal-brand">
-        <Brand subtitle={adminConsole ? 'Admin' : 'Portal'} to={adminConsole ? '/admin' : '/portal'} />
+        <Brand to={adminArea ? '/admin' : '/portal'} />
       </div>
-      <NavList navItems={navItems} onNavigate={onNavigate} />
+      <NavList groups={groups} onNavigate={onNavigate} />
       <div className="portal-sidebar-foot">
         <div className="portal-account">
           <Avatar size={28} icon={<UserOutlined />} />
           <div className="portal-account-text">
             <strong>{username || '账号'}</strong>
-            <span>{role === 'admin' ? '管理员' : '普通用户'}</span>
+            <span>{role === 'admin' ? '管理员' : '成员'}</span>
           </div>
           <Dropdown
             trigger={['click']}
             menu={{
               items: [
-                ...(role === 'admin'
-                  ? [
-                      {
-                        key: 'switch',
-                        icon: <ControlOutlined />,
-                        label: adminConsole ? '进入用户控制台' : '管理后台',
-                        onClick: onSwitchConsole,
-                      },
-                    ]
-                  : []),
                 {
                   key: 'logout',
                   icon: <LogoutOutlined />,
@@ -144,8 +137,9 @@ function Sidebar({
 }
 
 // ConsoleLayout is the shared shell of the user portal and the admin console.
-// Only the navigation items and the brand differ.
-export function ConsoleLayout({ mode, navItems }: ConsoleLayoutProps) {
+// Admin entries live in the same navigation and are added by the layout that
+// knows the account role; the route guard still enforces access.
+export function ConsoleLayout({ groups }: ConsoleLayoutProps) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { message } = AntApp.useApp()
@@ -174,27 +168,24 @@ export function ConsoleLayout({ mode, navItems }: ConsoleLayoutProps) {
     },
   })
 
-  const current = navItems.find((item) =>
+  const items = groups.flatMap((group) => group.items)
+  const current = items.find((item) =>
     item.exact ? pathname === item.to : pathname === item.to || pathname.startsWith(`${item.to}/`),
   )
   const username = me.data?.user.username ?? ''
   const role = me.data?.user.role ?? 'user'
-  const switchConsole = () => {
-    setDrawerOpen(false)
-    navigate({ to: mode === 'admin' ? '/portal' : '/admin' })
-  }
+  const adminArea = pathname === '/admin' || pathname.startsWith('/admin/')
 
   return (
     <div className="portal-shell">
       <aside className="portal-sidebar">
         <Sidebar
-          mode={mode}
-          navItems={navItems}
+          groups={groups}
           username={username}
           role={role}
+          adminArea={adminArea}
           loggingOut={logout.isPending}
           onLogout={() => logout.mutate()}
-          onSwitchConsole={switchConsole}
         />
       </aside>
 
@@ -208,16 +199,15 @@ export function ConsoleLayout({ mode, navItems }: ConsoleLayoutProps) {
         styles={{ body: { padding: 0 } }}
       >
         <Sidebar
-          mode={mode}
-          navItems={navItems}
+          groups={groups}
           username={username}
           role={role}
+          adminArea={adminArea}
           loggingOut={logout.isPending}
           onLogout={() => {
             setDrawerOpen(false)
             logout.mutate()
           }}
-          onSwitchConsole={switchConsole}
           onNavigate={() => setDrawerOpen(false)}
         />
       </Drawer>
@@ -232,12 +222,7 @@ export function ConsoleLayout({ mode, navItems }: ConsoleLayoutProps) {
             aria-label="打开导航"
           />
           <div className="portal-topbar-title">
-            {current?.label ?? (mode === 'admin' ? '管理后台' : 'Portal')}
-          </div>
-          <div className="portal-topbar-actions">
-            <ThemeToggle />
-            <span className="portal-topbar-user">{username}</span>
-            <Avatar size={24} icon={<UserOutlined />} />
+            {current?.label ?? (adminArea ? '管理后台' : '我的空间')}
           </div>
         </header>
         <main className="portal-content">

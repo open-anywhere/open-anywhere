@@ -51,8 +51,8 @@ function toInput(values: FormValues): ServiceBindingInput {
 
 function checkText(result: ServiceTestResult): string {
   const parts = [
-    result.render.ok ? 'Render 可用' : `Render：${result.render.message ?? '不可用'}`,
-    result.casting.ok ? 'Casting 可用' : `Casting：${result.casting.message ?? '不可用'}`,
+    result.render.ok ? '运行服务可用' : `运行服务：${result.render.message ?? '不可用'}`,
+    result.casting.ok ? '投屏服务可用' : `投屏服务：${result.casting.message ?? '不可用'}`,
   ]
   if (result.casting.ok) {
     parts.push(`发现 ${result.screens} 块屏幕`)
@@ -90,10 +90,10 @@ export function ServicesPage() {
       setTestResult(undefined)
       queryClient.setQueryData(servicesQueryOptions.queryKey, data)
       queryClient.invalidateQueries({ queryKey: ['services'] })
-      message.success('服务绑定已保存')
+      message.success('连接设置已保存')
     },
     onError: (err) => {
-      setError(err instanceof ApiError ? err.message : '保存服务绑定失败')
+      setError(err instanceof ApiError ? err.message : '暂时无法保存连接设置')
     },
   })
 
@@ -105,7 +105,7 @@ export function ServicesPage() {
       message[result.render.ok && result.casting.ok ? 'success' : 'warning']('连接测试完成')
     },
     onError: (err) => {
-      setError(err instanceof ApiError ? err.message : '连接测试失败')
+      setError(err instanceof ApiError ? err.message : '暂时无法完成连接测试')
     },
   })
 
@@ -133,9 +133,9 @@ export function ServicesPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Services"
-        title="服务绑定"
-        description="选择使用平台托管的默认服务，或绑定你自己的公网 Render 与投屏服务。"
+        eyebrow="屏幕连接"
+        title="屏幕连接"
+        description="默认使用平台提供的服务。如果你有自己的运行与投屏服务，也可以在这里接入。"
         actions={
           <Button
             icon={<ReloadOutlined />}
@@ -163,11 +163,11 @@ export function ServicesPage() {
           type={data.ready ? 'success' : 'warning'}
           showIcon
           className="panel-alert"
-          message={data.ready ? '当前服务已就绪' : '当前服务尚不可用'}
+          message={data.ready ? '屏幕连接已就绪' : '屏幕连接还不可用'}
           description={
             data.ready
-              ? '语音生成的应用会使用这套 Render 与 Casting 服务。'
-              : '应用暂时无法启动或投屏。可以切换服务模式、补全地址，或联系管理员配置平台默认服务。'
+              ? '应用会通过这套服务出现在屏幕上。'
+              : '应用暂时还不能上屏。可以检查下面的设置，或稍后再试。'
           }
         />
       ) : null}
@@ -192,7 +192,7 @@ export function ServicesPage() {
         <Alert
           type="error"
           showIcon
-          message="无法读取服务绑定"
+          message="暂时无法读取屏幕连接"
           description={
             services.error instanceof ApiError ? services.error.message : String(services.error)
           }
@@ -202,17 +202,17 @@ export function ServicesPage() {
           <section className="surface settings-section">
             <div className="section-header">
               <div>
-                <h2>服务模式</h2>
-                <p>平台托管使用管理员配置的默认地址；自有服务需要是公网可达的 HTTP(S) 地址。</p>
+                <h2>由谁提供</h2>
+                <p>默认使用平台提供的服务；接入自己的服务时，地址需要能从公网访问。</p>
               </div>
             </div>
             <Form.Item name="mode">
               <Radio.Group className="service-mode-group">
                 <Radio.Button value="managed" disabled={managedUnavailable}>
-                  <CloudServerOutlined /> 平台托管
+                  <CloudServerOutlined /> 平台提供
                 </Radio.Button>
                 <Radio.Button value="custom">
-                  <ApiOutlined /> 自有服务
+                  <ApiOutlined /> 自己接入
                 </Radio.Button>
               </Radio.Group>
             </Form.Item>
@@ -225,7 +225,7 @@ export function ServicesPage() {
                   items={[
                     {
                       key: 'status',
-                      label: '平台默认服务',
+                      label: '平台服务',
                       children: data?.managed.available ? (
                         <Tag color="green">已配置</Tag>
                       ) : (
@@ -234,7 +234,7 @@ export function ServicesPage() {
                     },
                     {
                       key: 'render',
-                      label: 'Render 地址',
+                      label: '运行服务地址',
                       children: data?.managed.render_url ? (
                         <code className="inline-code">{data.managed.render_url}</code>
                       ) : (
@@ -243,7 +243,7 @@ export function ServicesPage() {
                     },
                     {
                       key: 'casting',
-                      label: 'Casting 地址',
+                      label: '投屏服务地址',
                       children: data?.managed.casting_url ? (
                         <code className="inline-code">{data.managed.casting_url}</code>
                       ) : (
@@ -256,22 +256,22 @@ export function ServicesPage() {
                   <Alert
                     type="warning"
                     showIcon
-                    message="平台还没有配置默认屏幕服务"
-                    description="请联系管理员，或切换到自有服务并填写你自己的地址。"
+                    message="平台服务还没准备好"
+                    description="可以稍后再试，或切换到「自己接入」并填写你的服务地址。"
                   />
                 ) : null}
               </div>
             ) : (
               <>
                 <Form.Item
-                  label="Render 地址"
+                  label="运行服务地址"
                   name="render_url"
-                  rules={[{ required: true, message: '请输入 Render 服务地址' }]}
+                  rules={[{ required: true, message: '请输入运行服务地址' }]}
                 >
                   <Input placeholder="https://render.example.com" autoComplete="off" />
                 </Form.Item>
                 <Form.Item
-                  label="Render 访问令牌"
+                  label="运行服务访问令牌"
                   name="render_token"
                   extra={
                     data?.custom.render_token_configured
@@ -288,18 +288,18 @@ export function ServicesPage() {
                 </Form.Item>
                 {data?.custom.render_token_configured ? (
                   <Form.Item name="clear_render_token" valuePropName="checked">
-                    <Checkbox>清除已保存的 Render 令牌</Checkbox>
+                    <Checkbox>清除已保存的运行服务令牌</Checkbox>
                   </Form.Item>
                 ) : null}
                 <Form.Item
-                  label="Casting 地址"
+                  label="投屏服务地址"
                   name="casting_url"
                   rules={[{ required: true, message: '请输入投屏服务地址' }]}
                 >
                   <Input placeholder="https://casting.example.com" autoComplete="off" />
                 </Form.Item>
                 <Form.Item
-                  label="Casting 访问令牌"
+                  label="投屏服务访问令牌"
                   name="casting_token"
                   extra={
                     data?.custom.casting_token_configured
@@ -316,7 +316,7 @@ export function ServicesPage() {
                 </Form.Item>
                 {data?.custom.casting_token_configured ? (
                   <Form.Item name="clear_casting_token" valuePropName="checked">
-                    <Checkbox>清除已保存的 Casting 令牌</Checkbox>
+                    <Checkbox>清除已保存的投屏服务令牌</Checkbox>
                   </Form.Item>
                 ) : null}
               </>
@@ -329,7 +329,7 @@ export function ServicesPage() {
                 disabled={mode === 'managed' && managedUnavailable}
                 onClick={submit}
               >
-                保存绑定
+                保存设置
               </Button>
               <Button loading={test.isPending} onClick={runTest}>
                 测试连接
@@ -339,9 +339,9 @@ export function ServicesPage() {
               </Link>
             </Space>
             <p className="muted-text" style={{ marginTop: 12 }}>
-              有应用正在运行或等待清理时不能修改服务绑定，请先在
+              屏幕正在播放内容时不能修改连接，请先到
               <Link to="/portal/screens"> 屏幕页 </Link>
-              停止应用。地址默认不允许指向内网或本机。
+              停止播放。地址不能指向本机或内网。
             </p>
           </section>
         </Form>

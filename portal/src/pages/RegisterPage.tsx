@@ -32,7 +32,7 @@ export function RegisterPage() {
       queryClient.removeQueries({ queryKey: ['me'] })
       await queryClient.fetchQuery(meQueryOptions)
       queryClient.invalidateQueries({ queryKey: ['services'] })
-      message.success('注册成功，正在为你创建智能体')
+      message.success('账号已创建，正在准备你的空间')
       navigate({ to: '/portal', replace: true })
     },
     onError: (err) => {
@@ -43,24 +43,24 @@ export function RegisterPage() {
   return (
     <div className="login-page">
       <section className="login-story">
-        <Brand subtitle="Portal" />
+        <Brand />
         <div>
-          <span className="eyebrow">Start with a voice</span>
+          <span className="eyebrow">从一句话开始</span>
           <h1>
-            注册之后，
+            一个账号，
             <br />
-            你会得到一个自己的智能体，
+            让每一块屏幕
             <br />
-            和一块随时可用的屏幕。
+            都有东西可玩。
           </h1>
           <p>
-            注册后系统会自动创建智能体，并把它绑定到你的账号。你只需要描述想做的事，
-            应用就会生成并投到身边的屏幕上。
+            说出人数、主题和玩法，AI 会为这个场合做出专属的应用，
+            投到身边的电视、投影或任意一块屏幕上。
           </p>
           <div className="login-points">
-            <span>注册后自动创建并开通智能体</span>
-            <span>在 Portal 里直接发起语音通话</span>
-            <span>绑定自己的 Render 与投屏服务</span>
+            <span>说出需要，应用当场生成</span>
+            <span>投到身边的电视、投影或任意屏幕</span>
+            <span>用声音主持、出题、记分，不用学操作</span>
           </div>
         </div>
         <Link to="/" className="login-back">
@@ -74,7 +74,7 @@ export function RegisterPage() {
         </div>
         <div className="login-card">
           <h2>创建账号</h2>
-          <p className="sub">注册即可获得一个智能体。管理员可以随时停用账号。</p>
+          <p className="sub">几秒钟后，就能说出你的第一个想法。</p>
 
           {error ? (
             <Alert
@@ -141,7 +141,7 @@ export function RegisterPage() {
               loading={mutation.isPending}
               style={{ marginTop: 4 }}
             >
-              注册并进入 Portal
+              创建账号，开始体验
             </Button>
           </Form>
 

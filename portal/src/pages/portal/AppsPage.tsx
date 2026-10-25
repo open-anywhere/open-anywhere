@@ -69,7 +69,7 @@ export function AppsPage() {
       <PageHeader
         eyebrow="Applications"
         title="应用"
-        description="通过语音生成的所有应用，以及它们此刻的状态与所在屏幕。"
+        description="你为不同场合做过的应用，以及它们此刻在做什么。"
         actions={
           <Space wrap>
             <Button
@@ -85,7 +85,7 @@ export function AppsPage() {
                 icon={<AudioOutlined />}
                 onClick={() => navigate({ to: '/portal/call', search: { device: device.id } })}
               >
-                发起通话
+                开始对话
               </Button>
             ) : null}
           </Space>
@@ -106,7 +106,7 @@ export function AppsPage() {
         <Input
           allowClear
           prefix={<SearchOutlined />}
-          placeholder="搜索应用名称或 ID"
+          placeholder="搜索应用"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           className="toolbar-search"
@@ -167,8 +167,8 @@ export function AppsPage() {
               filtered
                 ? '换一个关键词或筛选条件试试。'
                 : device?.state === 'registered'
-                  ? '点「发起通话」，直接对智能体说出你想做的事。'
-                  : '智能体完成开通后，就可以发起通话并创建应用了。'
+                  ? '点「开始对话」，直接对它说出你想做的事。'
+                  : '智能体准备好之后，就可以开口说出第一个想法。'
             }
             action={
               filtered ? (
@@ -187,7 +187,7 @@ export function AppsPage() {
                   icon={<AudioOutlined />}
                   onClick={() => navigate({ to: '/portal/call', search: { device: device.id } })}
                 >
-                  发起通话
+                  开始对话
                 </Button>
               ) : null
             }

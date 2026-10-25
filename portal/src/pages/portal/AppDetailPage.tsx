@@ -152,12 +152,12 @@ export function AppDetailPage() {
             <AppStateTag state={detail.state} />
             {detail.openapi_available ? (
               <Button icon={<FileTextOutlined />} onClick={() => setOpenapiOpen(true)}>
-                OpenAPI
+                接口文档
               </Button>
             ) : null}
             <Popconfirm
               title="删除这个应用？"
-              description="应用会从屏幕上移除，历史操作也会一并清理。此操作不可撤销。"
+              description="它会从屏幕上移除，相关记录也会一起清理，且无法撤销。"
               okText="删除"
               cancelText="取消"
               okButtonProps={{ danger: true, loading: remove.isPending }}
@@ -177,8 +177,8 @@ export function AppDetailPage() {
           type="info"
           showIcon
           className="panel-alert"
-          message="应用正在构建"
-          description={detail.progress || '构建完成前，操作与 OpenAPI 文档还不可用。页面会自动刷新。'}
+          message="正在生成应用"
+          description={detail.progress || '生成完成前，详细内容还看不到。页面会自动刷新。'}
         />
       ) : null}
 
@@ -189,10 +189,10 @@ export function AppDetailPage() {
           className="panel-alert"
           message={
             detail.error.stage === 'building'
-              ? '构建失败'
+              ? '生成失败'
               : detail.error.stage === 'starting'
-                ? '启动失败'
-                : '运行中断'
+                ? '播放失败'
+                : '播放中断'
           }
           description={
             detail.error.message || detail.error.last_agent_message || detail.error.code || '未知错误'
@@ -204,7 +204,7 @@ export function AppDetailPage() {
         <div className="section-header">
           <div>
             <h2>应用状态</h2>
-            <p>构建、运行与屏幕投放的时间与结果。</p>
+            <p>从生成到上屏，这个应用经历了什么。</p>
           </div>
         </div>
         <Descriptions
@@ -212,21 +212,9 @@ export function AppDetailPage() {
           column={{ xs: 1, sm: 2, lg: 3 }}
           items={[
             {
-              key: 'app_id',
-              label: '应用 ID',
-              children: <code className="inline-code">{detail.app_id}</code>,
-            },
-            {
               key: 'device',
               label: '智能体',
-              children: device ? (
-                <span>
-                  {device.agent_name || device.mac}
-                  <span className="muted-inline mono"> · {detail.device_id}</span>
-                </span>
-              ) : (
-                <code className="inline-code">{detail.device_id}</code>
-              ),
+              children: device ? device.agent_name || '你的智能体' : '没有关联的智能体',
             },
             {
               key: 'state',
@@ -246,21 +234,21 @@ export function AppDetailPage() {
                 '—'
               ),
             },
-            { key: 'build_started', label: '开始构建', children: formatDate(detail.build_started_at) },
-            { key: 'built', label: '构建完成', children: formatDate(detail.built_at) },
+            { key: 'build_started', label: '开始生成', children: formatDate(detail.build_started_at) },
+            { key: 'built', label: '生成完成', children: formatDate(detail.built_at) },
             {
               key: 'duration',
-              label: '构建耗时',
+              label: '生成耗时',
               children: formatDuration(detail.build_duration_seconds),
             },
-            { key: 'started', label: '开始投屏', children: formatDate(detail.started_at) },
-            { key: 'stopped', label: '停止投屏', children: formatDate(detail.stopped_at) },
+            { key: 'started', label: '开始播放', children: formatDate(detail.started_at) },
+            { key: 'stopped', label: '停止播放', children: formatDate(detail.stopped_at) },
             {
               key: 'uptime',
-              label: '已运行',
+              label: '已播放',
               children: detail.state === 'running' ? formatDuration(detail.uptime_seconds) : '—',
             },
-            { key: 'operations', label: '操作数', children: `${detail.operation_count} 个` },
+            { key: 'operations', label: '动作数', children: `${detail.operation_count} 个` },
           ]}
         />
         {detail.message ? (
@@ -274,15 +262,15 @@ export function AppDetailPage() {
         <div className="section-header">
           <div>
             <h2>
-              操作
+              它能做什么
               <span className="count">{detail.operations.length}</span>
             </h2>
-            <p>应用通过 OpenAPI 暴露给智能体调用的能力。</p>
+            <p>这个应用可以响应的动作。</p>
           </div>
           {detail.openapi_available ? (
             <Space>
               <Button size="small" icon={<FileTextOutlined />} onClick={() => setOpenapiOpen(true)}>
-                查看 OpenAPI
+                查看接口文档
               </Button>
               <Button
                 size="small"
@@ -307,7 +295,7 @@ export function AppDetailPage() {
             />
           ) : (
             <div className="empty-table">
-              {building ? '构建完成后会列出应用提供的操作。' : '这个应用没有声明可调用的操作。'}
+              {building ? '生成完成后会列出它能做什么。' : '这个应用还没有可以执行的动作。'}
             </div>
           )}
         </Card>
@@ -315,7 +303,7 @@ export function AppDetailPage() {
 
       <Modal
         open={openapiOpen}
-        title="OpenAPI 文档"
+        title="接口文档"
         width={860}
         footer={[
           <Button key="close" onClick={() => setOpenapiOpen(false)}>
@@ -339,7 +327,7 @@ export function AppDetailPage() {
           <Alert
             type="error"
             showIcon
-            message="无法读取 OpenAPI 文档"
+            message="暂时无法读取接口文档"
             description={openapi.error.message}
           />
         ) : (

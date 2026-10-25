@@ -1,5 +1,4 @@
 import {
-  ControlOutlined,
   DesktopOutlined,
   LogoutOutlined,
   MoonOutlined,
@@ -48,20 +47,15 @@ export function SettingsPage() {
       <PageHeader
         eyebrow="Settings"
         title="设置"
-        description="账号、服务与外观。"
+        description="账号、屏幕连接与外观。"
       />
 
       <section className="surface settings-section">
         <div className="section-header">
           <div>
             <h2>账号</h2>
-            <p>普通用户自助注册；管理员可以停用账号并回收资源。</p>
+            <p>你的账号信息。</p>
           </div>
-          {user?.role === 'admin' ? (
-            <Link to="/admin">
-              <Button icon={<ControlOutlined />}>进入管理后台</Button>
-            </Link>
-          ) : null}
         </div>
         {me.isPending ? (
           <Skeleton active paragraph={{ rows: 3 }} title={false} />
@@ -92,11 +86,11 @@ export function SettingsPage() {
       <section className="surface settings-section">
         <div className="section-header">
           <div>
-            <h2>屏幕服务</h2>
-            <p>语音生成的应用会使用你当前绑定的 Render 与投屏服务。</p>
+            <h2>屏幕连接</h2>
+            <p>应用会通过它出现在身边的屏幕上。</p>
           </div>
           <Link to="/portal/services">
-            <Button icon={<ThunderboltOutlined />}>管理服务</Button>
+            <Button icon={<ThunderboltOutlined />}>管理连接</Button>
           </Link>
         </div>
         {services.data ? (
@@ -106,8 +100,8 @@ export function SettingsPage() {
             items={[
               {
                 key: 'mode',
-                label: '服务模式',
-                children: services.data.mode === 'managed' ? '平台托管' : '自有服务',
+                label: '由谁提供',
+                children: services.data.mode === 'managed' ? '平台提供' : '自己接入',
               },
               {
                 key: 'ready',
@@ -121,7 +115,7 @@ export function SettingsPage() {
             ]}
           />
         ) : (
-          <p className="muted-text">无法读取服务绑定。</p>
+          <p className="muted-text">暂时无法读取屏幕连接。</p>
         )}
       </section>
 
@@ -150,8 +144,8 @@ export function SettingsPage() {
       <section className="surface settings-section">
         <div className="section-header">
           <div>
-            <h2>会话</h2>
-            <p>退出后需要重新登录。禁用账号会让所有会话立即失效。</p>
+            <h2>登录状态</h2>
+            <p>退出后需要重新登录。</p>
           </div>
         </div>
         <Button

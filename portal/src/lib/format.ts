@@ -43,16 +43,16 @@ export const stepLabels: Record<string, string> = {
 }
 
 export const appStateLabels: Record<string, string> = {
-  building: '构建中',
-  idle: '待启动',
+  building: '生成中',
+  idle: '待播放',
   running: '屏幕上',
-  error: '失败',
+  error: '未完成',
 }
 
 export const deviceStateLabels: Record<string, string> = {
-  registered: '已注册',
-  provisioning: '开通中',
-  error: '失败',
+  registered: '已准备好',
+  provisioning: '准备中',
+  error: '需要处理',
   disabled: '已停用',
 }
 
@@ -60,17 +60,17 @@ export const voiceStateLabels: Record<string, string> = {
   connecting: '连接中',
   listening: '收听中',
   thinking: '思考中',
-  speaking: '播报中',
+  speaking: '正在说',
   idle: '已暂停',
   reconnecting: '重连中',
-  disconnected: '已断开',
-  offline: '未启动',
-  error: '异常',
+  disconnected: '未连接',
+  offline: '不在线',
+  error: '需要处理',
 }
 
 export const screenStatusLabels: Record<string, string> = {
   free: '空闲',
-  showing_app: '正在展示',
-  external: '被其他投屏占用',
+  showing_app: '正在播放',
+  external: '被其他内容占用',
   unavailable: '不可用',
 }

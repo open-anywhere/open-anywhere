@@ -21,10 +21,10 @@ export function ScreensPage() {
       queryClient.invalidateQueries({ queryKey: ['screens'] })
       queryClient.invalidateQueries({ queryKey: ['apps'] })
       queryClient.invalidateQueries({ queryKey: ['app', result.app.app_id] })
-      message.success('已停止投屏并释放屏幕')
+      message.success('已停止播放')
     },
     onError: (error) => {
-      message.error(error instanceof ApiError ? error.message : '停止投屏失败')
+      message.error(error instanceof ApiError ? error.message : '暂时无法停止播放')
     },
   })
 
@@ -36,7 +36,7 @@ export function ScreensPage() {
       <PageHeader
         eyebrow="Screens"
         title="屏幕"
-        description="投屏服务发现的显示设备，以及它们此刻展示的内容。"
+        description="身边的电视与投影，以及它们此刻正在播放的内容。"
         actions={
           <Space>
             <Button
@@ -55,11 +55,11 @@ export function ScreensPage() {
           type="error"
           showIcon
           className="panel-alert"
-          message="无法发现屏幕"
+          message="暂时找不到屏幕"
           description={
             screens.error instanceof ApiError
               ? screens.error.message
-              : '投屏服务暂时不可用，请稍后重试。'
+              : '投屏服务没有响应，请稍后重试。'
           }
           action={
             <Button size="small" loading={screens.isFetching} onClick={() => screens.refetch()}>
@@ -71,7 +71,7 @@ export function ScreensPage() {
 
       {showNote ? (
         <div className="hint-note">
-          屏幕由你在服务页绑定的投屏服务自动发现；投屏动作通过语音触发。停止投屏会停止屏幕上的应用并释放屏幕，之后可以通过语音重新开始。
+          屏幕会自动被发现。想让屏幕播放什么，开口说出来就好。
         </div>
       ) : null}
 
@@ -101,7 +101,7 @@ export function ScreensPage() {
           <EmptyState
             icon={<DesktopOutlined />}
             title="还没有发现屏幕"
-            description="确保电视、投影或其他显示设备已接入你绑定的投屏服务，然后刷新这个页面。屏幕由投屏服务发现，Portal 不直接扫描局域网。"
+            description="打开电视或投影，确认它和投屏服务连接在同一网络，然后刷新。"
             action={
               <Space wrap>
                 <Button
@@ -109,10 +109,10 @@ export function ScreensPage() {
                   loading={screens.isFetching}
                   onClick={() => screens.refetch()}
                 >
-                  重新发现
+                  再找一次
                 </Button>
                 <Link to="/portal/services">
-                  <Button>检查服务绑定</Button>
+                  <Button>检查屏幕连接</Button>
                 </Link>
               </Space>
             }

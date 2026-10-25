@@ -23,18 +23,18 @@ export function DevicesPage() {
   const createDevice = useMutation({
     mutationFn: api.createDevice,
     onSuccess: () => {
-      message.success('正在为你创建智能体')
+      message.success('正在准备你的智能体')
       queryClient.invalidateQueries({ queryKey: ['me'] })
     },
     onError: (error) => {
-      message.error(error instanceof ApiError ? error.message : '创建智能体失败')
+      message.error(error instanceof ApiError ? error.message : '暂时无法创建智能体')
     },
   })
 
   const retryDevice = useMutation({
     mutationFn: (id: string) => api.retryDevice(id),
     onSuccess: () => {
-      message.info('已重新开始开通流程')
+      message.info('已重新开始准备')
       queryClient.invalidateQueries({ queryKey: ['me'] })
     },
     onError: (error) => {
@@ -47,9 +47,9 @@ export function DevicesPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Devices"
-        title="设备"
-        description="语音运行时、智能体绑定与开通进度。设备由 Gateway 自动创建和注册。"
+        eyebrow="智能体"
+        title="智能体"
+        description="你的语音智能体，以及它是否准备好。"
         actions={
           <Space>
             <Button

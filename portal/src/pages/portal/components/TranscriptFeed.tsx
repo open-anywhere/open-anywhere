@@ -6,19 +6,19 @@ const roleLabels: Record<TranscriptEntry['role'], string> = {
   user: '你',
   agent: '智能体',
   system: '状态',
-  tool: '工具',
-  error: '错误',
+  tool: '动作',
+  error: '提示',
 }
 
 const typeLabels: Record<string, string> = {
-  stt: '语音识别',
-  tts: '语音播报',
-  llm: '模型',
-  mcp: 'MCP',
+  stt: '听到',
+  tts: '回答',
+  llm: '回应',
+  mcp: '操作',
   state: '状态',
   custom: '事件',
   close: '连接',
-  error: '错误',
+  error: '提示',
 }
 
 function time(at: number): string {
@@ -42,8 +42,8 @@ export function TranscriptFeed({ entries }: { entries: TranscriptEntry[] }) {
   if (!entries.length) {
     return (
       <div className="transcript-empty">
-        <strong>等待通话开始</strong>
-        <p>点击下方「开始通话」并允许麦克风权限。之后你和智能体的对话会实时显示在这里。</p>
+        <strong>等待对话开始</strong>
+        <p>点击下方「开始对话」并允许麦克风权限。之后你们的对话会实时显示在这里。</p>
       </div>
     )
   }
@@ -55,7 +55,7 @@ export function TranscriptFeed({ entries }: { entries: TranscriptEntry[] }) {
         return (
           <article className={`transcript-item transcript-${entry.role}`} key={entry.id}>
             <div className="transcript-meta">
-              <span>{isState ? '通话状态' : roleLabels[entry.role]}</span>
+              <span>{isState ? '对话状态' : roleLabels[entry.role]}</span>
               {isState ? null : <span>{typeLabels[entry.type] ?? entry.type}</span>}
               <time>{time(entry.at)}</time>
             </div>

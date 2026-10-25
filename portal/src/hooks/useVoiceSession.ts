@@ -182,15 +182,15 @@ export function useVoiceSession(deviceId: string) {
                 source.onended = () => {
                   playingRef.current = playingRef.current.filter((item) => item !== source)
                 }
-              } catch (decodeError) {
+              } catch {
                 if (mountedRef.current) {
-                  setError(`音频播放失败：${errorMessage(decodeError, '无法解码音频')}`)
+                  setError('声音播放遇到问题，请稍后重试。')
                 }
               }
             },
-            error: (decodeError) => {
+            error: () => {
               if (mountedRef.current) {
-                setError(`音频解码失败：${decodeError.message}`)
+                setError('声音播放遇到问题，请稍后重试。')
               }
             },
           })
@@ -200,9 +200,9 @@ export function useVoiceSession(deviceId: string) {
             numberOfChannels: 1,
           })
           playbackDecoderRef.current = decoder
-        } catch (parseError) {
+        } catch {
           if (mountedRef.current) {
-            setError(`音频参数无效：${errorMessage(parseError, '无法读取采样率')}`)
+            setError('声音播放遇到问题，请稍后重试。')
           }
         }
         return
@@ -380,7 +380,7 @@ export function useVoiceSession(deviceId: string) {
       }
     } catch (statusFailure) {
       if (!mountedRef.current) return
-      setStatusError(errorMessage(statusFailure, '无法连接语音运行时'))
+      setStatusError(errorMessage(statusFailure, '暂时无法连接智能体'))
     }
   }, [deviceId, applyServerVolume])
 
@@ -404,7 +404,7 @@ export function useVoiceSession(deviceId: string) {
   useEffect(() => {
     const source = new EventSource(voice.eventsURL(deviceId))
     source.onopen = () => setStreamError(undefined)
-    source.onerror = () => setStreamError('实时事件连接中断，正在重连…')
+    source.onerror = () => setStreamError('连接中断，正在重连…')
     source.onmessage = (event) => {
       let payload: VoiceEvent & { error?: string }
       try {
@@ -427,7 +427,7 @@ export function useVoiceSession(deviceId: string) {
         id: ++entryIdRef.current,
         type: payload.type,
         role: roleFor(payload.type),
-        text: payload.type === 'mcp' ? `平台调用端侧 MCP：${text}` : text,
+        text: payload.type === 'mcp' ? `正在执行：${text}` : text,
         at: Date.now(),
       }
       setEntries((current) => {
@@ -459,7 +459,7 @@ export function useVoiceSession(deviceId: string) {
     } catch (startFailure) {
       stopMicrophone()
       stopPlayback()
-      setError(errorMessage(startFailure, '无法开始通话'))
+      setError(errorMessage(startFailure, '暂时无法开始对话'))
     } finally {
       startingRef.current = false
       if (mountedRef.current) setStarting(false)
@@ -492,7 +492,7 @@ export function useVoiceSession(deviceId: string) {
     try {
       await startPlayback()
     } catch (playbackFailure) {
-      setError(errorMessage(playbackFailure, '无法开启语音播放'))
+      setError(errorMessage(playbackFailure, '暂时无法播放声音'))
     }
   }, [startPlayback, stopPlayback])
 
@@ -501,7 +501,7 @@ export function useVoiceSession(deviceId: string) {
       await voice.pause(deviceId)
       await refreshStatus()
     } catch (pauseFailure) {
-      setError(errorMessage(pauseFailure, '暂停失败'))
+      setError(errorMessage(pauseFailure, '暂时无法暂停'))
     }
   }, [deviceId, refreshStatus])
 
@@ -510,7 +510,7 @@ export function useVoiceSession(deviceId: string) {
       await voice.resume(deviceId)
       await refreshStatus()
     } catch (resumeFailure) {
-      setError(errorMessage(resumeFailure, '继续失败'))
+      setError(errorMessage(resumeFailure, '暂时无法继续'))
     }
   }, [deviceId, refreshStatus])
 
@@ -520,7 +520,7 @@ export function useVoiceSession(deviceId: string) {
       await voice.abort(deviceId)
       await refreshStatus()
     } catch (abortFailure) {
-      setError(errorMessage(abortFailure, '打断失败'))
+      setError(errorMessage(abortFailure, '暂时无法打断'))
     }
   }, [deviceId, flushPlayback, refreshStatus])
 
