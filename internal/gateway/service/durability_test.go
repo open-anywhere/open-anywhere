@@ -83,7 +83,7 @@ func (c *capturingStore) SaveApp(a app.App) error {
 	c.saved = append(c.saved, a)
 	return nil
 }
-func (capturingStore) DeleteApp(string) error { return nil }
+func (*capturingStore) DeleteApp(string) error { return nil }
 
 func (c *capturingStore) last() (app.App, bool) {
 	c.mu.Lock()

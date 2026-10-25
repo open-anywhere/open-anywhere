@@ -32,7 +32,7 @@ func (c *capturingBuilderStore) SaveApp(a app.App) error {
 	c.saved = append(c.saved, a)
 	return nil
 }
-func (capturingBuilderStore) DeleteApp(string) error { return nil }
+func (*capturingBuilderStore) DeleteApp(string) error { return nil }
 
 func (c *capturingBuilderStore) last() (app.App, bool) {
 	c.mu.Lock()
