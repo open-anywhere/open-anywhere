@@ -31,11 +31,13 @@ type portalHTTPEnv struct {
 	db      *store.DB
 	api     *API
 	dataDir string
+	dbPath  string
 }
 
 func newPortalHTTPEnv(t *testing.T) *portalHTTPEnv {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "portal.db"))
+	dbPath := filepath.Join(t.TempDir(), "portal.db")
+	db, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -61,7 +63,7 @@ func newPortalHTTPEnv(t *testing.T) *portalHTTPEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &portalHTTPEnv{server: server, client: &http.Client{Jar: jar}, db: db, api: api, dataDir: dataDir}
+	return &portalHTTPEnv{server: server, client: &http.Client{Jar: jar}, db: db, api: api, dataDir: dataDir, dbPath: dbPath}
 }
 
 func (e *portalHTTPEnv) do(t *testing.T, method, path string, body string, headers map[string]string) (*http.Response, []byte) {
