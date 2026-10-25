@@ -85,7 +85,8 @@ export function AgentSettingsModal({ deviceId, onClose }: Props) {
     save.mutate(values)
   }
 
-  const selected = voices.data?.voices.find((voice) => voice.id === Form.useWatch('tts_voice_id', form))
+  const selectedVoiceId = Form.useWatch('tts_voice_id', form)
+  const selected = voices.data?.voices.find((voice) => voice.id === selectedVoiceId)
   const loadError = agent.error ?? voices.error
 
   return (
