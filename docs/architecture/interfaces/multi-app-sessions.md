@@ -1,8 +1,8 @@
 # 多应用并发构建与同会话更新
 
-> 关联：[应用管理 MCP](app-management-mcp.md)、[控制面与 AgentAPI 接口](gateway-agentapi-interface.md)、[系统架构](architecture.md)
+> 关联：[应用管理 MCP](app-management-mcp.md)、[控制面与 AgentAPI 接口](gateway-agentapi.md)、[系统架构](../overview.md)
 > Issue：[＃69 同时多个应用 / agent session](https://github.com/open-anywhere/open-anywhere/issues/69)、[＃68 update-app](https://github.com/open-anywhere/open-anywhere/issues/68)
-> AgentAPI 依据：仓库内 [agentapi-use](../.agents/skills/agentapi-use/SKILL.md) 离线镜像（会话、会话操作、事件、运行时）
+> AgentAPI 依据：仓库内 [agentapi-use](../../../.agents/skills/agentapi-use/SKILL.md) 离线镜像（会话、会话操作、事件、运行时）
 
 ## 1. 摘要
 
@@ -142,7 +142,7 @@
 3. 确认 AgentAPI 会话可接收消息；否则返回 `SESSION_UNAVAILABLE`，不改应用状态。
 4. **先**注册或复用该 `session_id` 的事件流消费者（AgentAPI 要求先订 SSE 再发消息；同一时刻同一 `session_id` 只有一个推进者）。
 5. 将应用置为 `building`，刷新 `build_started_at` 与进度字段；**保留**上一版 `artifact` / OpenAPI，直到新产物校验成功。
-6. `POST .../events` 提交 `user.message`（修订提示词，见 [gateway-agentapi-interface.md](gateway-agentapi-interface.md) 修订轮约定）。
+6. `POST .../events` 提交 `user.message`（修订提示词，见 [gateway-agentapi-interface.md](gateway-agentapi.md) 修订轮约定）。
 7. 立即返回 `building`；后台按与初次构建相同的停止原因 / 产物收集逻辑处理（必须看 `stop_reason.type`，不能只凭 `idle`）。
 8. 成功：替换产物与 OpenAPI，进入 `idle`，发送完成通知（文案区分「创建完成」与「更新完成」）。会话保持 `idle`，**不**归档。
 9. 失败：若仍有上一版可启动产物，恢复 `idle` 并保留旧产物，通知中说明更新失败；若无上一版产物，进入 `error(stage=building)`。仅当会话已不可再用时归档。
@@ -178,7 +178,7 @@ sequenceDiagram
 
 ## 6. AgentAPI 侧要点
 
-详细请求形状仍以 [gateway-agentapi-interface.md](gateway-agentapi-interface.md) 为准。下列条款与 agentapi-use 镜像一致：
+详细请求形状仍以 [gateway-agentapi-interface.md](gateway-agentapi.md) 为准。下列条款与 agentapi-use 镜像一致：
 
 | 主题 | AgentAPI 结论 | 对本设计的含义 |
 | --- | --- | --- |
@@ -238,10 +238,10 @@ sequenceDiagram
 | 落点 | 变更 |
 | --- | --- |
 | [app-management-mcp.md](app-management-mcp.md) | 工具表增加 `update-app`；改写 `create-app` 并发语义；错误码表增量 |
-| [gateway-agentapi-interface.md](gateway-agentapi-interface.md) | 多会话并行；修订轮提交流程；去掉「MCP 重复 create-app 返回已有 building」 |
-| [architecture.md](architecture.md) | 目标中补充多应用并行构建与同会话修订 |
+| [gateway-agentapi-interface.md](gateway-agentapi.md) | 多会话并行；修订轮提交流程；去掉「MCP 重复 create-app 返回已有 building」 |
+| [architecture.md](../overview.md) | 目标中补充多应用并行构建与同会话修订 |
 | `internal/gateway/service` | 去掉 `FindBuilding` 短路；实现 `UpdateApp` |
 | `internal/gateway/build` | 在已有 session 上提交一轮并 watch；保留旧产物直到新校验成功 |
 | `internal/gateway/mcp` | 注册 `update-app` 与工具描述 |
 
-以本文与同步修订后的 MCP / AgentAPI 文档为准；产品话术见 [product.md](product.md) 中「需要重新构建的能力」分支。
+以本文与同步修订后的 MCP / AgentAPI 文档为准；产品话术见 [product.md](../../product/vision.md) 中「需要重新构建的能力」分支。

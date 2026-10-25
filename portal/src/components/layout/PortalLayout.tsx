@@ -4,6 +4,7 @@ import {
   DesktopOutlined,
   HistoryOutlined,
   HomeOutlined,
+  MobileOutlined,
   RobotOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -16,6 +17,7 @@ import { ConsoleLayout, type ConsoleNavGroup, type ConsoleNavItem } from './Cons
 const portalNavItems: readonly ConsoleNavItem[] = [
   { to: '/portal', label: '概览', icon: <HomeOutlined />, exact: true },
   { to: '/portal/agents', label: '智能体', icon: <RobotOutlined />, exact: false },
+  { to: '/portal/devices', label: '设备', icon: <MobileOutlined />, exact: false },
   { to: '/portal/apps', label: '应用', icon: <AppstoreOutlined />, exact: false },
   { to: '/portal/screens', label: '屏幕', icon: <DesktopOutlined />, exact: false },
   { to: '/portal/services', label: '屏幕连接', icon: <ThunderboltOutlined />, exact: false },

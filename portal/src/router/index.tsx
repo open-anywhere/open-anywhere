@@ -159,9 +159,7 @@ const screensRoute = createRoute({
 const devicesRoute = createRoute({
   getParentRoute: () => portalRoute,
   path: 'devices',
-  beforeLoad: () => {
-    throw redirect({ to: '/portal/agents' })
-  },
+  component: lazyRouteComponent(() => import('../pages/portal/DevicesPage'), 'DevicesPage'),
 })
 
 const agentsRoute = createRoute({

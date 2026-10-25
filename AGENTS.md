@@ -33,16 +33,16 @@ Everything in this table can be verified by reading the named files; none of it 
 | Artifact and OpenAPI validation | `internal/gateway/artifact/validate.go`, `internal/gateway/openapi/spec.go` | package tests; Render validates the artifact again before running |
 | Render runtime and stage capture | `cmd/render`, `internal/render` | `e2e/render_test.go` drives real Node, Chromium and FFmpeg |
 | DLNA casting | `cmd/casting`, `internal/casting/service.go`, `internal/casting/dlna` | `service_test.go`, `http_test.go`, `casting_adversarial_test.go` |
-| Voice entry | `cmd/voiceentry` | `docs/voice-entry.md`; the live gateway E2E is opt-in (`e2e/gateway_live_test.go`) |
+| Voice entry | `cmd/voiceentry` | `docs/architecture/voice-entry.md`; the live gateway E2E is opt-in (`e2e/gateway_live_test.go`) |
 | Multi-tenant portal with identity isolation | `internal/gateway/portal/` (`auth.go`, `admin.go`, `http.go`) | Go tests in the package; the React frontend (`portal/src`) has no unit tests |
 | Multi-app sessions | `internal/gateway/service/service.go` | package tests; see the switching limitation below |
 | Recorded happy path | `README.md:15-16` links the 1080p and 4K demo videos | the recording shows the chain running; it is not evidence of demand |
 
 ## Business Plan
 
-[`docs/business-plan.md`](docs/business-plan.md) is the single source of truth for commercial strategy, pricing, packaging, unit economics, three-year targets, and validation status. When another document disagrees with it on those topics, the business plan wins.
+[`docs/product/business-plan.md`](docs/product/business-plan.md) is the single source of truth for commercial strategy, pricing, packaging, unit economics, three-year targets, and validation status. When another document disagrees with it on those topics, the business plan wins.
 
-[`docs/business-strategy.md`](docs/business-strategy.md) is market background and historical reasoning. Its chapter 6 pricing (new app 2 credits / edit 1 credit, 68/166/288 CNY per month, 20/12/5 run hours) is superseded by chapter 5 of the business plan and must not be cited as current.
+[`docs/product/business.md`](docs/product/business.md) is market background and historical reasoning. Its chapter 6 pricing (new app 2 credits / edit 1 credit, 68/166/288 CNY per month, 20/12/5 run hours) is superseded by chapter 5 of the business plan and must not be cited as current.
 
 Reading the plan: §5.3 is the only price source; §7.1–§7.4 are models whose assumptions are labeled and dated for calibration; §12.1 separates what has been validated from what has not.
 
@@ -53,7 +53,7 @@ Current commercial facts, stated once so agents do not restate a different versi
 - **Merchant price ladder.** Single event 399 CNY; monthly 599 CNY for 4 events; annual 3,999 CNY for 50 events. On-site hosting and setup are 500–1,000 CNY per event and are not included in the software subscription; the 199 CNY first-week single is a founder-led pilot, not a standard SKU.
 - **Credits.** Template 1, edit 2, new app 5, complex app 10. One credit equals one CNY on top-up.
 - **Run hours.** 1 / 3 / 6 / 10 / 15 / 25 hours for the 0 / 39 / 68 / 99 / 166 / 288 CNY tiers.
-- **Stage.** Validation. The first-week loop — 6–9 sessions, 30+ participants, at least 3 real payments collected manually — is the active operating target, not a completed result.
+- **Stage.** Validation. The first-week loop — 6–9 sessions, 30+ participants, at least 3 payments for delivered sessions collected manually — is the active operating target, not a completed result. Annual-card and merchant-monthly pre-sales are tracked separately and do not count toward those 3 payments.
 - **Billing.** Credits, subscriptions, and payment are not implemented in code. First-week payments are collected by personal payment code. Never describe billing, quota, subscription management, or a merchant console as shipped.
 
 When a change affects pricing, packaging, target users, or validation metrics, update the business plan alongside the code.
@@ -62,17 +62,17 @@ When a change affects pricing, packaging, target users, or validation metrics, u
 
 **Verified on real hardware.** In October 2026, four participants played four generated applications in one session on a real screen. The session covered the full chain — spoken request, generation, cast to the screen, multi-participant play, and switching applications. Participants were three team members and one family member; a recording is linked from the README.
 
-**Not yet verified.** External households (children and older adults), payment, retention, merchant repeat use, and measured generation cost and latency. The company is in its validation stage. The first-week loop in `docs/business-plan.md` §0.4 — 6–9 sessions, 30+ participants, at least 3 real payments with receipts — is the active operating target. The payment ledger in §4.3 is empty. This is a technical happy-path test, not market validation; until ledger entries exist, demand is a hypothesis and the plan labels it as such.
+**Not yet verified.** External households (children and older adults), payment, retention, merchant repeat use, and measured generation cost and latency. The company is in its validation stage. The first-week loop in `docs/product/business-plan.md` §0.4 — 6–9 sessions, 30+ participants, at least 3 payments for delivered sessions with receipts, with annual-card pre-sales tracked separately — is the active operating target. The payment ledger in §4.3 is empty. This is a technical happy-path test, not market validation; until ledger entries exist, demand is a hypothesis and the plan labels it as such.
 
 ## Current Implementation Boundary
 
-The evidence table above is the shipped surface. The rest of the plan is roadmap; `docs/business-plan.md` §0.7 marks the same boundary.
+The evidence table above is the shipped surface. The rest of the plan is roadmap; `docs/product/business-plan.md` §0.7 marks the same boundary.
 
 Roadmap, not shipped: mobile join and controller, template instantiation and the 3-minute fallback, credits/billing/subscriptions, merchant console, children and elderly modes, AirPlay, run box and end devices, a generation-quality evaluation set, and token/cost telemetry.
 
 Agents reviewing or extending this repository must not treat roadmap items as implemented.
 
-Multi-app sessions are implemented, but switching apps stops the old app and creates a new Casting session (`internal/gateway/service/service.go`; `docs/architecture.md` records the gap). The invariant that switching must not re-establish casting is not met; do not describe switching as seamless or zero-downtime.
+Multi-app sessions are implemented, but switching apps stops the old app and creates a new Casting session (`internal/gateway/service/service.go`; `docs/architecture/overview.md` records the gap). The invariant that switching must not re-establish casting is not met; do not describe switching as seamless or zero-downtime.
 
 ## Evidence Rules for Commercial Claims
 
@@ -87,7 +87,7 @@ Multi-app sessions are implemented, but switching apps stops the old app and cre
 
 These are known as of 2026-10-26. Treat code and this file as current; the listed documents are being corrected.
 
-- `docs/product-extensions.md` still marks multi-app sessions as unimplemented. Multi-app sessions are implemented, with the switching limitation described above.
+- `docs/product/research.md` still marks multi-app sessions as unimplemented. Multi-app sessions are implemented, with the switching limitation described above.
 - `internal/gateway/portal/agent-prompt.txt` predates `update-app` and multi-app support, while `docs/agent-system-prompts/open-anywhere-host.txt` already documents them. Regenerate the embedded prompt from the docs copy and add a test that the two match before shipping.
 - `speaker_probe` is disabled by default and the compatibility probe returns `verified:false`. Do not claim voiceprint or speaker identity is shipped.
 
@@ -121,7 +121,7 @@ When working in this repository:
 
 - Keep the control plane a router and orchestrator, not an app runtime.
 - Put generation and build rules in the app-builder skill and AgentAPI, runtime behavior in Render, protocol and session behavior in Casting, and device behavior in the voice entry.
-- Read the design documents before changing a contract: [`docs/architecture.md`](docs/architecture.md), [`docs/app-artifact.md`](docs/app-artifact.md), [`docs/casting.md`](docs/casting.md), [`docs/render-runtime.md`](docs/render-runtime.md), and [`docs/voice-entry.md`](docs/voice-entry.md).
+- Read the design documents before changing a contract: [`docs/architecture/overview.md`](docs/architecture/overview.md), [`docs/architecture/interfaces/app-artifact.md`](docs/architecture/interfaces/app-artifact.md), [`docs/operations/casting.md`](docs/operations/casting.md), [`docs/operations/render.md`](docs/operations/render.md), and [`docs/architecture/voice-entry.md`](docs/architecture/voice-entry.md).
 
 ## Scope of These Instructions
 

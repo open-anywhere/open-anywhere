@@ -32,6 +32,9 @@ func (a *API) AdminHandler() http.Handler {
 	mux.HandleFunc("GET /api/admin/settings", a.withAdmin(a.adminGetSettings))
 	mux.HandleFunc("PUT /api/admin/settings", a.withAdmin(a.adminUpdateSettings))
 	mux.HandleFunc("POST /api/admin/settings/test", a.withAdmin(a.adminTestSettings))
+	mux.HandleFunc("GET /api/admin/mcp", a.withAdmin(a.adminGetMCP))
+	mux.HandleFunc("PUT /api/admin/mcp/shared", a.withAdmin(a.adminSetSharedMCP))
+	mux.HandleFunc("POST /api/admin/mcp/sync", a.withAdmin(a.adminSyncMCP))
 	mux.Handle("/api/admin/", http.NotFoundHandler())
 	return a.guard(mux)
 }
@@ -217,6 +220,7 @@ func (a *API) adminOverview(w http.ResponseWriter, r *http.Request, _ store.Port
 		"platform": map[string]any{
 			"agentapi":          ready.AgentAPI,
 			"linx":              ready.Linx,
+			"mcp":               ready.MCP,
 			"services":          ready.Services,
 			"registration_open": registration,
 		},
@@ -624,7 +628,19 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 		return
 	}
 	a.logf("admin: %s updated platform settings", actor.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"settings": masked})
+	response := map[string]any{"settings": masked}
+	// A rotated token must also reach the MCP instance Linx already holds,
+	// otherwise Linx keeps calling the gateway with the old one.
+	if patch.Linx != nil && patch.Linx.RotateMCPToken && a.provision != nil {
+		syncCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		syncErr := a.provision.SyncMCP(syncCtx)
+		cancel()
+		if syncErr != nil {
+			a.logf("admin: sync rotated MCP token to Linx: %v", syncErr)
+			response["warning"] = "新的 MCP Token 已保存，但同步到灵矽失败，请检查 Linx 配置后重新生成"
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (a *API) adminTestSettings(w http.ResponseWriter, r *http.Request, actor store.PortalUser) {

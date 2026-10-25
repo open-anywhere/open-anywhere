@@ -71,6 +71,7 @@ func TestCreatePortalUserValidationAndFailures(t *testing.T) {
 				client_id TEXT NOT NULL,
 				linx_agent_id TEXT NOT NULL DEFAULT '',
 				agent_name TEXT NOT NULL DEFAULT '',
+				name TEXT NOT NULL DEFAULT '',
 				state TEXT NOT NULL,
 				step TEXT NOT NULL DEFAULT '',
 				error TEXT NOT NULL DEFAULT '',
@@ -638,9 +639,9 @@ func TestPortalDeviceListingErrorPaths(t *testing.T) {
 			db := openPortalDB(t)
 			mustExec(t, db.sql, `DROP TABLE portal_devices`,
 				`CREATE TABLE portal_devices (id TEXT, user_id TEXT, kind TEXT, mac TEXT, client_id TEXT,
-					linx_agent_id TEXT, agent_name TEXT, state TEXT, step TEXT, error TEXT,
+					linx_agent_id TEXT, agent_name TEXT, name TEXT, state TEXT, step TEXT, error TEXT,
 					credential_path TEXT, created_at TEXT, updated_at TEXT, registered_at TEXT)`,
-				`INSERT INTO portal_devices VALUES ('dev_1', 'usr_1', 'virtual', 'mac', 'client', '', '',
+				`INSERT INTO portal_devices VALUES ('dev_1', 'usr_1', 'virtual', 'mac', 'client', '', '', '',
 					'provisioning', '', '', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)`)
 			if err := listing.call(db); err == nil || !strings.Contains(err.Error(), "scan portal device") {
 				t.Fatalf("err = %v", err)
@@ -772,9 +773,9 @@ func TestCountPortalDevicesByStateErrors(t *testing.T) {
 		mustExec(t, db.sql,
 			`DROP TABLE portal_devices`,
 			`CREATE TABLE portal_devices (id TEXT, user_id TEXT, kind TEXT, mac TEXT, client_id TEXT,
-				linx_agent_id TEXT, agent_name TEXT, state TEXT, step TEXT, error TEXT,
+				linx_agent_id TEXT, agent_name TEXT, name TEXT, state TEXT, step TEXT, error TEXT,
 				credential_path TEXT, created_at TEXT, updated_at TEXT, registered_at TEXT)`,
-			`INSERT INTO portal_devices VALUES ('dev_1', 'usr_1', 'virtual', 'mac', 'client', '', '',
+			`INSERT INTO portal_devices VALUES ('dev_1', 'usr_1', 'virtual', 'mac', 'client', '', '', '',
 				NULL, '', '', '', '', '', NULL)`)
 		if _, err := db.CountPortalDevicesByState(ctx); err == nil ||
 			!strings.Contains(err.Error(), "scan portal device count") {

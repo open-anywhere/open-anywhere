@@ -146,7 +146,7 @@ UI 和 API 必须共享同一份业务状态。外部客户端发起 HTTP 操作
 
 ## 4. 构建 Agent
 
-构建 Agent 的系统提示词只负责角色、输入约定、强制使用 `app-builder` 技能和最终输出格式；完整构建契约、模板和自测流程以 [`skills/app-builder/SKILL.md`](../skills/app-builder/SKILL.md) 及其 `references/` 为准。本文件第 1–3 节保留人类可读的产物规范，不再维护另一份提示词副本。
+构建 Agent 的系统提示词只负责角色、输入约定、强制使用 `app-builder` 技能和最终输出格式；完整构建契约、模板和自测流程以 [`skills/app-builder/SKILL.md`](../../../skills/app-builder/SKILL.md) 及其 `references/` 为准。本文件第 1–3 节保留人类可读的产物规范，不再维护另一份提示词副本。
 
 ## 5. 产物验收
 

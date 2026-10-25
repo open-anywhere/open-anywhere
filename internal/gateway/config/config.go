@@ -307,15 +307,13 @@ func (c Config) Validate() error {
 		return fmt.Errorf("gateway: -artifact-base-url must be an absolute HTTP(S) URL")
 	}
 	if c.PortalEnabled {
-		if c.MCPToken == "" {
-			return fmt.Errorf("gateway: -mcp-token is required when the portal is enabled")
-		}
-		if c.LinxPublicMCPURL == "" {
-			return fmt.Errorf("gateway: -linx-public-mcp-url is required when the portal is enabled")
-		}
-		mcpURL, err := url.Parse(c.LinxPublicMCPURL)
-		if err != nil || mcpURL.Host == "" || (mcpURL.Scheme != "http" && mcpURL.Scheme != "https") {
-			return fmt.Errorf("gateway: -linx-public-mcp-url must be an absolute HTTP(S) URL")
+		// The MCP token and public MCP address are platform settings: the token
+		// is generated on first start and both are edited in the admin page.
+		if c.LinxPublicMCPURL != "" {
+			mcpURL, err := url.Parse(c.LinxPublicMCPURL)
+			if err != nil || mcpURL.Host == "" || (mcpURL.Scheme != "http" && mcpURL.Scheme != "https") {
+				return fmt.Errorf("gateway: -linx-public-mcp-url must be an absolute HTTP(S) URL")
+			}
 		}
 		if c.PortalDataDir == "" {
 			return fmt.Errorf("gateway: portal data directory is required")

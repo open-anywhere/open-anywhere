@@ -1,6 +1,6 @@
 # 应用管理 MCP
 
-> 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)；多租户 Portal 的角色、注册与服务绑定见 [user-portal.md](user-portal.md)。
+> 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)；多租户 Portal 的角色、注册与服务绑定见 [user-portal.md](portal.md)。
 
 ## 1. 范围
 
@@ -8,7 +8,7 @@
 
 - 灵矽只看见 MCP Tool，不直接接触 AgentAPI、Render 或投屏服务。
 - 应用运行后的能力调用仍走 OpenAPI / HTTP 契约，不在本文展开。
-- 控制面与 Render 的接口见[控制面与 Render 接口设计](gateway-render-interface.md)，应用产物见[应用包设计](app-artifact.md)，系统整体架构与投屏服务的 Target/Endpoint 见[architecture.md](architecture.md)。
+- 控制面与 Render 的接口见[控制面与 Render 接口设计](gateway-render.md)，应用产物见[应用包设计](app-artifact.md)，系统整体架构与投屏服务的 Target/Endpoint 见[architecture.md](../overview.md)。
 
 ### 1.1 角色与调用方向
 
@@ -46,7 +46,7 @@ Portal 启用时，MCP 连接必须携带三个头，且都必须与当前 SSE �
 
 - `GET /sse`：缺少任一头返回 `400 MISSING_IDENTITY`；设备不存在、未完成开通或用户被停用返回 403（`OWNER_NOT_FOUND` / `IDENTITY_NOT_REGISTERED` / `USER_DISABLED`），不建立会话。
 - `POST /mcp/message`：每次请求都要求三头齐全且与 SSE 会话精确一致；缺失或不一致返回 `403 IDENTITY_MISMATCH`。随后再次查库校验设备与用户状态，不只依赖建连时的检查。
-- `mcp_token` 在 Portal 模式下必填；未配置时 Gateway 拒绝启动。MCP 端点仍由该 Bearer token 保护。
+- Portal 模式下 MCP Token 首次启动时自动生成并加密保存在数据库，管理员可在平台设置里重新生成；MCP 端点每次请求都读取当前值校验，读取失败时拒绝请求。
 - 单租户部署（`portal.enabled=false`）不注入 owner 校验器，兼容旧的 `X-Linx-Device-Id` / `X-Linx-Session-Id` 行为。
 - 设备必须在 `registered` 状态才能调用工具；一个用户最多一台虚拟设备，一个 `linx_agent_id` 只能属于一台设备。
 
@@ -565,7 +565,7 @@ Portal 模式下，身份校验失败发生在建立 SSE 或 POST 消息之前�
 | HTTP | `code` | 场景 |
 | --- | --- | --- |
 | `400` | `MISSING_IDENTITY` | `/sse` 缺少任一 `X-Linx-*` 头 |
-| `401` | — | 配置了 `mcp_token` 但 Bearer token 缺失或错误 |
+| `401` | — | 配置了 MCP Token（Portal 模式始终有）但 Bearer token 缺失或错误 |
 | `403` | `IDENTITY_MISMATCH` | `/mcp/message` 的头缺失或与 SSE 会话不一致 |
 | `403` | `OWNER_NOT_FOUND` | 设备不存在，或 `(MAC, AgentID)` 无法匹配 |
 | `403` | `IDENTITY_NOT_REGISTERED` | 设备存在但尚未完成开通（`state != registered`） |

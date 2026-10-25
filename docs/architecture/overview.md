@@ -17,12 +17,12 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 
 系统有四条契约（前三条属于运行时，第四条是浏览器到控制面的 UI 契约）：
 
-1. **MCP**：灵矽云与控制面之间。灵矽只看见 MCP Tool，不直接接触 AgentAPI 或 Render。应用管理 Tool 见[应用管理 MCP](app-management-mcp.md)。
-2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。产物结构、启动约定和构建提示见[应用包设计](app-artifact.md)。
-3. **Casting HTTP API**：Render 与投屏服务之间。Render 提供实时媒体流 URL，投屏服务负责协议控制、会话生命周期与播放；当前只注册 `dlna-renderer`，见[投屏服务](casting.md)与本文第 5 章。
-4. **Portal HTTP API**：浏览器与控制面之间。会话 Cookie、同源 JSON 写请求；用户端 `/api/portal/*`、管理端 `/api/admin/*`，见[多租户用户 Portal 设计](user-portal.md)。
+1. **MCP**：灵矽云与控制面之间。灵矽只看见 MCP Tool，不直接接触 AgentAPI 或 Render。应用管理 Tool 见[应用管理 MCP](interfaces/app-management-mcp.md)。
+2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。产物结构、启动约定和构建提示见[应用包设计](interfaces/app-artifact.md)。
+3. **Casting HTTP API**：Render 与投屏服务之间。Render 提供实时媒体流 URL，投屏服务负责协议控制、会话生命周期与播放；当前只注册 `dlna-renderer`，见[投屏服务](../operations/casting.md)与本文第 5 章。
+4. **Portal HTTP API**：浏览器与控制面之间。会话 Cookie、同源 JSON 写请求；用户端 `/api/portal/*`、管理端 `/api/admin/*`，见[多租户用户 Portal 设计](interfaces/portal.md)。
 
-应用包下载、进程运行、Chromium 渲染与媒体流输出的接口约定见 [控制面与 Render 接口设计](gateway-render-interface.md)。
+应用包下载、进程运行、Chromium 渲染与媒体流输出的接口约定见 [控制面与 Render 接口设计](interfaces/gateway-render.md)。
 
 现场语音入口与灵矽云之间使用灵矽自己的设备协议（WebSocket），不是 Open Anywhere 定义的契约，见 [现场语音入口](voice-entry.md)。
 
@@ -35,12 +35,12 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 - 用户用自然语言创建应用，不需要知道代码、构建或部署。
 - 灵矽只依赖一组稳定的 MCP Tool；新应用不需要在灵矽侧重新注册工具。
 - 构建是长任务，可以异步执行、按需查询状态和已用时间，不阻塞语音对话。
-- 同一设备与智能体可并行创建多个应用；每个应用在控制面绑定独立的 AgentAPI 构建会话，并可通过 `update-app` 在同一会话上修订产物（见 [multi-app-sessions.md](multi-app-sessions.md)）。
+- 同一设备与智能体可并行创建多个应用；每个应用在控制面绑定独立的 AgentAPI 构建会话，并可通过 `update-app` 在同一会话上修订产物（见 [multi-app-sessions.md](interfaces/multi-app-sessions.md)）。
 - 应用生成后可以在 Render 上稳定启动，并通过 OpenAPI 被控制面调用。
 - 应用画面通过 DLNA 投到屏幕上；投屏是会话级通道，应用是通道里的内容。
-- 目标状态是切换应用只替换 Stage 内容、不重建投屏会话；当前实现仍会停止旧应用并创建新的 Casting 会话，这是已知缺口（见 [casting.md](casting.md) 与 `AGENTS.md`）。
+- 目标状态是切换应用只替换 Stage 内容、不重建投屏会话；当前实现仍会停止旧应用并创建新的 Casting 会话，这是已知缺口（见 [casting.md](../operations/casting.md) 与 `AGENTS.md`）。
 - Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
-- 控制面重启后从本地 SQLite 恢复应用和构建状态，未完成的构建继续监听，产物下载地址保持有效。持久化模型、恢复顺序与表结构见[控制面数据库设计](gateway-database.md)。
+- 控制面重启后从本地 SQLite 恢复应用和构建状态，未完成的构建继续监听，产物下载地址保持有效。持久化模型、恢复顺序与表结构见[控制面数据库设计](database.md)。
 - **多租户**：管理员引导账号配置平台；普通用户自助注册后自动获得一台虚拟 Linx 智能体；用户之间在应用、屏幕、语音与下游服务上完全隔离。
 - **服务绑定**：每个用户可以选择平台托管的 Render/Casting，或绑定自己的两个公网地址；控制面按 owner 解析端点，不在租户之间复用下游服务。
 
@@ -130,7 +130,7 @@ Client → 停止 Session
 
 ### 5.2 Target 和 Endpoint
 
-`Target` 表示一个物理投屏设备；`Endpoint` 表示该设备上的一种投屏入口。同一台电视可以同时拥有多个 Endpoint；当前实现只注册 `dlna-renderer`，AirPlay 等适配器尚未实现（见 [casting.md](casting.md)）。
+`Target` 表示一个物理投屏设备；`Endpoint` 表示该设备上的一种投屏入口。同一台电视可以同时拥有多个 Endpoint；当前实现只注册 `dlna-renderer`，AirPlay 等适配器尚未实现（见 [casting.md](../operations/casting.md)）。
 
 ```json
 {
@@ -215,7 +215,7 @@ DELETE /v1/projection-sessions/{session_id}
 
 ## 6. 应用管理 MCP
 
-灵矽通过控制面发现屏幕，并创建、修订、查询、启动和停止应用（`get-screens`、`create-app`、`update-app`、`get-app-status`、`start-app`、`stop-app` 等）。工具集、状态模型、通知和错误约定见[应用管理 MCP](app-management-mcp.md)；多应用并行与会话绑定见[多应用并发构建与同会话更新](multi-app-sessions.md)。
+灵矽通过控制面发现屏幕，并创建、修订、查询、启动和停止应用（`get-screens`、`create-app`、`update-app`、`get-app-status`、`start-app`、`stop-app` 等）。工具集、状态模型、通知和错误约定见[应用管理 MCP](interfaces/app-management-mcp.md)；多应用并行与会话绑定见[多应用并发构建与同会话更新](interfaces/multi-app-sessions.md)。
 
 Portal 模式下，MCP 会话必须携带 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id`，屏幕与应用均按 owner 作用域；跨 owner 的 `force` 不会接管屏幕。
 
@@ -253,7 +253,7 @@ Portal 模式下，MCP 会话必须携带 `X-Linx-Device-Id`、`X-Linx-Agent-Id`
 - **生成即可用。** “所有操作必须 API 化”写在构建契约里，由模板、自检脚本和产物准入校验共同保证，编码 Agent 产出的应用天然具备被语音操作的能力。
 - **结果一致。** 语音调用与页面点击走同一条路径，画面、状态和语音反馈不会出现两套事实。
 
-应用包格式与操作声明见[应用包设计](app-artifact.md)，操作发现与转发规则见[应用管理 MCP](app-management-mcp.md)。
+应用包格式与操作声明见[应用包设计](interfaces/app-artifact.md)，操作发现与转发规则见[应用管理 MCP](interfaces/app-management-mcp.md)。
 
 ## 8. 多租户 Portal 与服务绑定
 

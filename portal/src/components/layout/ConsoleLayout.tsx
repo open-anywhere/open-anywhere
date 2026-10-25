@@ -11,6 +11,7 @@ import { ThemeToggle } from '../ThemeToggle'
 export type ConsolePath =
   | '/portal'
   | '/portal/agents'
+  | '/portal/devices'
   | '/portal/apps'
   | '/portal/screens'
   | '/portal/services'

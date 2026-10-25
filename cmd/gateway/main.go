@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -97,6 +99,11 @@ func serve(ctx context.Context, cfg config.Config) error {
 		platform = settings.New(database, box)
 		platform.SetURLValidatorContext(guard.CheckURL)
 		if err := seedPlatformSettings(ctx, platform, cfg); err != nil {
+			return err
+		}
+		// The MCP bearer token lives in the database: generated on first start,
+		// or adopted once from a legacy mcp_token in gateway.yaml.
+		if err := platform.EnsureMCPToken(ctx, cfg.MCPToken); err != nil {
 			return err
 		}
 		// Fail at startup, not on the first request, when stored ciphertext
@@ -210,7 +217,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 	go apps.RunMonitor(ctx)
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", server.StreamableHTTP(cfg.PublicHost, cfg.SpeakerProbe))
+	mux.Handle("/mcp", server.StreamableHTTPHosts(mcpAllowedHosts(cfg, platform), cfg.SpeakerProbe))
 	mux.HandleFunc("GET /sse", server.ServeSSE)
 	mux.Handle("POST /mcp/message", http.MaxBytesHandler(http.HandlerFunc(server.ServeMessage), 1<<20))
 	mux.HandleFunc("GET /artifacts/{app_id}/{name}", artifactStore.ServeDownload)
@@ -225,14 +232,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 			Password:          cfg.PortalPassword,
 			SessionTTL:        cfg.PortalSessionTTL,
 			CookieSecure:      cfg.PortalCookieSecure,
-			LinxPublicMCPURL:  cfg.LinxPublicMCPURL,
-			LinxMCPName:       cfg.LinxMCPName,
-			LinxAssistantName: cfg.LinxAssistantName,
-			LinxLLMModelID:    cfg.LinxLLMModelID,
-			LinxMemModelID:    cfg.LinxMemModelID,
-			LinxIntentModelID: cfg.LinxIntentModelID,
 			SystemPrompt:      cfg.LinxSystemPromptFile,
-			MCPToken:          cfg.MCPToken,
 			ProvisionTimeout:  cfg.LinxProvisionTimeout,
 			TokenPollInterval: cfg.LinxTokenPollInterval,
 			TokenPollAttempts: cfg.LinxTokenPollAttempts,
@@ -249,7 +249,8 @@ func serve(ctx context.Context, cfg config.Config) error {
 		mux.Handle("/api/admin/", portalService.API.AdminHandler())
 		mux.Handle("/", portalService.API.WebHandler())
 		mux.Handle("/voice/", portalService.API.VoiceHandler())
-		if strings.HasSuffix(strings.TrimRight(cfg.LinxPublicMCPURL, "/"), "/sse") {
+		if snapshot, err := platform.Snapshot(ctx); err == nil &&
+			strings.HasSuffix(strings.TrimRight(snapshot.Linx.PublicMCPURL, "/"), "/sse") {
 			log.Printf("warning: linx.public_mcp_url ends with /sse; new Linx MCP servers use Streamable HTTP, configure .../mcp")
 		}
 		log.Printf("portal enabled at /portal")
@@ -257,13 +258,17 @@ func serve(ctx context.Context, cfg config.Config) error {
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           mcpAuth(cfg.MCPToken, mux),
+		Handler:           mcpAuthFunc(mcpTokenSource(cfg, platform), mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	result := make(chan error, 1)
 	go func() { result <- httpServer.ListenAndServe() }()
 	log.Printf("gateway listening on %s", cfg.Addr)
+	if cfg.PortalEnabled {
+		base := browseURL(cfg.Addr)
+		log.Printf("portal: %s/ (admin: %s/admin)", base, base)
+	}
 
 	return awaitShutdown(ctx, httpServer, server.Close, result)
 }
@@ -293,6 +298,14 @@ func seedPlatformSettings(ctx context.Context, provider *settings.Provider, cfg 
 		{Key: settings.KeyLinxAPIKey, Value: cfg.LinxAPIKey},
 		{Key: settings.KeyDefaultRenderURL, Value: cfg.RenderURL},
 		{Key: settings.KeyDefaultCastingURL, Value: cfg.CastingURL},
+		// Agent template and MCP address are managed in the admin page; these
+		// legacy gateway.yaml values only seed a database that has none yet.
+		{Key: settings.KeyLinxPublicMCPURL, Value: cfg.LinxPublicMCPURL},
+		{Key: settings.KeyLinxMCPName, Value: cfg.LinxMCPName},
+		{Key: settings.KeyLinxAssistantName, Value: cfg.LinxAssistantName},
+		{Key: settings.KeyLinxLLMModelID, Value: cfg.LinxLLMModelID},
+		{Key: settings.KeyLinxMemModelID, Value: cfg.LinxMemModelID},
+		{Key: settings.KeyLinxIntentModelID, Value: cfg.LinxIntentModelID},
 	}
 	if cfg.AgentVersion > 0 {
 		seeds = append(seeds, settings.Seed{Key: settings.KeyAgentAPIAgentVersion, Value: strconv.Itoa(cfg.AgentVersion)})
@@ -322,15 +335,67 @@ func healthHandler(database *store.DB) http.HandlerFunc {
 
 // mcpAuth requires the bearer token on MCP endpoints when one is configured.
 func mcpAuth(token string, next http.Handler) http.Handler {
+	return mcpAuthFunc(func(context.Context) (string, error) { return token, nil }, next)
+}
+
+// mcpAuthFunc reads the token on every MCP request, so a token rotated in the
+// admin page applies immediately. A failed lookup denies the request.
+func mcpAuthFunc(token func(context.Context) (string, error), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/mcp" || r.URL.Path == "/mcp/message" || r.URL.Path == "/sse" {
-			if token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+			want, err := token(r.Context())
+			if err != nil {
+				http.Error(w, "Unauthorized", 401)
+				return
+			}
+			if want != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+want)) != 1 {
 				http.Error(w, "Unauthorized", 401)
 				return
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// mcpAllowedHosts lists the extra Host values /mcp accepts: public_host from
+// the config file and, in portal mode, the host of the public MCP address in
+// the admin settings. The settings are read at most every few seconds, so an
+// address saved in the admin page applies without a restart.
+func mcpAllowedHosts(cfg config.Config, platform *settings.Provider) func(context.Context) []string {
+	var (
+		mu      sync.Mutex
+		hosts   []string
+		expires time.Time
+	)
+	return func(ctx context.Context) []string {
+		base := []string{}
+		if cfg.PublicHost != "" {
+			base = append(base, cfg.PublicHost)
+		}
+		if !cfg.PortalEnabled || platform == nil {
+			return base
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if time.Now().Before(expires) {
+			return append(base, hosts...)
+		}
+		// A failed read keeps the previous answer; it is retried on the next request.
+		if snapshot, err := platform.Snapshot(ctx); err == nil {
+			hosts = mcp.HostsFromURL(snapshot.Linx.PublicMCPURL)
+			expires = time.Now().Add(5 * time.Second)
+		}
+		return append(base, hosts...)
+	}
+}
+
+// mcpTokenSource is the database token in portal mode and the configured one
+// otherwise.
+func mcpTokenSource(cfg config.Config, platform *settings.Provider) func(context.Context) (string, error) {
+	if cfg.PortalEnabled && platform != nil {
+		return platform.MCPToken
+	}
+	return func(context.Context) (string, error) { return cfg.MCPToken, nil }
 }
 
 // awaitShutdown waits for cancellation or a serve failure and drains cleanly.
@@ -350,4 +415,17 @@ func awaitShutdown(ctx context.Context, httpServer *http.Server, closeMCP func()
 		}
 		return err
 	}
+}
+
+// browseURL turns a listen address into a URL a browser on this machine can
+// open. A wildcard or empty host is not browsable, so it becomes localhost.
+func browseURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }

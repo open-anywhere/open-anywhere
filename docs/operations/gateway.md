@@ -6,7 +6,7 @@ Gateway 是控制面：对灵矽提供 MCP 工具，向 AgentAPI 提交构建任
 
 - Go，版本以 `go.mod` 为准
 - 已经启动 Casting 和 Render，见[启动 Casting](casting.md)与[启动 Render](render.md)
-- AgentAPI 的构建智能体与云端环境。`agent_id`、`environment_id` 在发布阶段创建一次，创建方法见[控制面与 AgentAPI 接口设计](../gateway-agentapi-interface.md)
+- AgentAPI 的构建智能体与云端环境。`agent_id`、`environment_id` 在发布阶段创建一次，创建方法见[控制面与 AgentAPI 接口设计](../architecture/interfaces/gateway-agentapi.md)
 - 如果启用用户门户，还需要 Node.js、pnpm，以及灵矽云可访问的公网地址
 
 ## 准备配置
@@ -97,7 +97,7 @@ curl http://192.168.1.20:8091/healthz
 
 这些头由灵矽侧携带。手工联调时缺了 `X-Linx-Device-Id` 或 `X-Linx-Session-Id`，`/mcp` 会返回 `400`；门户模式下还必须带 `X-Linx-Agent-Id` 且身份匹配，否则返回 `400` 或 `403`。
 
-灵矽云需要能直接访问这个地址。局域网地址只适合本机联调，正式接入需要把 Gateway 暴露到公网，并在灵矽平台上把 MCP 地址配置为 `https://<域名>/mcp`。如果 Gateway 部署在反向代理后面，把 `public_host` 设为代理对外使用的 Host；留空时不校验 Host。
+灵矽云需要能直接访问这个地址。局域网地址只适合本机联调，正式接入需要把 Gateway 暴露到公网，并在灵矽平台上把 MCP 地址配置为 `https://<域名>/mcp`。如果灵矽云经隧道或反向代理访问 Gateway（请求从本机回环地址进来），MCP 入口只放行配置过的 Host，否则返回 `403 invalid Host header`。门户模式下管理后台里的公网 MCP 地址会自动放行，通常不用再配；独立模式或代理改写了 Host 时，把 `public_host` 设为对外使用的 `host:port`，修改后需要重启。直接暴露在公网网卡上时可以留空。
 
 ## 屏幕映射（可选）
 
@@ -121,34 +121,33 @@ pnpm install
 pnpm build
 ```
 
-然后在 `gateway.yaml` 中打开门户，并补齐门户模式必填的配置：
+然后在 `gateway.yaml` 中打开门户，并设置管理员引导账号：
 
 ```yaml
-mcp_token: "<随机长字符串>"
 portal:
   enabled: true
   username: "<管理员账号>"
   password: "<管理员密码>"
-linx:
-  public_mcp_url: "https://<公网域名>/mcp"
 ```
 
 管理员密码也可以放在 `PORTAL_USERNAME` / `PORTAL_PASSWORD` 环境变量里，避免写进配置文件。
 
 门户模式与独立模式的区别：
 
-- `mcp_token`、`linx.public_mcp_url` 和 `portal.username` / `portal.password` 变为必填。
-- AgentAPI、Linx、Render、Casting 的密钥可以在首次启动后由管理员在 `/admin` 配置，配置文件里的值只在对应设置为空时写入一次。
+- 只有 `portal.username` / `portal.password` 变为必填。
+- AgentAPI、Linx（含公网 MCP 地址、智能体模板）、默认 Render/Casting 都在首次启动后由管理员在 `/admin/settings` 配置，页面上每个字段都写明了数据从哪里取，配置文件里不需要再写这些项。
+- MCP Token 首次启动时自动生成并加密保存，在 `/admin/settings` 里可以重新生成，网关会同步到灵矽的 MCP。
+- 旧版 `gateway.yaml` 里已有的这些值只在数据库对应设置为空时写入一次，之后以数据库为准，改配置文件不再生效，可以从文件里删除。
 - 默认拒绝内网地址。本地调试时要把 `services.allow_private_targets` 设为 `true`，才能绑定 `127.0.0.1` 或局域网服务；生产环境保持 `false`。
 
-启动后打开 <http://192.168.1.20:8091/> 查看 Home，管理员登录后进入 `/admin`，普通用户在 `/register` 注册后使用 `/portal`。浏览器麦克风需要 HTTPS 或 `localhost`，详见[多租户用户 Portal 设计](../user-portal.md)。
+启动后打开 <http://192.168.1.20:8091/> 查看 Home，管理员登录后进入 `/admin`，普通用户在 `/register` 注册后使用 `/portal`。浏览器麦克风需要 HTTPS 或 `localhost`，详见[多租户用户 Portal 设计](../architecture/interfaces/portal.md)。
 
 ## 数据与重启
 
 - 应用状态、构建进度、产物下载令牌保存在 SQLite，默认 `open-anywhere.gateway.db`。
 - 应用包保存在 `artifacts/`，通过 `GET /artifacts/{app_id}/{name}` 提供给 Render。
 - 重启后会恢复应用记录、继续监听未完成的构建，并根据当前配置修正产物下载地址。
-- 门户模式下 `portal-data/secret.key` 用于加密平台密钥和用户服务 token。**丢失后已保存的凭证无法解密，必须与数据库一起备份。**
+- 门户模式下 `portal-data/secret.key` 用于加密平台密钥和用户服务 token。**丢失后已保存的凭证无法解密，必须与数据库一起备份。** 首次配置、备份与恢复步骤见[部署与备份](deploy.md)。
 
 ## 日志与停止
 
@@ -158,10 +157,10 @@ linx:
 
 | 现象 | 排查方向 |
 | --- | --- |
-| 启动报 `-xxx is required` | 独立模式下 AgentAPI、Render、Casting 配置必填；门户模式下 `mcp_token`、`linx.public_mcp_url`、管理员账号必填 |
+| 启动报 `-xxx is required` | 独立模式下 AgentAPI、Render、Casting 配置必填；门户模式下只有管理员账号必填 |
 | 启动报凭证无法解密 | 数据库里的密钥与当前主密钥不匹配，恢复原来的 `portal-data/secret.key` 或 `GATEWAY_SECRET_KEY` |
 | Render 启动应用失败 | 用 Render 主机访问 `artifacts.base_url` 下的下载地址，确认 Render 能拉到产物 |
-| MCP 返回 401 | 请求没有带 `Bearer` token，或 token 与 `mcp_token` 不一致 |
+| MCP 返回 401 | 请求没有带 `Bearer` token，或 token 与当前 MCP Token 不一致（门户模式在 `/admin/settings` 里重新生成会让旧 token 立即失效） |
 | 应用能构建但投屏失败 | 确认 `casting.base_url` 可达、电视在线，并检查 Render 的 `-public-url` 是否是电视能访问的地址 |
 | 门户登录后无法保存平台配置 | 检查主密钥是否可用；查看服务日志中的解密错误 |
 

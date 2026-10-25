@@ -100,7 +100,7 @@ func TestHTTPRegistrationAndVirtualDeviceCreation(t *testing.T) {
 	}
 }
 
-func TestHTTPCreateDeviceReusesTheVirtualDevice(t *testing.T) {
+func TestHTTPCreateDeviceAddsAnotherVirtualDevice(t *testing.T) {
 	env := newPortalHTTPEnv(t)
 	user := createPortalTestUser(t, env, "usr_make", "maker", "password123", store.PortalRoleUser)
 	loginAs(t, env, "maker", "password123")
@@ -127,7 +127,7 @@ func TestHTTPCreateDeviceReusesTheVirtualDevice(t *testing.T) {
 		t.Fatalf("stored=%+v err=%v", stored, err)
 	}
 
-	// Creating again returns the existing device instead of a second one.
+	// Creating again adds a second virtual device with its own agent.
 	response, payload = env.do(t, http.MethodPost, "/api/portal/devices", `{}`, origin)
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("second create status=%d body=%s", response.StatusCode, payload)
@@ -135,8 +135,11 @@ func TestHTTPCreateDeviceReusesTheVirtualDevice(t *testing.T) {
 	var again struct {
 		Device DeviceView `json:"device"`
 	}
-	if err := json.Unmarshal(payload, &again); err != nil || again.Device.ID != created.Device.ID {
+	if err := json.Unmarshal(payload, &again); err != nil || again.Device.ID == "" || again.Device.ID == created.Device.ID {
 		t.Fatalf("again=%s err=%v", payload, err)
+	}
+	if stored, err = env.db.PortalDevicesByUser(context.Background(), user.ID); err != nil || len(stored) != 2 {
+		t.Fatalf("stored=%+v err=%v", stored, err)
 	}
 }
 

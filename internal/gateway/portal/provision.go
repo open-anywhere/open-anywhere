@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
@@ -34,6 +35,23 @@ type ProvisionConfig struct {
 	ProvisionTimeout  time.Duration
 	TokenPollInterval time.Duration
 	TokenPollAttempts int
+
+	// Template, when set, supplies the agent and MCP parameters for every run
+	// so an administrator's change applies without a restart. Non-empty
+	// values replace the fixed fields above.
+	Template func(context.Context) (Template, error)
+}
+
+// Template is the part of ProvisionConfig an administrator can change at
+// runtime: how the shared MCP is registered and how new agents are created.
+type Template struct {
+	MCPName       string
+	PublicMCPURL  string
+	MCPToken      string
+	AssistantName string
+	LLMModelID    string
+	MemModelID    string
+	IntentModelID string
 }
 
 const (
@@ -69,6 +87,8 @@ type Provisioner struct {
 	mu      sync.Mutex
 	running map[string]bool
 	mcpMu   sync.Mutex
+	// token is the last MCP token seen, kept only to scrub it from messages.
+	token atomic.Value
 	sem     chan struct{}
 	logf    func(string, ...any)
 }
@@ -199,6 +219,143 @@ func (p *Provisioner) Run(ctx context.Context, deviceID string) error {
 	return nil
 }
 
+// template returns the effective agent and MCP parameters. With a dynamic
+// source, the MCP address and token must both be configured.
+func (p *Provisioner) template(ctx context.Context) (Template, error) {
+	result := Template{
+		MCPName:       p.cfg.MCPName,
+		PublicMCPURL:  p.cfg.PublicMCPURL,
+		MCPToken:      p.cfg.MCPToken,
+		AssistantName: p.cfg.AssistantName,
+		LLMModelID:    p.cfg.LLMModelID,
+		MemModelID:    p.cfg.MemModelID,
+		IntentModelID: p.cfg.IntentModelID,
+	}
+	if p.cfg.Template != nil {
+		dynamic, err := p.cfg.Template(ctx)
+		if err != nil {
+			return Template{}, err
+		}
+		for _, field := range []struct {
+			value  string
+			target *string
+		}{
+			{dynamic.MCPName, &result.MCPName},
+			{dynamic.PublicMCPURL, &result.PublicMCPURL},
+			{dynamic.MCPToken, &result.MCPToken},
+			{dynamic.AssistantName, &result.AssistantName},
+			{dynamic.LLMModelID, &result.LLMModelID},
+			{dynamic.MemModelID, &result.MemModelID},
+			{dynamic.IntentModelID, &result.IntentModelID},
+		} {
+			if field.value != "" {
+				*field.target = field.value
+			}
+		}
+		if result.PublicMCPURL == "" || result.MCPToken == "" {
+			return Template{}, app.ErrPlatformNotConfigured
+		}
+	}
+	p.token.Store(result.MCPToken)
+	return result, nil
+}
+
+// BindHardware attaches physical hardware, identified by the activation code it
+// shows, to an agent the user already owns and returns the MAC address the
+// platform reports. The device then talks to Linx on its own; the portal only
+// records ownership so MCP calls from it map to this user.
+func (p *Provisioner) BindHardware(ctx context.Context, agentID, code string) (string, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return "", err
+	}
+	return client.BindHardware(ctx, agentID, code)
+}
+
+// Voices lists the voices a user can pick for an agent.
+func (p *Provisioner) Voices(ctx context.Context) ([]linx.Voice, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.Voices(ctx)
+}
+
+// AgentInfo reads an agent's current name and voice.
+func (p *Provisioner) AgentInfo(ctx context.Context, agentID string) (linx.AgentInfo, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return linx.AgentInfo{}, err
+	}
+	return client.GetAgent(ctx, agentID)
+}
+
+// DefaultSystemPrompt is the role description new agents start with.
+func (p *Provisioner) DefaultSystemPrompt() string { return p.cfg.SystemPrompt }
+
+// Languages lists the languages a user can pick for an agent.
+func (p *Provisioner) Languages(ctx context.Context) ([]linx.Language, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.Languages(ctx)
+}
+
+// LLMModels lists the language models a user can pick for an agent.
+func (p *Provisioner) LLMModels(ctx context.Context) ([]linx.LLMModel, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.LLMModels(ctx)
+}
+
+// UpdateAgent changes the user-adjustable fields of an agent.
+func (p *Provisioner) UpdateAgent(ctx context.Context, agentID string, patch linx.AgentPatch) error {
+	client, err := p.client(ctx)
+	if err != nil {
+		return err
+	}
+	return client.UpdateAgent(ctx, agentID, patch)
+}
+
+// UnbindHardware releases hardware from the platform account. Failure is
+// reported so the caller can decide whether the record may still go.
+func (p *Provisioner) UnbindHardware(ctx context.Context, mac string) error {
+	client, err := p.client(ctx)
+	if err != nil {
+		return err
+	}
+	return client.UnbindDevice(ctx, mac)
+}
+
+// SyncMCP pushes the current MCP address and token to the shared Linx MCP
+// instance, if one has been created. It is a no-op before the first
+// provisioning run.
+func (p *Provisioner) SyncMCP(ctx context.Context) error {
+	client, err := p.client(ctx)
+	if err != nil {
+		return err
+	}
+	tmpl, err := p.template(ctx)
+	if err != nil {
+		return err
+	}
+	p.mcpMu.Lock()
+	defer p.mcpMu.Unlock()
+	_, instanceID, err := p.mcpIDs(ctx)
+	if err != nil || instanceID == "" {
+		return err
+	}
+	return client.UpdateMCPInstance(ctx, instanceID, linx.MCPSpec{
+		Name:        tmpl.MCPName,
+		URL:         tmpl.PublicMCPURL,
+		Token:       tmpl.MCPToken,
+		Description: p.cfg.MCPDescription,
+	})
+}
+
 // client resolves the current Linx client, rejecting an unconfigured platform.
 func (p *Provisioner) client(ctx context.Context) (*linx.Client, error) {
 	if p.linx == nil {
@@ -226,14 +383,21 @@ func (p *Provisioner) ensureAgent(ctx context.Context, client *linx.Client, devi
 	if err != nil {
 		return p.fail(ctx, device, stepCreateAgent, "无法读取用户信息", err)
 	}
+	tmpl, err := p.template(ctx)
+	if err != nil {
+		return p.fail(ctx, device, stepCreateAgent, "", err)
+	}
 	name := "Open Anywhere · " + user.Username
+	if device.Name != "" {
+		name += " · " + device.Name
+	}
 	agentID, err := client.CreateAgent(ctx, linx.AgentRequest{
 		Name:          name,
-		AssistantName: p.cfg.AssistantName,
+		AssistantName: tmpl.AssistantName,
 		SystemPrompt:  p.cfg.SystemPrompt,
-		LLMModelID:    p.cfg.LLMModelID,
-		MemModelID:    p.cfg.MemModelID,
-		IntentModelID: p.cfg.IntentModelID,
+		LLMModelID:    tmpl.LLMModelID,
+		MemModelID:    tmpl.MemModelID,
+		IntentModelID: tmpl.IntentModelID,
 	})
 	if err != nil {
 		return p.fail(ctx, device, stepCreateAgent, "", err)
@@ -249,13 +413,17 @@ func (p *Provisioner) ensureMCP(ctx context.Context, client *linx.Client, device
 	if err := p.save(ctx, device); err != nil {
 		return err
 	}
+	tmpl, err := p.template(ctx)
+	if err != nil {
+		return p.fail(ctx, device, stepAttachMCP, "", err)
+	}
 	p.mcpMu.Lock()
 	serverID, instanceID, err := p.mcpIDs(ctx)
 	if err == nil && (serverID == "" || instanceID == "") {
 		spec := linx.MCPSpec{
-			Name:        p.cfg.MCPName,
-			URL:         p.cfg.PublicMCPURL,
-			Token:       p.cfg.MCPToken,
+			Name:        tmpl.MCPName,
+			URL:         tmpl.PublicMCPURL,
+			Token:       tmpl.MCPToken,
 			Description: p.cfg.MCPDescription,
 		}
 		serverID, instanceID, err = client.EnsureMCP(ctx, spec)
@@ -403,7 +571,11 @@ func (p *Provisioner) describeError(err error) string {
 }
 
 func (p *Provisioner) scrub(message string) string {
-	for _, secret := range []string{p.cfg.MCPToken} {
+	secrets := []string{p.cfg.MCPToken}
+	if token, ok := p.token.Load().(string); ok {
+		secrets = append(secrets, token)
+	}
+	for _, secret := range secrets {
 		if secret != "" {
 			message = strings.ReplaceAll(message, secret, "***")
 		}
@@ -453,6 +625,9 @@ func (p *Provisioner) Recover(ctx context.Context) error {
 		return err
 	}
 	for _, device := range devices {
+		if device.Kind != store.PortalDeviceVirtual {
+			continue
+		}
 		path := p.CredentialPath(device)
 		if _, err := devicelinx.LoadDevice(path); err != nil {
 			device.State = store.PortalDeviceError
@@ -476,6 +651,9 @@ func (p *Provisioner) Recover(ctx context.Context) error {
 			return err
 		}
 		for _, device := range devices {
+			if device.Kind != store.PortalDeviceVirtual {
+				continue
+			}
 			path := p.CredentialPath(device)
 			if _, err := devicelinx.LoadDevice(path); err != nil {
 				continue

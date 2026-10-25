@@ -439,7 +439,11 @@ func (a *App) handleEvent(e linx.Event) (finished, closed bool) {
 		ve.Aborted, _ = e.Data["is_aborted"].(bool)
 	}
 	_ = a.controller.Handle(ve)
-	a.api.Publish(ve)
+	// Audio frames have their own channel. Sending them to the event stream
+	// fills its small buffer and pushes out the transcript events.
+	if e.Type != "audio" {
+		a.api.Publish(ve)
+	}
 	if e.Type == "audio" {
 		a.api.PublishAudio(e.Audio)
 		if a.player != nil && a.codec != nil {
