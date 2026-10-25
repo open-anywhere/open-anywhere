@@ -23,7 +23,7 @@ Because nearly every household and every business already owns at least one scre
 
 ## Business Plan
 
-For commercial strategy, pricing, age-segment needs, the first-week go-to-market loop, unit economics, competitive positioning, and the three-year roadmap, read [`docs/business-plan.md`](docs/business-plan.md). Market background and positioning rationale remain in [`docs/business-strategy.md`](docs/business-strategy.md).
+The official business plan is [`docs/business-plan.md`](docs/business-plan.md). Read it for commercial strategy, pricing, age-segment needs, the first-week go-to-market loop, unit economics, competitive positioning, and the three-year targets. Market background and positioning rationale remain in [`docs/business-strategy.md`](docs/business-strategy.md).
 
 When a change affects pricing, packaging, target users, or validation metrics, update the business plan alongside the code.
 
