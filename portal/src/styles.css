@@ -1,27 +1,30 @@
 :root {
   color-scheme: light;
-  --oa-bg: #f7f7f8;
+  /* Palette derived from the logo: Ink #0E1116, Teal #00A88F, Cream #F5F3EE.
+     Solid/text teal is one step darker than the logo so white text and links
+     keep AA contrast on cream and white surfaces. */
+  --oa-bg: #efeae1;
   --oa-surface: #ffffff;
   --oa-surface-elevated: #ffffff;
-  --oa-sidebar: #f2f2f3;
-  --oa-border: #e4e4e7;
-  --oa-border-strong: #d4d4d8;
-  --oa-text: #1c1c1f;
-  --oa-text-secondary: #62626b;
-  --oa-text-tertiary: #8b8b94;
-  --oa-primary: #5e6ad2;
-  --oa-primary-hover: #4f5ac2;
-  --oa-success: #1f8a5b;
-  --oa-warning: #b7791f;
+  --oa-sidebar: #efeae1;
+  --oa-border: #e2dcd2;
+  --oa-border-strong: #cfc7ba;
+  --oa-text: #0e1116;
+  --oa-text-secondary: #5e5a52;
+  --oa-text-tertiary: #6b665c;
+  --oa-primary: #007664;
+  --oa-primary-hover: #006653;
+  --oa-success: #177a4f;
+  --oa-warning: #9a6212;
   --oa-error: #c0362c;
-  --oa-success-bg: #e8f6ee;
-  --oa-warning-bg: #fdf5e6;
-  --oa-error-bg: #fdeceb;
-  --oa-info-bg: #eef0fb;
-  --oa-fill: #f4f4f5;
+  --oa-success-bg: #e7f5ed;
+  --oa-warning-bg: #fbf3e4;
+  --oa-error-bg: #fbe9e7;
+  --oa-info-bg: #e0f2ed;
+  --oa-fill: #eae4da;
   --oa-radius: 8px;
   --oa-radius-sm: 6px;
-  --oa-shadow: 0 1px 2px rgb(0 0 0 / 4%), 0 8px 24px rgb(0 0 0 / 4%);
+  --oa-shadow: 0 1px 2px rgb(14 17 22 / 5%), 0 8px 24px rgb(14 17 22 / 6%);
   --oa-sidebar-width: 232px;
   --oa-content-width: 1180px;
   --oa-font-mono: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -29,25 +32,25 @@
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --oa-bg: #0e0f11;
-  --oa-surface: #161719;
-  --oa-surface-elevated: #1c1d20;
-  --oa-sidebar: #101113;
-  --oa-border: #26272b;
-  --oa-border-strong: #34353a;
-  --oa-text: #f2f3f5;
-  --oa-text-secondary: #a0a2ab;
-  --oa-text-tertiary: #74767e;
-  --oa-primary: #7c85e8;
-  --oa-primary-hover: #6b75dd;
+  --oa-bg: #07090c;
+  --oa-surface: #171e26;
+  --oa-surface-elevated: #1f2730;
+  --oa-sidebar: #07090c;
+  --oa-border: #2a323b;
+  --oa-border-strong: #39434e;
+  --oa-text: #f2f4f2;
+  --oa-text-secondary: #a8aead;
+  --oa-text-tertiary: #80888d;
+  --oa-primary: #00c2a8;
+  --oa-primary-hover: #35d8c0;
   --oa-success: #4ec38a;
   --oa-warning: #d6a94f;
   --oa-error: #e57368;
-  --oa-success-bg: #17251d;
-  --oa-warning-bg: #292317;
-  --oa-error-bg: #2b1b1a;
-  --oa-info-bg: #1c2036;
-  --oa-fill: #1c1d20;
+  --oa-success-bg: #16261e;
+  --oa-warning-bg: #2a2418;
+  --oa-error-bg: #2c1d1c;
+  --oa-info-bg: #0f2a26;
+  --oa-fill: #1e262e;
   --oa-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px rgb(0 0 0 / 24%);
 }
 
@@ -59,6 +62,11 @@ html,
 body,
 #root {
   min-height: 100%;
+}
+
+html,
+body {
+  overscroll-behavior: none;
 }
 
 body {
@@ -518,7 +526,7 @@ button {
   position: sticky;
   top: 0;
   z-index: 20;
-  display: flex;
+  display: none;
   align-items: center;
   gap: 10px;
   height: 48px;
@@ -1770,10 +1778,6 @@ a.activity-item:hover {
     margin: 8px 0;
     border-radius: 12px 0 0 12px;
   }
-
-  .portal-topbar {
-    top: 8px;
-  }
 }
 
 @media (max-width: 960px) {
@@ -1790,6 +1794,7 @@ a.activity-item:hover {
   }
 
   .portal-topbar {
+    display: flex;
     padding: 0 16px;
   }
 

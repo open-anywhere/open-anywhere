@@ -1,19 +1,18 @@
 import { Link } from '@tanstack/react-router'
+import logoDark from '../assets/logo/open-anywhere-logo-dark.svg'
+import logoLight from '../assets/logo/open-anywhere-logo.svg'
+import { useThemeMode } from './ThemeProvider'
 
-export function Brand({
-  subtitle,
-  to = '/',
-}: {
-  subtitle?: string
-  to?: '/' | '/portal' | '/admin'
-}) {
+export function Brand({ to = '/' }: { to?: '/' | '/portal' | '/admin' }) {
+  const { resolved } = useThemeMode()
+
   return (
     <Link to={to} className="brand" aria-label="Open Anywhere 首页">
-      <span className="brand-mark" aria-hidden="true" />
-      <span className="brand-name">
-        Open Anywhere
-        {subtitle ? <span className="brand-sub"> · {subtitle}</span> : null}
-      </span>
+      <img
+        className="brand-logo"
+        src={resolved === 'dark' ? logoDark : logoLight}
+        alt="Open Anywhere"
+      />
     </Link>
   )
 }

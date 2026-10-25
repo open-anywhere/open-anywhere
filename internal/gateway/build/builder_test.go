@@ -323,13 +323,13 @@ func TestWatchIgnoresReplayedPriorTurnWhenCursorSet(t *testing.T) {
 			io.WriteString(w, `{"id":"ses_1","status":"idle"}`)
 		case "/v1/files":
 			w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]any{{
-				"id": "file_new", "filename": "artifact.tar.gz", "downloadable": true,
-				"size_bytes": len(archive), "created_at": freshArtifactCreatedAt(),
-			}},
-			"has_more": false,
-		})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{
+					"id": "file_new", "filename": "artifact.tar.gz", "downloadable": true,
+					"size_bytes": len(archive), "created_at": freshArtifactCreatedAt(),
+				}},
+				"has_more": false,
+			})
 		case "/v1/files/file_new/content":
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Write(archive)
@@ -345,7 +345,7 @@ func TestWatchIgnoresReplayedPriorTurnWhenCursorSet(t *testing.T) {
 	entry := registry.Add(app.App{
 		ID: "app_1", Owner: owner, Prompt: "改成春节主题", State: app.StateBuilding,
 		SessionID: "ses_1", EventCursor: "e_prior_idle", BuildStartedAt: time.Now().UTC(),
-		Name: "welcome-home-particles",
+		Name:     "welcome-home-particles",
 		Artifact: app.Artifact{SHA256: "old", Path: "old.tar.gz"},
 	})
 

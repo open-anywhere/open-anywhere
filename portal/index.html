@@ -2,9 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f7f8" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e0f11" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#efeae1" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#07090c" />
     <title>Open Anywhere</title>
     <script>
       // Resolve the theme before React loads so the first paint is not a white flash.
@@ -17,7 +19,7 @@
           var theme = dark ? 'dark' : 'light'
           document.documentElement.dataset.theme = theme
           document.documentElement.style.colorScheme = theme
-          document.documentElement.style.backgroundColor = dark ? '#0e0f11' : '#f7f7f8'
+          document.documentElement.style.backgroundColor = dark ? '#07090c' : '#efeae1'
         } catch (error) {
           // Keep the CSS fallback theme when localStorage is unavailable.
         }
