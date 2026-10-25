@@ -1,8 +1,5 @@
 # 用户管理端设计
 
-> 状态：Proposal（供评审）
-> 版本：v0.1
-> 日期：2026-10-25
 > 相关文档：[架构设计](architecture.md)、[控制面数据库设计](gateway-database.md)、[现场语音入口](voice-entry.md)、[应用管理 MCP](app-management-mcp.md)
 
 ## 1. 背景与目标
@@ -129,7 +126,7 @@ flowchart LR
 
 ### 4.1 新增模块
 
-| 模块 | 位置（计划） | 职责 |
+| 模块 | 位置 | 职责 |
 | --- | --- | --- |
 | 门户 HTTP 与页面 | `internal/gateway/portal` | 路由、鉴权中间件、单页 HTML、JSON API |
 | 账号与会话 | `internal/gateway/portal/auth.go` | PBKDF2 密码、Cookie 会话、登录限流 |

@@ -1,9 +1,5 @@
 # Open Anywhere 架构设计
 
-> 状态：Proposal（供 PR 评审）
-> 版本：v0.1
-> 日期：2026-10-23
-
 ## 1. 摘要
 
 Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成一个可运行的 Web 应用，并在身边的屏幕上通过 AirPlay 呈现和控制。
