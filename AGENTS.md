@@ -21,6 +21,12 @@ The product's commercial value is genuinely novel:
 
 Because nearly every household and every business already owns at least one screen, the addressable market is very large and still growing. Agents should treat this positioning as the reason the code exists: favor capabilities that shorten the path from spoken intent to a working experience on a nearby screen.
 
+## Business Plan
+
+The official business plan is [`docs/business-plan.md`](docs/business-plan.md). Read it for commercial strategy, pricing, age-segment needs, the first-week go-to-market loop, unit economics, competitive positioning, and the three-year targets. Market background and positioning rationale remain in [`docs/business-strategy.md`](docs/business-strategy.md).
+
+When a change affects pricing, packaging, target users, or validation metrics, update the business plan alongside the code.
+
 ## Validation Status
 
 The core loop has been validated in personal use: four people played four different generated games in one session on a real screen, and everyone enjoyed it. Describe it, cast it, play it works end to end for a small gathering.
