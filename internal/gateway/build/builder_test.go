@@ -21,6 +21,28 @@ import (
 	"github.com/open-anywhere/open-anywhere/pkg/agentapi"
 )
 
+type capturingBuilderStore struct {
+	mu    sync.Mutex
+	saved []app.App
+}
+
+func (c *capturingBuilderStore) SaveApp(a app.App) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.saved = append(c.saved, a)
+	return nil
+}
+func (capturingBuilderStore) DeleteApp(string) error { return nil }
+
+func (c *capturingBuilderStore) last() (app.App, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.saved) == 0 {
+		return app.App{}, false
+	}
+	return c.saved[len(c.saved)-1], true
+}
+
 type recorder struct {
 	mu       sync.Mutex
 	prompts  []string
@@ -270,6 +292,85 @@ func TestResumeWithoutSessionFails(t *testing.T) {
 	}
 }
 
+func TestWatchIgnoresReplayedPriorTurnWhenCursorSet(t *testing.T) {
+	// Continue opens a fresh watch against a session whose SSE replay includes
+	// the previous turn's agent.message + end_turn. Without EventCursor, that
+	// replay falsely completes the update in seconds with the old package.
+	archive := testArtifact(t)
+	priorDone := make(chan struct{})
+	releaseNew := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/sessions/ses_1/events/stream":
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			write := func(data string) {
+				io.WriteString(w, "event: message\ndata: "+data+"\n\n")
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			// Prior turn replay — must be ignored when EventCursor is e_prior_idle.
+			write(`{"id":"e_prior_msg","type":"agent.message","content":[{"type":"text","text":"上一轮已完成"}]}`)
+			write(`{"id":"e_prior_idle","type":"session.status_idle","stop_reason":{"type":"end_turn"}}`)
+			close(priorDone)
+			<-releaseNew
+			write(`{"id":"e_new_run","type":"session.status_running"}`)
+			write(`{"id":"e_new_msg","type":"agent.message","content":[{"type":"text","text":"正在改春节主题"}]}`)
+			write(`{"id":"e_new_idle","type":"session.status_idle","stop_reason":{"type":"end_turn"}}`)
+		case "/v1/sessions/ses_1":
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"id":"ses_1","status":"idle"}`)
+		case "/v1/files":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{
+					"id": "file_new", "filename": "artifact.tar.gz", "downloadable": true,
+					"size_bytes": len(archive), "created_at": "2026-10-25T07:30:00Z",
+				}},
+				"has_more": false,
+			})
+		case "/v1/files/file_new/content":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	notifier := &fakeNotifier{}
+	builder, registry, _ := newTestBuilder(t, server.URL, notifier)
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	entry := registry.Add(app.App{
+		ID: "app_1", Owner: owner, Prompt: "改成春节主题", State: app.StateBuilding,
+		SessionID: "ses_1", EventCursor: "e_prior_idle", BuildStartedAt: time.Now().UTC(),
+		Name: "welcome-home-particles",
+		Artifact: app.Artifact{SHA256: "old", Path: "old.tar.gz"},
+	})
+
+	go builder.watch("app_1", "ses_1")
+	select {
+	case <-priorDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("prior replay not delivered")
+	}
+	// Give the false-complete path time to fire if cursor skip is broken.
+	time.Sleep(300 * time.Millisecond)
+	if entry.Snapshot().State != app.StateBuilding {
+		t.Fatalf("replayed prior end_turn completed the update early: %+v", entry.Snapshot())
+	}
+	close(releaseNew)
+	waitFor(t, 5*time.Second, func() bool { return entry.Snapshot().State != app.StateBuilding })
+	snapshot := entry.Snapshot()
+	if snapshot.State != app.StateIdle || snapshot.Artifact.SHA256 == "old" || snapshot.EventCursor != "e_new_idle" {
+		t.Fatalf("expected new-turn completion, got %+v", snapshot)
+	}
+	if notes := notifier.list(); len(notes) != 1 || notes[0].Message != "APP 更新完成" {
+		t.Fatalf("notes = %+v", notes)
+	}
+}
+
 func TestBuilderContinueUpdates(t *testing.T) {
 	archive := testArtifact(t)
 	rec := &recorder{}
@@ -277,6 +378,8 @@ func TestBuilderContinueUpdates(t *testing.T) {
 	defer server.Close()
 	notifier := &fakeNotifier{}
 	builder, registry, _ := newTestBuilder(t, server.URL, notifier)
+	store := &capturingBuilderStore{}
+	registry.SetPersister(store)
 
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	entry := registry.Add(app.App{
@@ -292,6 +395,10 @@ func TestBuilderContinueUpdates(t *testing.T) {
 	snapshot := entry.Snapshot()
 	if snapshot.State != app.StateIdle || snapshot.Artifact.SHA256 == "old" {
 		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	saved, ok := store.last()
+	if !ok || saved.State != app.StateIdle || saved.Artifact.SHA256 == "old" || saved.SessionID != "ses_1" {
+		t.Fatalf("continue success was not persisted: %+v", saved)
 	}
 	waitFor(t, 2*time.Second, func() bool { return len(notifier.list()) == 1 })
 	if notes := notifier.list(); notes[0].Message != "APP 更新完成" {
@@ -336,6 +443,8 @@ func TestBuilderContinueRejectsBusyOrMissingSession(t *testing.T) {
 func TestFailKeepsPreviousArtifact(t *testing.T) {
 	builder, registry, _ := newTestBuilder(t, "http://127.0.0.1:1", &fakeNotifier{})
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	store := &capturingBuilderStore{}
+	registry.SetPersister(store)
 	entry := registry.Add(app.App{
 		ID: "app_1", Owner: owner, State: app.StateBuilding,
 		Artifact: app.Artifact{SHA256: "keep", Path: "keep.tar.gz"},
@@ -347,8 +456,31 @@ func TestFailKeepsPreviousArtifact(t *testing.T) {
 	if snapshot.State != app.StateIdle || snapshot.Artifact.SHA256 != "keep" || snapshot.Error != nil {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
+	saved, ok := store.last()
+	if !ok || saved.State != app.StateIdle || saved.Artifact.SHA256 != "keep" {
+		t.Fatalf("fail did not persist idle+previous artifact: %+v", saved)
+	}
 	notes := builder.notifier.(*fakeNotifier).list()
 	if len(notes) != 1 || notes[0].State != app.StateIdle || !strings.Contains(notes[0].Message, "更新失败") {
+		t.Fatalf("notes = %+v", notes)
+	}
+}
+
+func TestFailDoesNotPublishWhenPersistFails(t *testing.T) {
+	builder, registry, _ := newTestBuilder(t, "http://127.0.0.1:1", &fakeNotifier{})
+	owner := app.Identity{DeviceID: "device", SessionID: "session"}
+	entry := registry.Add(app.App{
+		ID: "app_1", Owner: owner, State: app.StateBuilding,
+		Artifact: app.Artifact{SHA256: "keep", Path: "keep.tar.gz"},
+	})
+	registry.SetPersister(failingBuilderStore{func(app.App) bool { return true }})
+	if kept := builder.fail("app_1", "构建需要人工处理", nil); kept {
+		t.Fatal("fail reported kept despite persist failure")
+	}
+	if entry.Snapshot().State != app.StateBuilding {
+		t.Fatalf("memory changed despite persist failure: %+v", entry.Snapshot())
+	}
+	if notes := builder.notifier.(*fakeNotifier).list(); len(notes) != 0 {
 		t.Fatalf("notes = %+v", notes)
 	}
 }

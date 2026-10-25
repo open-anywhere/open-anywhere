@@ -179,8 +179,16 @@ func (b *Builder) sessionStatus(sessionID string) string {
 
 func (b *Builder) watch(appID, sessionID string) {
 	deadline := b.now().Add(b.cfg.BuildTimeout)
-	if record, ok := b.registry.Get(appID); ok && !record.Snapshot().BuildStartedAt.IsZero() {
-		deadline = record.Snapshot().BuildStartedAt.Add(b.cfg.BuildTimeout)
+	afterCursor := ""
+	if record, ok := b.registry.Get(appID); ok {
+		snap := record.Snapshot()
+		if !snap.BuildStartedAt.IsZero() {
+			deadline = snap.BuildStartedAt.Add(b.cfg.BuildTimeout)
+		}
+		// AgentAPI replays the full event history on every connect. Continue and
+		// Resume must skip events already consumed or a prior turn's end_turn is
+		// treated as this turn finishing (false idle + stale artifact).
+		afterCursor = snap.EventCursor
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
@@ -218,6 +226,12 @@ func (b *Builder) watch(appID, sessionID string) {
 					continue
 				}
 				seen[event.ID] = true
+			}
+			if afterCursor != "" {
+				if event.ID == afterCursor {
+					afterCursor = ""
+				}
+				continue
 			}
 			if entry, ok := b.registry.Get(appID); ok {
 				if entry.Snapshot().State != app.StateBuilding {
@@ -408,6 +422,7 @@ func (b *Builder) register(entry *app.Record, result artifact.Result, item artif
 // fail marks a building app as failed. If a previous startable artifact exists
 // (an update turn), the app returns to idle and keeps that package; the return
 // value is true so the caller can leave the AgentAPI session unarchived.
+// State changes go through Do so a disk write failure leaves memory unchanged.
 func (b *Builder) fail(appID, message string, cause error) bool {
 	entry, ok := b.registry.Get(appID)
 	if !ok {
@@ -416,9 +431,9 @@ func (b *Builder) fail(appID, message string, cause error) bool {
 	applied := false
 	keptPrevious := false
 	var snapshot app.App
-	entry.Update(func(a *app.App) {
+	err := entry.Do(func(a *app.App) error {
 		if a.State != app.StateBuilding {
-			return
+			return nil
 		}
 		applied = true
 		a.BuildFinishedAt = b.now()
@@ -429,7 +444,7 @@ func (b *Builder) fail(appID, message string, cause error) bool {
 			a.LastStatusMessage = message
 			a.LastProgress = ""
 			snapshot = *a
-			return
+			return nil
 		}
 		a.State = app.StateError
 		a.Error = &app.Error{
@@ -439,7 +454,12 @@ func (b *Builder) fail(appID, message string, cause error) bool {
 			LastAgentMessage: a.LastAgentMessage,
 		}
 		snapshot = *a
+		return nil
 	})
+	if err != nil {
+		b.logf("build %s persist failure state failed: %v", appID, err)
+		return false
+	}
 	if !applied {
 		return false
 	}
