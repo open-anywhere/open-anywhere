@@ -110,20 +110,28 @@ export function ServicesPage() {
   })
 
   const submit = async () => {
-    const values = await form.validateFields(
-      mode === 'custom'
-        ? ['mode', 'render_url', 'casting_url', 'render_token', 'casting_token']
-        : ['mode'],
-    )
+    // A rejected validation is shown on the form; it must not surface as an
+    // unhandled rejection.
+    const values = await form
+      .validateFields(
+        mode === 'custom'
+          ? ['mode', 'render_url', 'casting_url', 'render_token', 'casting_token']
+          : ['mode'],
+      )
+      .catch(() => undefined)
+    if (!values) return
     save.mutate(values)
   }
 
   const runTest = async () => {
-    const values = await form.validateFields(
-      mode === 'custom'
-        ? ['mode', 'render_url', 'casting_url', 'render_token', 'casting_token']
-        : ['mode'],
-    )
+    const values = await form
+      .validateFields(
+        mode === 'custom'
+          ? ['mode', 'render_url', 'casting_url', 'render_token', 'casting_token']
+          : ['mode'],
+      )
+      .catch(() => undefined)
+    if (!values) return
     test.mutate(values)
   }
 

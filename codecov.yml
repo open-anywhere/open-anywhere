@@ -13,7 +13,8 @@ comment:
   behavior: default
   require_changes: false
 
-# 每个 Go 程序单独上传一份覆盖率，flag 与 CI 的 program 一一对应。
+# 每个 Go 程序单独上传一份覆盖率，flag 与 CI 的 program 一一对应；
+# portal 是前端（Vite + Vitest），单独上传，不与 Go 的包混在一起。
 # 各程序的包划分也决定了 Codecov 上对应的 component。
 flags:
   casting:
@@ -39,6 +40,9 @@ flags:
   render-e2e:
     paths:
       - "internal/render/**"
+  portal:
+    paths:
+      - "portal/src/**"
 
 component_management:
   individual_components:
@@ -66,6 +70,10 @@ component_management:
       paths:
         - "cmd/voiceentry/**"
         - "internal/voiceentry/**"
+    - component_id: portal
+      name: portal
+      paths:
+        - "portal/src/**"
 
 # voiceentry 的 audio player/source 和 media.go 只是 ffplay/ffmpeg/libopus 的
 # 封装，单元测试环境没有这些程序，测试里用假的实现代替

@@ -166,7 +166,10 @@ export function AgentSettingsModal({ deviceId, reconnectable, onClose }: Props) 
   })
 
   const submit = async () => {
-    const values = await form.validateFields()
+    // A rejected validation is shown on the form; it must not surface as an
+    // unhandled rejection.
+    const values = await form.validateFields().catch(() => undefined)
+    if (!values) return
     const input = changes(values)
     if (Object.keys(input).length === 0) {
       onClose()

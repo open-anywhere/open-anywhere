@@ -6,6 +6,7 @@ import {
   createRouter,
   lazyRouteComponent,
   redirect,
+  type RouterHistory,
 } from '@tanstack/react-router'
 import { Button, Result } from 'antd'
 import { ApiError } from '../api'
@@ -77,7 +78,10 @@ const loginRoute = createRoute({
     search: Record<string, unknown>,
   ): { redirect?: string; switchAccount?: boolean } => ({
     redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
-    switchAccount: search.switchAccount === true || search.switchAccount === '1',
+    // The router JSON-parses the query, so "?switchAccount=1" arrives as the
+    // number 1. Accept the spellings a person can type.
+    switchAccount:
+      search.switchAccount === true || search.switchAccount === 1 || search.switchAccount === '1',
   }),
   component: lazyRouteComponent(() => import('../pages/LoginPage'), 'LoginPage'),
 })
@@ -306,10 +310,12 @@ const routeTree = rootRoute.addChildren([
   legacyConsoleSplatRoute,
 ])
 
-export function createAppRouter(queryClient: QueryClient) {
+export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {
   return createRouter({
     routeTree,
     context: { queryClient },
+    // Tests pass a memory history; the app uses the browser history.
+    history,
     basepath: '/',
     trailingSlash: 'never',
     defaultPreload: 'intent',

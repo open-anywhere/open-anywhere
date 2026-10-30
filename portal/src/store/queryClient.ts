@@ -9,26 +9,42 @@ function redirectTo(to: string) {
   window.location.assign(to)
 }
 
-// Session and role failures can come from any query or mutation, not just the
-// initial `me` probe. Handle them once here so an expired session never leaves
-// stale tenant data on screen.
-function handleAPIError(error: unknown) {
-  if (!(error instanceof ApiError)) return
-  const path = window.location.pathname
+/**
+ * Where a failed request should send the browser, if anywhere.
+ *
+ * Session and role failures can come from any query or mutation, not just the
+ * initial `me` probe, so the decision lives here and is applied once in
+ * `handleAPIError`. Login and registration failures stay on their form.
+ */
+export function authRedirectTarget(
+  error: unknown,
+  pathname: string,
+  search = '',
+): string | undefined {
+  if (!(error instanceof ApiError)) return undefined
   // Public pages probe the session to show the right navigation, but a 401
   // there only means "not signed in" and must not bounce visitors to login.
-  const protectedPage = path === '/portal' || path.startsWith('/portal/') || path === '/admin' || path.startsWith('/admin/')
+  const protectedPage =
+    pathname === '/portal' ||
+    pathname.startsWith('/portal/') ||
+    pathname === '/admin' ||
+    pathname.startsWith('/admin/')
   if (error.status === 401 && !error.authRequest && protectedPage) {
-    queryClient.clear()
-    const next = window.location.pathname + window.location.search
-    redirectTo(`/login?redirect=${encodeURIComponent(next)}`)
-    return
+    return `/login?redirect=${encodeURIComponent(pathname + search)}`
   }
-  if (error.status === 403 && error.code === 'ADMIN_REQUIRED') {
-    if (window.location.pathname.startsWith('/admin')) {
-      redirectTo('/portal')
-    }
+  if (error.status === 403 && error.code === 'ADMIN_REQUIRED' && pathname.startsWith('/admin')) {
+    return '/portal'
   }
+  return undefined
+}
+
+// Handle a session or role failure once so an expired session never leaves
+// stale tenant data on screen.
+function handleAPIError(error: unknown) {
+  const target = authRedirectTarget(error, window.location.pathname, window.location.search)
+  if (!target) return
+  if (target.startsWith('/login')) queryClient.clear()
+  redirectTo(target)
 }
 
 // Server state (session, devices, apps) lives in TanStack Query. There is no

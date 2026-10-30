@@ -35,11 +35,16 @@ export function AddDeviceModal({ open, devices, submitting, onCancel, onSubmit }
   }, [open, form])
 
   const submit = async () => {
-    const values = await form.validateFields()
+    // A rejected validation is shown on the form; it must not surface as an
+    // unhandled rejection.
+    const values = await form.validateFields().catch(() => undefined)
+    if (!values) return
     const input: CreateDeviceInput = { kind: values.kind, name: values.name?.trim() || undefined }
     if (values.kind === 'physical') {
       input.activation_code = values.activation_code?.trim()
-      input.agent_device_id = values.agent_device_id
+      // With a single agent the picker is not rendered, so the field never
+      // registers and has to be filled from that agent directly.
+      input.agent_device_id = values.agent_device_id ?? agents[0]?.id
     }
     onSubmit(input)
   }
