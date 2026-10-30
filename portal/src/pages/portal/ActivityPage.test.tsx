@@ -6,7 +6,10 @@ import { makeApp, makeDevice, makeUser } from '../../test/fixtures'
 import { renderApp } from '../../test/router'
 
 const now = new Date()
-const minutesAgo = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString()
+// 分组标签按本地日期计算，所以时间点要以本地日期为锚点。用固定的分钟差
+// 推算「昨天」会在换时区或跨午夜时落到前天或今天。
+const todayAt = now.toISOString()
+const yesterdayAt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12).toISOString()
 
 function routes(overrides: Record<string, unknown> = {}) {
   return {
@@ -14,19 +17,19 @@ function routes(overrides: Record<string, unknown> = {}) {
       user: makeUser(),
       devices: [
         makeDevice({
-          created_at: minutesAgo(120),
-          registered_at: minutesAgo(119),
+          created_at: todayAt,
+          registered_at: todayAt,
         }),
       ],
     }),
     'GET /api/portal/apps': ok({
       apps: [
-        makeApp({ state: 'idle', built_at: minutesAgo(60), build_started_at: minutesAgo(61) }),
+        makeApp({ state: 'idle', built_at: todayAt, build_started_at: todayAt }),
         makeApp({
           app_id: 'app_2',
           title: '旅行抢答',
           state: 'idle',
-          started_at: minutesAgo(2000),
+          started_at: yesterdayAt,
         }),
       ],
     }),
@@ -61,7 +64,7 @@ describe('ActivityPage', () => {
               state: 'building',
               title: '旅行抢答',
               progress: '正在生成题目',
-              build_started_at: minutesAgo(1),
+              build_started_at: todayAt,
             }),
           ],
         }),
