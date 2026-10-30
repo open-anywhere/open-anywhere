@@ -274,13 +274,15 @@ export function AdminSettingsPage() {
 
   const runSave = async () => {
     if (!settingsData) return
-    const values = await form.validateFields()
+    const values = await form.validateFields().catch(() => undefined)
+    if (!values) return
     save.mutate(toPatch(values, settingsData))
   }
 
   const runTest = async () => {
     if (!settingsData) return
-    const values = await form.validateFields()
+    const values = await form.validateFields().catch(() => undefined)
+    if (!values) return
     test.mutate(toPatch(values, settingsData))
   }
 
