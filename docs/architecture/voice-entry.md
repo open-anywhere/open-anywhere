@@ -77,7 +77,7 @@ sequenceDiagram
 
 ### 投屏工具（`-casting-url`）
 
-模拟硬件可以额外上报三个 `self.cast.*` 工具，用来把云端应用投到现场的电视上。它**只连本机的 casting 服务，不连云端**：应用由控制面构建、启动并返回 `stream_url`，设备只负责找屏和投放。同一套工具面已做进小智云聊 S3 MAX 固件，作为生产路径，见 [小智云聊 S3 MAX 接入投屏](../operations/yunliao-s3-max-firmware-mcp.md)。开启方式：
+模拟硬件可以额外上报三个 `self.cast.*` 工具，用来把云端应用投到现场的电视上。它**只连本机的 casting 服务，不连云端**：应用由控制面构建、启动并返回 `stream_url`，设备只负责找屏和投放。小智云聊 S3 MAX 固件是生产路径：工具名和话术相同，但 SSDP 发现与 DLNA 控制都在固件里，不需要本地 casting 服务，见 [小智云聊 S3 MAX 接入投屏](../operations/yunliao-s3-max-firmware-mcp.md)。模拟硬件开启方式：
 
 ```bash
 go run ./cmd/voiceentry -serve -casting-url http://192.168.1.20:8091

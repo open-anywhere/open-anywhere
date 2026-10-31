@@ -127,7 +127,7 @@
   <div class="meta">
     <span>Open Anywhere · 小智云聊 S3 MAX 固件链路</span>
     <span>2026-10-31</span>
-    <span class="tag">方案 · Phase 1–4 完成，待整链联调</span>
+    <span class="tag">方案 · Phase 1–5 完成，固件已上机验证发现与投放</span>
   </div>
 </header>
 
@@ -137,19 +137,20 @@
 </p>
 
 <p class="muted">
-  <strong>进度（2026-10-31）：</strong>Phase 1 控制面、Phase 2 模拟器、Phase 3 固件、Phase 4 文档均已落地。控制面侧在 <code>feat/device-casting</code> 分支（<code>cdc1030</code>，已推到 origin）；固件在 <code>feat/casting-mcp</code> 分支（<code>499e0ba</code>，已推到 fork <code>LUPENGHAN/xiaozhi-esp32</code>）。模拟器单测全绿，固件在 ESP-IDF v6.1 上编译通过。
+  <strong>进度（2026-10-31）：</strong>Phase 1 控制面、Phase 2 模拟器、Phase 3 固件、Phase 4 文档均已落地；Phase 5 把 SSDP 发现与 DLNA 控制整体搬进固件，设备不再依赖本地 casting。控制面侧在 <code>feat/device-casting</code> 分支（<code>cdc1030</code>，已推到 origin）；固件在 <code>feat/casting-mcp</code> 分支（<code>499e0ba</code> 之后又有未提交的内置发现改造）。模拟器单测全绿，固件在 ESP-IDF v6.1 上编译通过。
   <strong>本机整链已跑通：</strong><code>create-app → start-app → self.cast.cast → Macast 出画面</code>，语音说完到电视播放「一题双答」，见 <a href="#s10">10 联调记录</a>。
-  <strong>还没跑：</strong>固件上机（真机上看 <code>tools/list</code>、真电视上看画面）。本文随实现随时更新。
+  <strong>固件已上机验证：</strong>设备自己 SSDP 发现 2 台渲染器，SOAP 投放后 Macast 实际拉流播放，停止返回 200，见 <a href="#s10">10 联调记录</a>。
+  <strong>还没跑：</strong>灵矽下发的真实 <code>tools/list</code>、语音说「投到客厅电视」的整链、真实商用电视。
 </p>
 
 <div class="cards">
   <div class="card">
     <div class="k">结论 1</div>
-    <div class="v">产品只保留一条投屏路径：设备 MCP 直连本地 casting</div>
+    <div class="v">产品只保留一条投屏路径：设备 MCP 自己发现电视、自己发 DLNA</div>
   </div>
   <div class="card">
     <div class="k">结论 2</div>
-    <div class="v">云端投屏冻结，降级为 casting 服务的联调工具</div>
+    <div class="v">Go casting 服务冻结，只作桌面调试与模拟硬件的联调工具</div>
   </div>
   <div class="card">
     <div class="k">结论 3</div>
@@ -165,25 +166,25 @@
   <div class="step"><div class="n">1</div><div class="b"><strong>用户说话</strong><span>小智设备 → 灵矽云，ASR / 意图识别，会话里带 <code>features.mcp</code></span></div></div>
   <div class="step"><div class="n">2</div><div class="b"><strong>灵矽调云端 MCP 建应用</strong><span><code>create-app</code> 异步返回，语音回合不等待构建</span></div></div>
   <div class="step"><div class="n">3</div><div class="b"><strong>灵矽调云端 MCP 启动</strong><span><code>start-app(app_id)</code> 只启动 Render，返回 <code>stream_url</code>，不碰任何屏幕</span></div></div>
-  <div class="step"><div class="n">4</div><div class="b"><strong>灵矽调设备 MCP 找屏幕</strong><span><code>self.cast.list_screens</code> → 固件经局域网问本地 casting <code>GET /v1/targets</code></span></div></div>
-  <div class="step"><div class="n">5</div><div class="b"><strong>灵矽把地址交给设备</strong><span><code>self.cast.cast(url, target_id)</code> → 固件 <code>POST /v1/projection-sessions</code></span></div></div>
-  <div class="step"><div class="n">6</div><div class="b"><strong>电视拉流</strong><span>本地 casting 发 DLNA <code>SetAVTransportURI</code> + <code>Play</code>，电视自己向云端 Render 拉 mpegts</span></div></div>
+  <div class="step"><div class="n">4</div><div class="b"><strong>灵矽调设备 MCP 找屏幕</strong><span><code>self.cast.list_screens</code> → 固件返回后台 SSDP 扫描缓存的电视列表</span></div></div>
+  <div class="step"><div class="n">5</div><div class="b"><strong>灵矽把地址交给设备</strong><span><code>self.cast.cast(url, target_id)</code> → 固件直接向电视发 SOAP</span></div></div>
+  <div class="step"><div class="n">6</div><div class="b"><strong>电视拉流</strong><span>固件发 DLNA <code>SetAVTransportURI</code> + <code>Play</code>，电视自己向云端 Render 拉 mpegts</span></div></div>
 </div>
 
 <div class="callout">
-  <div class="h">关键：三段网络，只有两段是新的</div>
-  设备 ↔ 灵矽、灵矽 ↔ 控制面都是既有通道；新增的只有设备 ↔ 本地 casting 这一段，而且只在局域网里，不出网、不需要隧道。
+  <div class="h">关键：三段网络，只有一段是新的</div>
+  设备 ↔ 灵矽、灵矽 ↔ 控制面都是既有通道；新增的只有设备 ↔ 电视这一段（SSDP 多播 + SOAP），只在局域网里，不出网、不需要隧道，也不需要任何中间服务。
 </div>
 
 <h3>另一条链路：人</h3>
 <p>浏览器不经过灵矽。Portal 要显示屏幕状态、要能远程停屏，只能靠 Gateway；而 Gateway 在设备投屏模式下够不到现场。</p>
 
 <div class="lane-gap">
-  语音：灵矽 → 设备 MCP → casting → 电视　<span class="pill">已通</span><br>
+  语音：灵矽 → 设备 MCP（SSDP + DLNA）→ 电视　<span class="pill">已通</span><br>
   人：浏览器 → Gateway → <span style="color:#a13b3b">现场（无通道）</span>　<span class="pill">本方案的已知损失</span>
 </div>
 
-<p>这一段的补法是「现场代理出站上报」（casting 所在的那台机器每 30 秒推一次状态），但它属于共享现场多租户场景，不在本期。见 <a href="#s08">08 风险</a>。</p>
+<p>这一段的补法是让设备固件把自己缓存的屏幕状态通过语音连接上报给控制面，但它属于共享现场多租户场景，不在本期。见 <a href="#s08">08 风险</a>。</p>
 
 <h2><span class="num">02</span>目标与范围</h2>
 
@@ -197,7 +198,7 @@
 <h3>本期交付</h3>
 <ul>
   <li>控制面：应用可以存在于「Render 已启动、尚未上屏」的状态，并把 <code>stream_url</code> 返回给灵矽。</li>
-  <li>小智固件：<code>self.cast.*</code> 从「代理云端 MCP」改成「直连本地 casting HTTP」，工具面收到 3 个。</li>
+  <li>小智固件：<code>self.cast.*</code> 改成 3 个工具，并在固件内实现 SSDP 发现与 DLNA 控制（不再依赖本地 casting 服务）。</li>
   <li>模拟器 <code>voiceentry</code>：与设备同构的 <code>device</code> 实现，无硬件时跑通整条链。</li>
   <li>文档：作废「现场隧道」，重写现场边界与固件说明。</li>
 </ul>
@@ -211,12 +212,12 @@
 
 <h2><span class="num">03</span>规则与边界</h2>
 <ol>
-  <li><strong>设备只访问现场局域网。</strong>不持 token、不调云端；<code>X-Linx-*</code> 三个身份头只出现在灵矽 → 控制面这一段，由平台自动注入。</li>
+  <li><strong>投屏路径上设备只访问现场局域网。</strong>发现与控制都是设备 → 电视，不经过云端；<code>X-Linx-*</code> 三个身份头只出现在灵矽 → 控制面这一段，由平台自动注入。</li>
   <li><strong>媒体地址由云端给出，电视自己拉流。</strong>Render 的 <code>-public-url</code> 必须公网可达，按每屏 2–8 Mbps 预留上行。</li>
-  <li><strong>一屏一会话由本地 casting 的 <code>409</code> 保证。</strong>控制面不再参与占用仲裁，也不再实现 <code>force</code> 的接管逻辑。</li>
+  <li><strong>一屏一会话由电视自己的 UPnP 状态保证。</strong>控制面不参与占用仲裁，也不实现 <code>force</code>；设备只记录最近一次投屏，重复 <code>cast</code> 直接覆盖。</li>
   <li><strong>语音回合不等待构建。</strong><code>create-app</code> 异步返回；<code>start-app</code> 在 Render 就绪后作为另一次独立调用发生。</li>
   <li><strong><code>playing</code> 不等于出画。</strong>它只代表设备确认了播放指令，验收必须看电视实际画面。</li>
-  <li><strong>现场 casting 无鉴权</strong>，只能跑在可信局域网，不得映射公网。</li>
+  <li><strong>设备端投屏不监听端口。</strong>链路纯出站；SSDP 与 SOAP 都只在可信局域网内，设备与电视必须同广播域。</li>
   <li><strong>云端投屏不可作为产品能力出现。</strong>不出现在 Portal、不进部署文档，只由开发配置开启。</li>
 </ol>
 
@@ -293,32 +294,41 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
 
 <h2><span class="num">06</span>设计：设备 MCP</h2>
 
-<p>固件里的 <code>main/casting/</code> 不删，改写。目标从「云端 <code>/mcp</code>」换成「本地 casting HTTP」，删掉身份头、token、JSON-RPC 封装、构建轮询与主动播报。</p>
+<p>固件里的 <code>main/casting/</code> 不删，继续改写：目标从「本地 casting HTTP」再进一步，改成<strong>设备自己实现 SSDP 发现与 DLNA 控制</strong>。删掉 <code>cast_client.*</code>、身份头、token、JSON-RPC 封装、构建轮询与主动播报，现场不再需要任何服务。</p>
 
 <h3>6.1 工具面</h3>
 <table class="boxed">
   <thead><tr><th style="width:28%">工具</th><th style="width:30%">参数</th><th>行为</th></tr></thead>
   <tbody>
-    <tr><td><code>self.cast.list_screens</code></td><td>—</td><td><code>GET /v1/targets</code>，对模型报「名字 + 状态」（<code>Macast(...)空闲</code>）；id 与 <code>endpoint_id</code> 留在设备缓存里</td></tr>
-    <tr><td><code>self.cast.cast</code></td><td><code>url</code>, <code>target_id</code></td><td>按 id → 唯一名字 → <code>GET /v1/targets/{id}</code> 的顺序解析屏幕，再 <code>POST /v1/projection-sessions</code>，固定 <code>mpegts / h264 / aac</code>；被占用返回 409 原文</td></tr>
-    <tr><td><code>self.cast.stop</code></td><td><code>session_id</code></td><td><code>DELETE</code>，幂等</td></tr>
+    <tr><td><code>self.cast.list_screens</code></td><td>—</td><td>读后台缓存的电视列表，对模型报「名字 + 状态」（<code>Macast(...)空闲</code>）；稳态下不访问网络，首次调用且从未扫成功时同步扫一次</td></tr>
+    <tr><td><code>self.cast.cast</code></td><td><code>url</code>, <code>target_id</code></td><td>按 id → 唯一名字解析目标，缓存没命中就现场扫一次；然后直接向电视的 <code>controlURL</code> 发 <code>SetAVTransportURI</code> + <code>Play</code></td></tr>
+    <tr><td><code>self.cast.stop</code></td><td><code>session_id</code>（可选）</td><td>发 <code>Stop</code>；不传时停本设备最近一次投屏，701 视为已停</td></tr>
   </tbody>
 </table>
 
 <p class="muted">删掉的 8 个旧工具里，<code>create_and_cast / update_app / app_status / app_operations / app_request / list_apps</code> 全部属于云端，灵矽直接调云端 MCP 即可。</p>
 
-<h3>6.2 配置</h3>
+<h3>6.2 发现与缓存</h3>
 <ul>
-  <li>新增单一配置 <code>CONFIG_CASTING_URL</code>，例：<code>http://192.168.1.20:8091</code>。</li>
-  <li>运行时可用 NVS <code>casting/url</code> 覆盖。</li>
+  <li>新增 <code>main/casting/ssdp.*</code>：M-SEARCH 到 <code>239.255.255.250:1900</code>，2.5 秒窗口收单播应答，按 <code>Location</code> 去重。</li>
+  <li>新增 <code>main/casting/dlna_renderer.*</code>：拉 <code>description.xml</code>（32 KB 上限），找 MediaRenderer + AVTransport，解析 <code>controlURL</code>；SOAP 带 DIDL-Lite 元数据，URL 双重转义。</li>
+  <li>新增 <code>main/casting/xml_lite.*</code>：事件式 XML 解析，深度 16、输入 32 KB，只服务描述与 SOAP Fault。</li>
+  <li>后台任务每 <code>CONFIG_CASTING_SCAN_INTERVAL_SEC</code>（默认 60 秒）扫描一次；结果缓存最多 16 台，连续 3 次没看到或 <code>max-age</code> 过期标离线，连续 6 次才删除（正在投屏的那台保留）。</li>
+</ul>
+
+<h3>6.3 配置</h3>
+<ul>
+  <li>新增单一配置 <code>CONFIG_CASTING_SCAN_INTERVAL_SEC</code>（int，默认 60，范围 10–600）。</li>
+  <li>删除 <code>CONFIG_CASTING_URL</code> 与 NVS <code>casting/url</code>；不再有服务地址可配。</li>
   <li>删除 <code>CAST_MCP_URL</code>、<code>CAST_MCP_TOKEN</code>、<code>CAST_AGENT_ID</code>、<code>CAST_DEVICE_ID</code>。</li>
 </ul>
 
-<h3>6.3 不做的事</h3>
+<h3>6.4 不做的事</h3>
 <ul>
   <li>不轮询构建：等待回到灵矽侧，用户再问一次或灵矽自己查 <code>get-app-status</code>。</li>
   <li>不做主动播报：<code>SendProactiveAnnouncement</code> 与 <code>agent_id_</code> 的改动一并回退。</li>
-  <li>缓存最近一次 <code>list_screens</code> 的结果，把模型听到的名字（或 id）解析成 target id 与可用的 <code>endpoint_id</code>；名字撞车时让模型重新确认，缓存里都没有才 <code>GET /v1/targets/{id}</code>。</li>
+  <li>不在设备上做会话表：只记录最近一次投屏；换屏时在新屏接受流后停止旧屏，多屏并发与占用仲裁留给后续。</li>
+  <li>不监听端口、不做 UPnP 事件订阅；<code>Play</code> 返回 200 即视为成功。</li>
 </ul>
 
 <h2><span class="num">07</span>两种投屏的定位</h2>
@@ -326,12 +336,12 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
 <table class="boxed">
   <thead><tr><th style="width:16%">维度</th><th style="width:42%">设备投屏（产品）</th><th>云端投屏（调试）</th></tr></thead>
   <tbody>
-    <tr><td>谁执行 DLNA</td><td>现场设备 → 本地 casting</td><td>Gateway → casting</td></tr>
-    <tr><td>屏幕来源</td><td>设备发现，灵矽经设备 MCP 取</td><td>Gateway <code>get-screens</code></td></tr>
-    <tr><td>占用仲裁</td><td>本地 casting 409</td><td>Gateway <code>screen</code> 目录</td></tr>
+    <tr><td>谁执行 DLNA</td><td>现场设备固件直接发 SOAP</td><td>Gateway → Go casting</td></tr>
+    <tr><td>屏幕来源</td><td>设备 SSDP 发现，灵矽经设备 MCP 取</td><td>Gateway <code>get-screens</code></td></tr>
+    <tr><td>占用仲裁</td><td>电视自身 UPnP 状态，设备只记最近一次</td><td>Gateway <code>screen</code> 目录</td></tr>
     <tr><td>Portal 屏幕页</td><td>不显示（无通道）</td><td>照旧</td></tr>
     <tr><td>开启方式</td><td>默认，无需配置</td><td>直连 casting HTTP，不经 Gateway</td></tr>
-    <tr><td>作用</td><td>真实交付</td><td>验证 casting 服务本身：SSDP、DLNA、会话生命周期</td></tr>
+    <tr><td>作用</td><td>真实交付</td><td>验证 Go casting 服务本身：SSDP、DLNA、会话生命周期</td></tr>
     <tr><td>投入</td><td>全部新功能</td><td>冻结：不修非阻塞问题、不加能力、不扩协议</td></tr>
   </tbody>
 </table>
@@ -348,9 +358,10 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
   <tbody>
     <tr><td>running 无屏状态</td><td>reconcile / stop / history 误判，状态漂移</td><td>5.3 的四条路径逐个补分支并加测试</td></tr>
     <tr><td>Portal 失去屏幕视野</td><td>用户看不到自己的屏，运维看不到现场</td><td>本期接受；共享现场场景再上现场代理上报</td></tr>
-    <tr><td>多租户共享现场</td><td>casting 无鉴权，owner 隔离只剩局域网</td><td>判定线：一现场一 owner 才用设备投屏</td></tr>
-    <tr><td>PublicURL 不可达</td><td>casting 返回 playing，电视黑屏</td><td>验收必须看画面；联调时先在电视同网段 curl 流地址</td></tr>
-    <tr><td>设备到 casting 不可达</td><td>工具调用超时，灵矽收到一句笼统错误</td><td>2 秒超时 + 可读原因（地址、错误码）；配置错误在开机日志里打出来</td></tr>
+    <tr><td>多租户共享现场</td><td>设备端工具没有独立鉴权，共用一台设备就共用它的屏幕</td><td>判定线：一现场一设备一 owner 才用设备投屏</td></tr>
+    <tr><td>PublicURL 不可达</td><td>SOAP 返回 200，电视黑屏</td><td>验收必须看画面；联调时先在电视同网段 curl 流地址</td></tr>
+    <tr><td>多播被 AP 过滤</td><td>设备扫不到电视，<code>list_screens</code> 返回「附近没有发现」</td><td>先看固件扫描日志；兜底是 join 多播组监听 NOTIFY，不是子网广播</td></tr>
+    <tr><td>电视不响应</td><td>工具调用最坏阻塞 10 秒（TCP connect 超时）</td><td>错误翻成可播报中文；<code>SetAVTransportURI</code> 失败就不再发 <code>Play</code></td></tr>
     <tr><td>云端投屏悄悄复活</td><td>两套路径重新并行，维护成本回升</td><td>写进 <code>AGENTS.md</code> 边界段；Portal 不出现入口；默认配置不可达</td></tr>
   </tbody>
 </table>
@@ -406,15 +417,17 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
   <div class="name">Phase 3<small>固件</small><span class="badge-done">已完成</span></div>
   <div>
     <ul>
-      <li><code>cast_client.*</code> 重写为本地 casting HTTP：<code>GET /v1/targets[/{id}]</code>、<code>POST /v1/projection-sessions</code>、<code>DELETE /v1/projection-sessions/{id}</code>；删掉 <code>CastIdentity</code>、token、JSON-RPC、SSE 解析</li>
-      <li><code>cast_tools.*</code> 8 → 3 个工具；缓存屏幕，自动挑支持 <code>streaming + mpegts + h264 + aac</code> 的 endpoint；错误码翻成中文；<code>stop</code> 不传参时停最近一次会话，404 视为已停</li>
-      <li><code>Kconfig</code>：<code>CAST_MCP_URL / TOKEN / AGENT_ID / DEVICE_ID / POLL_* / TIMEOUT</code> 全部删除，换成单一 <code>CASTING_URL</code>（NVS <code>casting/url</code> 可覆盖）</li>
+      <li><code>cast_client.*</code> 删除；固件不再有本地 casting HTTP 客户端</li>
+      <li><code>cast_tools.*</code> 8 → 3 个工具，保留中国话术与名字解析习惯；缓存屏幕、后台周期扫描、只记最近一次会话</li>
+      <li>新增 <code>ssdp.*</code>、<code>dlna_renderer.*</code>、<code>xml_lite.*</code>：发现、描述解析、SOAP 控制</li>
+      <li><code>Kconfig</code>：<code>CAST_MCP_URL / TOKEN / AGENT_ID / DEVICE_ID / POLL_* / TIMEOUT</code> 与 <code>CASTING_URL</code> 全部删除，只留 <code>CASTING_SCAN_INTERVAL_SEC</code></li>
       <li>回退 <code>application.{h,cc}</code> 的 <code>Announce / GetSessionId / GetAgentId</code>，以及 <code>protocol.*</code>、<code>mqtt_protocol.cc</code>、<code>websocket_protocol.cc</code> 的主动播报与 <code>agent_id</code> 解析</li>
-      <li>编译验证：<code>python scripts/build.py yunliao-s3</code> 一次通过；<code>xiaozhi.bin</code> 2702160 字节；镜像里只有 3 个新工具名，旧的 8 个已消失</li>
+      <li>编译验证：<code>build-idf2.cmd</code> 一次通过；<code>xiaozhi.bin</code> 2715680 字节，分区余量 34%；镜像里只有 3 个新工具名，旧的 8 个已消失</li>
     </ul>
     <div class="files">
-      分支 <code>feat/casting-mcp</code>，基于 <code>addb1ed</code>，单个提交；已推到 fork <code>LUPENGHAN/xiaozhi-esp32</code>，共 7 个文件、+567 行，未向上游发 PR<br>
-      <strong>尚未做：</strong>烧机验证 —— <code>tools/list</code> 是否含 3 个工具、设备能否访问同网段 casting、真电视是否出画面
+      分支 <code>feat/casting-mcp</code>，基于 <code>addb1ed</code>；内置发现改造尚未提交，工作区改动 6 个文件、新增 4 个模块<br>
+      <strong>已做：</strong>烧机验证 —— 设备自己 SSDP 发现 2 台渲染器，投放后 Macast 实际拉流播放，停止返回 200（见 10）<br>
+      <strong>尚未做：</strong>灵矽真实 <code>tools/list</code>、语音整链、真实商用电视
     </div>
   </div>
 </div>
@@ -433,6 +446,24 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
   </div>
 </div>
 
+<div class="phase done">
+  <div class="name">Phase 5<small>固件内置发现</small><span class="badge-done">已上机</span></div>
+  <div>
+    <ul>
+      <li>把 SSDP、description 解析、SOAP 控制整体搬进固件；删除 <code>cast_client.*</code> 与 <code>CONFIG_CASTING_URL</code></li>
+      <li>后台任务周期扫描（默认 60 秒）+ 缓存；<code>list_screens</code> 稳态不走网络，缓存没命中才同步扫一次</li>
+      <li>lwIP 细节按 IDF v6.1 处理：<code>IP_MULTICAST_IF</code> 取 <code>struct in_addr</code>、TTL/LOOP 取 <code>u8_t</code>、<code>SO_RCVTIMEO</code> 取 <code>timeval</code></li>
+      <li>真机验证：发现 2 台渲染器（假电视 + Macast）、SOAP 双重转义正确、Macast 实际播放、Stop 返回 200、连续扫描 heap 稳定</li>
+      <li>未联网时任务睡 5 秒轮询且只在状态变化时打日志；4G 模式下 casting 空转</li>
+    </ul>
+    <div class="files">
+      代码：<code>main/casting/{ssdp,dlna_renderer,xml_lite,cast_tools}.{h,cc}</code>、<code>main/CMakeLists.txt</code>、<code>main/Kconfig.projbuild</code><br>
+      文档：<code>docs/operations/yunliao-s3-max-firmware-mcp.md</code>（重写）、<code>home-casting.md</code>、<code>overview.md</code>、<code>casting.md</code><br>
+      <strong>尚未做：</strong>把固件改动提交到 <code>feat/casting-mcp</code>；真电视与语音整链
+    </div>
+  </div>
+</div>
+
 <h2 id="s10"><span class="num">10</span>本机联调记录（2026-10-31）</h2>
 
 <table class="boxed">
@@ -441,15 +472,19 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
     <tr><td>设备 → casting</td><td>模拟器以 <code>-casting-url http://127.0.0.1:18080</code> 启动，<code>self.cast.list_screens</code> 拿到 <code>Macast(DESKTOP-P907FKO)空闲</code></td></tr>
     <tr><td>灵矽 → 设备</td><td>文字回合「cast this to the TV」触发 <code>list_screens</code> → <code>cast</code>，固件把 <code>http://127.0.0.1:9000/test.ts</code> 原样交给 casting</td></tr>
     <tr><td>电视真的播了</td><td>casting 建出 <code>projection-LCSLCOV3ED3XC64HSZNYXLVBEI</code>，同一秒 Macast 发起 <code>GET /test.ts</code>（HTTP 200），目标状态在会话期间保持「正在播放」</td></tr>
-    <tr><td>名字解析</td><td><code>list_screens</code> 只报名字，模型把名字当 <code>target_id</code> 传回。控制面与固件都改成「id → 唯一名字 → <code>GET /v1/targets/{id}</code>」，撞名时拒绝并让模型重新确认；修好后同一条语音链路一次成功</td></tr>
+    <tr><td>名字解析</td><td><code>list_screens</code> 只报名字，模型把名字当 <code>target_id</code> 传回。控制面与当时的固件都改成「id → 唯一名字 → 远端刷新」，撞名时拒绝并让模型重新确认；固件后续换成内置缓存，解析顺序保留</td></tr>
     <tr><td>整链：建应用</td><td>说「做一个一题两答的小游戏」，灵矽调控制面 <code>create-app</code>，应用「一题双答」构建完成（<code>list-apps</code> 显示 idle）——说明云端 MCP 工具已经挂在灵矽这一侧</td></tr>
     <tr><td>整链：启动 + 投屏</td><td>灵矽调 <code>start-app</code> 拿 <code>stream_url</code>，再调 <code>self.cast.cast</code>；casting 建出 <code>projection-UGXWSYERRQWD46NKJFJJXJEGX6</code>，URL 是 <code>http://100.100.56.213:8091/streams/instance-087a…/live.ts</code></td></tr>
     <tr><td>整链：第一次失败</td><td>那时 render 的 <code>-public-url</code> 是 <code>http://100.100.56.213:8091</code>（render 机器内网地址），本机访问超时，会话立刻 stopped。公网 <code>http://118.89.179.167:6005</code> 同一条流可以访问</td></tr>
     <tr><td>整链：出画面</td><td>把 <code>-public-url</code> 改成 <code>http://118.89.179.167:6005</code>、<code>-app-host 127.0.0.1</code> 后重启 render。说「start the 一题双答 app and cast it」，灵矽 <code>start-app</code> → <code>self.cast.cast</code>，会话 <code>projection-CBAA2WCLGICAHW6T5I2XG6XS7R</code> 为 playing，URL 是 <code>http://118.89.179.167:6005/streams/instance-e2a2…/live.ts</code>；Macast 的播放进程与 <code>118.89.179.167:6005</code> 建立 ESTABLISHED 连接，屏幕上出现「一题双答」答题界面</td></tr>
+    <tr><td>真机：发现</td><td>S3 MAX（<code>192.168.8.153</code>）烧入内置发现固件后，日志每 60 秒出现 <code>M-SEARCH via 192.168.8.153 found 2 renderer(s)</code>，解析出「测试电视 (fake)」与 <code>Macast(DESKTOP-P907FKO)</code> 的 controlURL；扫描耗时 2.6–4.6 秒，<code>heap≈4.20 MB</code> 多轮稳定</td></tr>
+    <tr><td>真机：投放</td><td>设备直接向 Macast 发 <code>SetAVTransportURI</code> + <code>Play</code>（均 200）；Macast 立刻用 Range 请求从假电视的 HTTP 服务拉取 <code>test.ts</code> 并播放，证明地址与 DIDL 元数据被正确接受</td></tr>
+    <tr><td>真机：转义与停止</td><td>带参数的 URL 在 <code>CurrentURI</code> 与 DIDL 元数据里分别做一次和两次 XML 转义，假电视按原 URL 收到请求（查询串逐字节一致）；20 秒后 <code>Stop</code> 返回 200</td></tr>
+    <tr><td>真机：换屏</td><td>投到假电视后改投 Macast：假电视在 Macast 接受流的同时收到 <code>Stop</code>，Macast 开始拉流；随后 <code>self.cast.stop</code> 返回「已经停止投屏」，Macast 回空闲。旧屏不会留在后台继续播放</td></tr>
   </tbody>
 </table>
 
-<p class="muted">本机的 casting 与 Macast 都在这台 Windows 上，所以测试流走 loopback；<code>/v1/targets</code> 发现必须用 <code>-interface Meta</code>（默认路由是 VPN 网卡）。真机 S3 MAX 烧录、真电视出画面仍未验证。部署上记住：render 的 <code>-public-url</code> 决定电视从哪里拉流，必须是电视可达的地址；<code>-app-host</code> 决定控制面怎么调应用接口，别跟着公网地址走。</p>
+<p class="muted">本机的 casting 与 Macast 都在这台 Windows 上，所以早期测试流走 loopback；<code>/v1/targets</code> 发现必须用 <code>-interface Meta</code>（默认路由是 VPN 网卡）。固件内置发现后不再有这段限制：设备用 WLAN 地址直接发多播。真机已验证发现、投放与停止，但灵矽下发的真实 <code>tools/list</code>、语音整链和真实商用电视仍未验证。部署上记住：render 的 <code>-public-url</code> 决定电视从哪里拉流，必须是电视可达的地址；<code>-app-host</code> 决定控制面怎么调应用接口，别跟着公网地址走。</p>
 
 <h2><span class="num">11</span>验收</h2>
 
@@ -458,11 +493,12 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
   <tbody>
     <tr><td>说话 → 生成 → 上屏</td><td>电视出现新应用画面；控制面返回的 <code>stream_url</code> 与电视实际拉取的地址一致</td></tr>
     <tr><td>没有屏幕时启动</td><td>应用进入 running，<code>stream_url</code> 可用，控制面无任何 casting 请求<br><span class="muted">单测已通过：<code>TestStartAppRunsWithoutAScreen</code></span></td></tr>
-    <tr><td>屏幕被占用</td><td><code>self.cast.cast</code> 返回 409，灵矽听到「这块屏正在放别的」，不覆盖</td></tr>
-    <tr><td>电视断电</td><td>设备工具返回设备不可达；应用仍 running，可重新投</td></tr>
+    <tr><td>屏幕被占用</td><td>电视返回 UPnP 715/718，灵矽听到「正在播放别的内容」或「拒绝了投屏请求」</td></tr>
+    <tr><td>电视断电</td><td><code>self.cast.cast</code> 在 10 秒内返回「电视没有响应投屏指令」；应用仍 running，可重新投</td></tr>
     <tr><td>停止</td><td>电视回空闲，应用回 idle；Render 与电视可分别停</td></tr>
-    <tr><td>断网 / 超时</td><td>设备侧 6 秒超时（创建会话 12 秒）返回可读原因，语音回合不挂死</td></tr>
-    <tr><td>调试路径</td><td>绕过 Gateway，对 casting 直接 POST 一次会话，完整 DLNA 流程照常走通</td></tr>
+    <tr><td>断网 / 超时</td><td>设备无网络时返回「现在没有网络」；电视不可达时 10 秒内给出可读原因，语音回合不挂死</td></tr>
+    <tr><td>无非法暴露</td><td>设备不监听端口；局域网抓包只能看到出站 SSDP 与到电视的 SOAP</td></tr>
+    <tr><td>调试路径（Go 服务）</td><td>绕过 Gateway，对 Go casting 直接 POST 一次会话，DLNA 流程照常走通</td></tr>
     <tr><td>存量兼容</td><td>冻结前已部署环境的现有测试全绿</td></tr>
   </tbody>
 </table>
@@ -472,7 +508,8 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
   <li><code>internal/voiceentry/casting/</code> 的云端代理实现（<code>transport.go</code>）已删除，只剩本地 casting 客户端与 3 个工具。</li>
   <li>固件 <code>CASTING_CONFIG</code> 里的 token / agent / device / 轮询配置项已删除。</li>
   <li><code>docs/architecture/voice-entry.md</code> 的「投屏工具」一节已按新工具面重写。</li>
-  <li><code>feat/casting-mcp</code> 是 Phase 3 的落点，已推送到 fork <code>LUPENGHAN/xiaozhi-esp32</code>；上游仓库保持只读。</li>
+  <li><code>main/casting/cast_client.{h,cc}</code> 与 <code>CONFIG_CASTING_URL</code>、NVS <code>casting/url</code> 已删除；固件不再需要本地 casting 地址。</li>
+  <li><code>feat/casting-mcp</code> 是 Phase 3 的落点，已推送到 fork <code>LUPENGHAN/xiaozhi-esp32</code>；Phase 5 的内置发现改造还在工作区，未提交。上游仓库保持只读。</li>
 </ul>
 
 <h2 id="s13"><span class="num">13</span>待定</h2>
@@ -486,8 +523,8 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
 </div>
 
 <div class="decision" style="margin-top:14px">
-  <p><strong>1. 现场 casting 跑在哪台机器</strong></p>
-  <p>设备只知道自己 LAN 上的地址。v1 建议 NVS 里写死 <code>http://&lt;ip&gt;:8080</code>，不做 mDNS 发现；等现场机器多起来再说。</p>
+  <p><strong>1. 现场还要不要跑 casting（已定：不要）</strong></p>
+  <p>SSDP 发现与 DLNA 控制已经整体进固件，现场不部署机器、不写地址、不开端口。Go casting 只剩两种用途：模拟硬件的 <code>-casting-url</code>，以及没有真机时在桌面上调协议。由此带来的新问题（4G 模式空转、多播被 AP 过滤、多屏并发）见 08 风险与 11 验收。</p>
 </div>
 
 <div class="decision" style="margin-top:14px">

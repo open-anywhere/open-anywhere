@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | 控制面 Gateway | `cmd/gateway`、`internal/gateway` | 对灵矽暴露 MCP，编排构建，转发应用请求 | 邓军辉 |
 | 应用运行时 Render | `cmd/render`、`internal/render` | 启动应用、采集画面、输出媒体流 | 张之阳 |
-| 投屏服务 Casting | `cmd/casting`、`internal/casting` | 发现现场设备、维护投屏会话（部署在现场，仅供同局域网的设备调用） | 张之阳 |
+| 投屏服务 Casting（非生产） | `cmd/casting`、`internal/casting` | 发现现场设备、维护投屏会话；仅供模拟硬件与桌面调试使用，真机生产链路由固件内置 SSDP + DLNA 完成 | 张之阳 |
 | 现场语音入口 | `cmd/voiceentry`、`internal/voiceentry` | 以设备身份接入灵矽，收发语音 | 韩鲁鹏 |
 | Portal | `portal/`、`internal/gateway/portal` | 多租户控制台与自助开通 | 邓军辉 |
 | AgentAPI 适配 | `pkg/agentapi`、`internal/gateway/build` | 把构建抽象成会话，不暴露沙箱细节 | 邓军辉 |
@@ -73,7 +73,9 @@
 
 **子模块**：`artifact`（解包与校验）、`ports`（端口分配）、`service`（进程生命周期）、`media`（采集、编码、推流）、`http`（控制面接口）。
 
-## 4. 投屏服务 Casting
+## 4. 投屏服务 Casting（非生产）
+
+> 真机生产链路的投屏已经搬进小智云聊 S3 MAX 固件（SSDP 发现 + DLNA SOAP），见 [固件投屏工具](../operations/yunliao-s3-max-firmware-mcp.md)。本节描述仓库里的 Go 服务，它只用于模拟硬件 `-casting-url` 和桌面调试。
 
 **职责**：发现局域网设备，并按目标支持的协议建立、维持、结束投屏会话。它不生产内容。
 
@@ -117,10 +119,11 @@
 | 灵矽云 | 控制面 | MCP |
 | 控制面 | AgentAPI | HTTP（构建会话） |
 | 控制面 | Render | HTTP |
-| 现场语音入口 | Casting | HTTP（同一局域网） |
+| 现场语音入口 | 电视（DLNA） | SSDP + SOAP（同一局域网；真机固件直连） |
+| 现场语音入口（模拟硬件） | Casting | HTTP（同一局域网，仅调试） |
 | Portal | 控制面 | 同进程 HTTP API |
 
-禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。控制面不调用 Casting：它只负责启动应用并返回 `stream_url`，投屏控制由现场的语音设备发起，媒体流由电视直接拉取。
+禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。控制面不调用 Casting：它只负责启动应用并返回 `stream_url`，投屏控制由现场的语音设备发起（真机固件自己发 SOAP），媒体流由电视直接拉取。
 
 ## 8. 全局不变量
 

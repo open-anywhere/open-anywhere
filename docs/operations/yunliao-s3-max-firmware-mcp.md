@@ -1,18 +1,17 @@
 # 小智云聊 S3 MAX 接入投屏：固件内置 `self.cast.*` 设备工具
 
-> 本文描述固件侧的投屏实现：设备注册一组 `self.cast.*` MCP 工具，把云端启动的应用画面投到现场局域网里的电视上。应用由控制面构建和运行，设备只负责屏幕发现与投放。
+> 本文描述固件侧的投屏实现：设备自己用 SSDP 发现局域网里的 DLNA 电视，自己用 SOAP 把云端 `stream_url` 交给电视播放。**固件不依赖任何本地投屏服务**；仓库里的 Go Casting 只留给桌面调试和模拟硬件。
 >
-> 代码在固件仓库 `LUPENGHAN/xiaozhi-esp32`（fork 自 `78/xiaozhi-esp32`，基于 `addb1ed`）的分支 `feat/casting-mcp`，路径 `main/casting/`。截至本文更新，已在 ESP-IDF v6.1 上**编译通过**，**尚未上机验证**，验证清单见最后一节。
+> 代码在固件仓库 `LUPENGHAN/xiaozhi-esp32`（fork 自 `78/xiaozhi-esp32`，基于 `addb1ed`）的分支 `feat/casting-mcp`，路径 `main/casting/`。已在 ESP-IDF v6.1 上编译通过，并在真机（yunliao-s3，ESP32-S3）上完成发现、投放、停止的联调，验证记录见最后一节。
 
 ## 为什么放在固件里
 
-灵犀云本身是 MCP 客户端，智能体挂载控制面 MCP 后可以直接调用 `create-app`、`start-app`。但只有设备知道现场有哪些屏幕：SSDP 是链路本地组播，云端看不见。把 `self.cast.*` 做进固件后：
+灵犀云本身是 MCP 客户端，智能体挂载控制面 MCP 后可以直接调用 `create-app`、`start-app`。但只有设备知道现场有哪些屏幕：SSDP 是链路本地组播，云端看不见。把发现和 DLNA 控制都做进固件后：
 
-1. **屏幕发现留在现场。** 设备与电视同处一个广播域，调用本地 casting 完成协议控制。
-2. **能力随硬件走。** 换一个智能体、或用户自己配的智能体，投屏工具仍在，不依赖智能体是否挂载了控制面 MCP。
-3. **控制面保持单一职责。** `start-app` 只启动 Render 并返回 `stream_url`，不接触任何投屏服务。
-
-代价是设备端需要一份 casting HTTP 契约的实现，与模拟硬件 `internal/voiceentry/casting` 同构。
+1. **屏幕发现留在现场。** 设备与电视同处一个广播域，自己发 M-SEARCH、自己解析描述、自己发 SOAP。
+2. **现场不需要再部署服务。** 没有局域网机器、没有端口、没有地址配置；设备连上 Wi-Fi 就能投。
+3. **能力随硬件走。** 换一个智能体、或用户自己配的智能体，投屏工具仍在，不依赖智能体是否挂载了控制面 MCP。
+4. **控制面保持单一职责。** `start-app` 只启动 Render 并返回 `stream_url`，不接触任何投屏实现。
 
 ## 结构
 
@@ -21,78 +20,76 @@
   → 灵犀（MCP 客户端）
     → 设备端 MCP Server（main/mcp_server.cc + main/casting/）
       ├─ 控制面 POST /mcp（由灵犀调用，设备不参与）
-      └─ self.cast.* → 本地 casting HTTP（局域网）
-                        → 电视（DLNA）
-                          → 云端 Render 拉流
+      └─ self.cast.*
+           ├─ 后台任务每 60 秒 SSDP 搜索（239.255.255.250:1900）
+           ├─ 解析 description.xml，缓存电视名 / UDN / AVTransport controlURL
+           └─ cast → SOAP SetAVTransportURI + Play（电视自己向云端拉流）
 ```
 
-设备端只做两件事：发现屏幕、把 `stream_url` 交给 casting。它不理解应用的业务含义，也不代理媒体。
+设备端只做两件事：发现屏幕、把 `stream_url` 交给电视。它不理解应用的业务含义，也不代理媒体。
 
 ## 工具
 
-| 设备工具 | 转发到本地 casting | 语义 |
+| 设备工具 | 参数 | 语义 |
 | --- | --- | --- |
-| `self.cast.list_screens` | `GET /v1/targets` | 列出电视及其状态，结果缓存在设备上，供 `cast` 解析屏幕 |
-| `self.cast.cast` | `POST /v1/projection-sessions` | `url` 是控制面 `start-app` 返回的 `stream_url`，`target_id` 用 `list_screens` 报出的屏幕名或 id |
-| `self.cast.stop` | `DELETE /v1/projection-sessions/{id}` | 不传 `session_id` 时停止本设备最近一次投屏 |
+| `self.cast.list_screens` | 无 | 列出缓存的电视及状态（空闲 / 正在播放 / 离线）。稳态下不访问网络 |
+| `self.cast.cast` | `url`、`target_id` | `url` 是控制面 `start-app` 返回的 `stream_url`；`target_id` 来自 `list_screens` |
+| `self.cast.stop` | `session_id`（可选） | 不传时停止本设备最近一次投屏 |
 
-说话用的屏幕名和投屏用的 id 不是一回事：`list_screens` 只报名字和状态（模型和用户说的都是名字），请求里要用发现结果的 id。所以 `cast` 拿到 `target_id` 后按 id、再按名字（精确匹配）查缓存，命中唯一一块就用它；名字撞车时让模型重新 `list_screens` 确认，不会瞎投。缓存没命中才 `GET /v1/targets/{id}` 刷新；目标没有任何支持 `streaming + mpegts + h264 + aac` 的 endpoint 时直接拒绝，不发请求。
+屏幕 id 是 `dlna-<UDN 去掉 uuid: 前缀>`，对用户不可读；`ListScreens` 只报电视名和状态。所以 `cast` 拿到 `target_id` 后按 id、再按名字（精确匹配）查缓存：
 
-控制面侧 `internal/voiceentry/casting` 的实现与固件一致：同样按 id → 唯一名字 → 远端查询的顺序解析。
+- 命中唯一一块 → 直接投。
+- 名字撞车 → 返回"附近有好几块叫这个名字的电视，先调用 `self.cast.list_screens` 确认是哪一块"。
+- 缓存没命中（模型没先列屏、或电视刚开机）→ 现场同步扫描一次（约 2.5 秒）再解析，仍找不到才报错。
 
 工具名沿用仓库既有约定 `self.<域>.<动作>`。灵犀侧工具有数量上限，超限会静默丢弃；固件启动日志会打印工具总数与 `casting tools registered` 一行。
 
+## 发现与缓存
+
+- 联网后后台任务立即扫描一次，之后每 `CONFIG_CASTING_SCAN_INTERVAL_SEC`（默认 60 秒）扫描一次；IP 变化时立刻重扫。
+- 扫描只在扫描任务里做，结果一次性合并进缓存，工具回调只读缓存；两把互斥锁把网络 I/O 和共享状态隔开。
+- 连续 3 次扫描没看到、或 SSDP `max-age` 过期，标为「离线」；连续 6 次没看到才从缓存删除。正在投屏的那台不删，停止时还需要它的 `controlURL`。
+- 未联网时睡 5 秒轮询，只在状态变化时打日志，不刷屏。4G 模式下 casting 空转，`list_screens` 返回「现在没有网络」。
+
 ## 请求与错误
 
-创建会话的正文与 `pkg/casting` 的 `CreateSessionRequest` 一致：
+`cast` 先发 `SetAVTransportURI`（含 DIDL-Lite 元数据），成功后才发 `Play`。DIDL 里的 URL 先做一次 XML 转义再嵌进元数据，元数据整体再转义一次，与 Go 服务的行为一致。
 
-```json
-{
-  "target_id": "uuid-living-room",
-  "endpoint_id": "dlna",
-  "source": {
-    "type": "stream",
-    "url": "https://render.example.com/streams/inst_01J/live.ts",
-    "format": "mpegts",
-    "video_codec": "h264",
-    "audio_codec": "aac"
-  }
-}
-```
+UPnP Fault 的 `errorCode` 被翻成可以直接说出口的话：
 
-casting 的错误码被翻成可以直接说出口的话：
-
-| 错误码 | 对用户的话 |
+| UPnP 错误码 | 对用户的话 |
 | --- | --- |
-| `target_busy` | 这块电视正在播放别的内容，先停掉再投 |
-| `target_offline` | 这块电视现在离线了 |
-| `unsupported_media` | 这块电视不支持这种画面格式 |
-| `device_control_failed` | 电视没有响应投屏指令 |
-| `invalid_request` | 投屏请求不合法 |
-| `not_found`（停止时） | 这块电视已经不在投屏了 |
+| 714 | 这块电视不支持这种画面格式 |
+| 715 | 这块电视正在播放别的内容，先停掉再投 |
+| 716 | 电视找不到这个视频地址 |
+| 718 | 电视拒绝了投屏请求 |
+| 701（停止时） | 视为已经停止，不报错 |
+| 其他 / 传输层失败 | 电视没有响应投屏指令 |
 
-停止时收到 404 视为已经停好，不再让用户重试。
+`stop` 只记录本设备最近一次会话；不传 `session_id` 就停它，传了别的 id 返回「这块电视已经不在投屏了」。投到另一块屏时，设备等新屏接受流之后会停止旧屏，不会留下两个画面同时播放。
 
 ## 配置
 
-Kconfig（`main/Kconfig.projbuild` 的 `CASTING_CONFIG`）给编译期默认值，NVS 命名空间 `casting` 可运行时覆盖，无需重新烧录：
+只有一个编译期配置，没有 NVS 覆盖，也没有服务地址：
 
-| Kconfig | NVS key | 说明 |
-| --- | --- | --- |
-| `CONFIG_CASTING_URL` | `url` | 本地 casting 地址，例如 `http://192.168.1.20:8091`；**为空则不注册任何工具** |
+| Kconfig | 说明 |
+| --- | --- |
+| `CONFIG_CASTING_SCAN_INTERVAL_SEC` | 后台扫描间隔，默认 60，范围 10–600 |
 
-casting **没有鉴权**，设备也不发任何身份头或 token。地址必须是局域网内可信的服务，不要暴露到公网。
+casting 链路没有鉴权，但也不再监听任何端口：设备只作为客户端访问局域网电视，不暴露投屏控制面。电视必须与设备在同一广播域。
 
 ## 改动清单
 
 固件仓库 `feat/casting-mcp` 分支：
 
-- `main/casting/cast_client.{h,cc}`：本地 casting HTTP 客户端，走板卡自带的 HTTP 抽象（Wi-Fi 与 ML307 4G 同一条路径），负责错误码翻译。
-- `main/casting/cast_tools.{h,cc}`：3 个工具、屏幕缓存、endpoint 选择、最近一次投屏会话。
-- `main/application.cc`：`Initialize()` 里注册投屏工具。
-- `main/Kconfig.projbuild`、`main/CMakeLists.txt`：配置项与源文件。
+- `main/casting/xml_lite.{h,cc}`：事件式 XML 解析，限于 description.xml 与 SOAP Fault，深度与长度都有上限。
+- `main/casting/ssdp.{h,cc}`：M-SEARCH、单播应答收集、`max-age` 解析与去重。
+- `main/casting/dlna_renderer.{h,cc}`：描述解析、`controlURL` 解析、`SetAVTransportURI` / `Play` / `Stop`。
+- `main/casting/cast_tools.{h,cc}`：3 个工具、屏幕缓存、后台扫描任务、单会话。
+- `main/casting/cast_client.{h,cc}`：**已删除**（旧的本地 casting HTTP 客户端）。
+- `main/Kconfig.projbuild`、`main/CMakeLists.txt`：`CASTING_URL` 换成 `CASTING_SCAN_INTERVAL_SEC`，源文件列表同步。
 
-与旧的 8 工具方案相比，`CastIdentity`、`X-Linx-*` 三个头、`mcp_token`、`create_and_cast` 的后台构建任务、`protocol.*` 的主动播报入口都已删除。设备不再直接调用控制面 MCP。
+设备不再直接调用控制面 MCP，也不再依赖 `X-Linx-*` 头、`mcp_token` 或本地 casting 地址。
 
 ## 构建与刷机
 
@@ -100,7 +97,7 @@ casting **没有鉴权**，设备也不发任何身份头或 token。地址必�
 source /path/to/esp-idf/export.sh   # IDF release/v6.1（最低 v6.0.1）
 cd xiaozhi-esp32
 idf.py set-target esp32s3
-idf.py menuconfig                   # CASTING_CONFIG: CASTING_URL
+idf.py menuconfig                   # CASTING_CONFIG: CASTING_SCAN_INTERVAL_SEC
 idf.py build flash monitor
 ```
 
@@ -110,16 +107,19 @@ idf.py build flash monitor
 python scripts/build.py yunliao-s3 --name yunliao-s3 --language zh-CN
 ```
 
-验证过一次完整构建（2026-10-31，Windows + ESP-IDF `release/v6.1`，目标 esp32s3）：一次通过，无报错；`build/xiaozhi.bin` 为 2702160 字节，`build/merged-binary.bin` 为 10052873 字节。镜像里能查到 `self.cast.list_screens` / `self.cast.cast` / `self.cast.stop`，旧的 8 个工具名已不存在。
+## 验证记录（2026-10-31，真机 + 局域网）
 
-## 还没验证的部分
+环境：yunliao-s3（MAC `e8:f6:0a:8b:f4:e4`，WLAN `192.168.8.153`），开发机 `192.168.8.155`；用一个 Python「假电视」应答 M-SEARCH 并提供 description / control / 710 KB 的 `test.ts`，另有一台本机 Macast 作为真实 DLNA 渲染器。
 
-1. **上机。** 编译已通过，但固件没有烧到真机：工具能否出现在灵犀下发的 `tools/list`、设备能否访问到同网段的 casting，都还没有实测。
-2. **真实 casting 与电视。** `cast` 的完整路径（DLNA SetAVTransportURI + Play）需要一台能出网的电视才能验证；`playing` 只代表电视接受了 URI，不代表画面已经在显示。
-3. **主任务阻塞。** 工具回调在设备主任务上执行，`cast` 会同步等待 casting 的响应（创建会话超时 12 秒，列表和停止 6 秒）。局域网内通常不到 1 秒，但慢速网络下会短暂阻塞音频处理，上机时需要观察。
-4. **工具数量上限。** 设备原有工具加 3 个新工具，若灵犀侧超限会丢工具；需要看真实 `tools/list` 结果。
-5. **模型是否先确认屏幕再投放。** 工具描述里要求"投屏前先向用户确认要投到哪块屏幕"，约束力取决于模型。
+1. **发现。** 设备日志每 60 秒出现 `M-SEARCH via 192.168.8.153 found 2 renderer(s)`，随后打印两台电视的名字与 `controlURL`，扫描耗时 2.6–4.6 秒。假电视的 SSDP 日志里能看到源地址为 `192.168.8.153` 的 MediaRenderer 搜索。
+2. **投放。** `SetAVTransportURI` 与 `Play` 都返回 200；假电视收到的 `CurrentURI` 是 `...?a=1&amp;b=2`，元数据里是 `&amp;amp;`，双重转义正确。
+3. **真实播放。** 目标是 Macast 时，Macast 立刻用 Range 请求从假电视的 HTTP 服务拉取 `test.ts` 并播放；说明地址和元数据都被正确接受，不只是"SOAP 返回 200"。
+4. **停止。** 20 秒后 `Stop` 返回 200；假电视与 Macast 都回到空闲。
+5. **内存。** 连续多轮扫描后 `heap≈4.20 MB` 基本不变，扫描任务没有泄漏迹象。
 
-## 与模拟硬件的关系
+尚未验证：灵犀云下发的真实 `tools/list` 里是否包含全部 3 个工具（受灵犀工具数量上限影响）、语音说"投到客厅电视"的完整链路、真实商用电视的兼容性、断网/换 IP 时的表现。
 
-`internal/voiceentry/casting`（模拟硬件，`-casting-url` 开关，默认关闭）与固件是同一套设计：3 个工具、只连本地 casting、不发身份头。模拟硬件是固件行为的参照实现，两者的用户可见话术保持一致。
+## 与模拟硬件、Go Casting 的关系
+
+- `internal/voiceentry/casting`（模拟硬件，`-casting-url` 开关）仍然调用仓库里的 Go Casting 服务，用来在没有真机时验证协议。
+- 固件**不访问** Go Casting；两者只是同一套 DLNA 行为的两个实现。Go 服务含 HTTP API、会话表和子网扫描，适合桌面调试，不再出现在生产链路里。
