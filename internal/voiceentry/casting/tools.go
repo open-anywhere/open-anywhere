@@ -53,7 +53,7 @@ func (t *Tools) List() []linx.Tool {
 		{
 			Name: "self.cast.cast",
 			Description: "把云端返回的 stream_url 投到指定的电视上播放。target_id 必须来自 self.cast.list_screens；" +
-				"url 必须原样使用控制面 start-app 返回的地址，不要改写或拼接。电视正在播放别的内容时会被拒绝，不要擅自覆盖。",
+				"url 必须原样使用控制面 start-app 返回的地址，不要改写或拼接。电视正在播放别的内容时会被拒绝，不要擅自覆盖。不要把 url 念给用户；成功后只说投到了哪块屏幕。",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

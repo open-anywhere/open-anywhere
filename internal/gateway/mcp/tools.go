@@ -94,7 +94,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "get-app-status",
 		Title:       "查询应用状态",
-		Description: "查询应用的构建、空闲、运行或错误状态。create-app 或 update-app 之后用它轮询构建进度；收到 notifications/app_status 或用户询问时也用它确认最新状态。building 返回已用时间和最近进度；idle 表示可以启动；running 返回 stream_url、启动时间和运行时长；error 返回结构化 error，不要只根据通知判断失败。",
+		Description: "查询应用的构建、空闲、运行或错误状态。create-app 或 update-app 之后用它轮询构建进度；收到 notifications/app_status 或用户询问时也用它确认最新状态。building 返回已用时间和最近进度；idle 表示可以启动；running 返回 stream_url、启动时间和运行时长；stream_url 仅用于设备投屏，不要向用户朗读或展示；error 返回结构化 error，不要只根据通知判断失败。",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input appIDInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -124,7 +124,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "start-app",
 		Title:       "启动应用",
-		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）在云端运行起来，历史应用也可以直接启动。就绪后返回 running 和 stream_url。本工具只负责让应用开始运行，不涉及任何屏幕：拿到 stream_url 后，投屏由现场设备的工具完成，只有用户明确要求投屏时才去调用它们。应用已经在运行时幂等返回当前状态。启动需要一些时间；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。ARTIFACT_INVALID 表示产物本身无效，不要反复 start-app，改用 update-app 重做一版；连接或就绪超时类失败可以再次 start-app 重试。上次启动还在收尾时返回 CLEANUP_PENDING，稍后再试，不要重新创建应用。",
+		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）在云端运行起来，历史应用也可以直接启动。就绪后返回 running 和 stream_url。本工具只负责让应用开始运行，不涉及任何屏幕：拿到 stream_url 后，投屏由现场设备的工具完成，只有用户明确要求投屏时才去调用它们。拿到 stream_url 后直接交给设备投屏工具，不要把它说给用户；成功后只说投到了哪块屏幕。应用已经在运行时幂等返回当前状态。启动需要一些时间；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。ARTIFACT_INVALID 表示产物本身无效，不要反复 start-app，改用 update-app 重做一版；连接或就绪超时类失败可以再次 start-app 重试。上次启动还在收尾时返回 CLEANUP_PENDING，稍后再试，不要重新创建应用。",
 		Annotations: mutatingAnnotations(false, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input startAppInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
