@@ -250,6 +250,43 @@ func TestCastWithoutPriorListLooksUpTheTarget(t *testing.T) {
 	}
 }
 
+func TestCastAcceptsTheScreenNameFromTheLastList(t *testing.T) {
+	fake := &fakeCasting{
+		targets: []api.Target{livingRoom(), studyBusy()},
+		session: api.Session{ID: "projection-1", State: api.SessionPlaying},
+	}
+	tools, _ := newTestTools(t, fake, time.Second)
+	if _, err := tools.listScreens(nil); err != nil {
+		t.Fatal(err)
+	}
+	// list_screens speaks "客厅电视空闲"; the model repeats the name it heard.
+	if _, err := tools.cast(map[string]any{"url": "http://cloud/live.ts", "target_id": "客厅电视"}); err != nil {
+		t.Fatal(err)
+	}
+	if fake.posted().TargetID != "uuid-living-room" {
+		t.Fatalf("target=%q", fake.posted().TargetID)
+	}
+	for _, call := range fake.snapshot() {
+		if strings.HasPrefix(call.Path, "/v1/targets/") {
+			t.Fatalf("looked the name up remotely: %+v", call)
+		}
+	}
+}
+
+func TestCastRejectsAnAmbiguousScreenName(t *testing.T) {
+	twin := livingRoom()
+	twin.ID = "uuid-living-room-2"
+	fake := &fakeCasting{targets: []api.Target{livingRoom(), twin}}
+	tools, _ := newTestTools(t, fake, time.Second)
+	if _, err := tools.listScreens(nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err := tools.cast(map[string]any{"url": "http://cloud/live.ts", "target_id": "客厅电视"})
+	if err == nil || !strings.Contains(err.Error(), "好几块") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestCastRejectsAScreenWithoutTheStreamProfile(t *testing.T) {
 	target := livingRoom()
 	target.Endpoints[0].Capabilities.AudioCodecs = []string{"opus"}

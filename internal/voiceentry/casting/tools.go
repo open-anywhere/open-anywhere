@@ -114,7 +114,7 @@ func (t *Tools) cast(args map[string]any) (string, error) {
 	}
 	t.publish(fmt.Sprintf("正在投屏到%s…", label(target)))
 	session, err := t.client.CreateSession(ctx, api.CreateSessionRequest{
-		TargetID:   targetID,
+		TargetID:   target.ID,
 		EndpointID: endpointID,
 		Source: api.StreamSource{
 			Type:       "stream",
@@ -165,9 +165,18 @@ func (t *Tools) stop(args map[string]any) (string, error) {
 func (t *Tools) target(ctx context.Context, targetID string) (api.Target, error) {
 	t.mu.Lock()
 	target, ok := t.targets[targetID]
+	byName, nameHits := byNameLocked(t.targets, targetID)
 	t.mu.Unlock()
 	if ok && len(target.Endpoints) > 0 {
 		return target, nil
+	}
+	// The model often repeats the name it just heard instead of the id that
+	// list_screens returned. A unique cached name is good enough to cast.
+	if nameHits == 1 && len(byName.Endpoints) > 0 {
+		return byName, nil
+	}
+	if nameHits > 1 {
+		return api.Target{}, fmt.Errorf("附近有好几块叫这个名字的电视，先调用 self.cast.list_screens 确认是哪一块")
 	}
 	target, err := t.client.GetTarget(ctx, targetID)
 	if err != nil {
@@ -179,6 +188,20 @@ func (t *Tools) target(ctx context.Context, targetID string) (api.Target, error)
 	}
 	t.rememberTargets([]api.Target{target})
 	return target, nil
+}
+
+// byNameLocked counts cached screens whose name matches want exactly.
+func byNameLocked(targets map[string]api.Target, want string) (api.Target, int) {
+	var match api.Target
+	hits := 0
+	for _, target := range targets {
+		if strings.TrimSpace(target.Name) != want {
+			continue
+		}
+		match = target
+		hits++
+	}
+	return match, hits
 }
 
 func compatibleEndpoint(target api.Target) (string, bool) {

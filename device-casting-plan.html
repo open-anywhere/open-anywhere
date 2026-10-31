@@ -137,8 +137,9 @@
 </p>
 
 <p class="muted">
-  <strong>进度（2026-10-31）：</strong>Phase 1 控制面、Phase 2 模拟器、Phase 3 固件、Phase 4 文档均已落地。控制面侧在 <code>feat/device-casting</code> 分支（<code>ca70502</code>，已推到 origin）；固件在 <code>feat/casting-mcp</code> 分支，已推到 fork <code>LUPENGHAN/xiaozhi-esp32</code>。模拟器单测全绿，固件在 ESP-IDF v6.1 上编译通过。
-  <strong>还没跑：</strong>真灵矽 → 云端 → 本机 casting → 电视的整链联调，以及固件上机（真机上看 <code>tools/list</code>、真电视上看画面）。本文随实现随时更新。
+  <strong>进度（2026-10-31）：</strong>Phase 1 控制面、Phase 2 模拟器、Phase 3 固件、Phase 4 文档均已落地。控制面侧在 <code>feat/device-casting</code> 分支（<code>ca70502</code>，已推到 origin）；固件在 <code>feat/casting-mcp</code> 分支，已推到 fork <code>LUPENGHAN/xiaozhi-esp32</code>。模拟器单测全绿，固件在 ESP-IDF v6.1 上编译通过。本机已跑通「灵矽 → 设备 MCP → 本机 casting → Macast 出画面」这一段（见 <a href="#s10">10 联调记录</a>）。
+  应用整链 <code>create-app → start-app → cast</code> 也已跑到「电视拿地址」这一步，卡在 render 的 <code>-public-url</code> 写的是 render 机器内网地址（<code>100.100.56.213:8091</code>），电视拉不到。
+  <strong>还没跑：</strong>改 <code>-public-url</code> 后重测整链出画面；固件上机（真机上看 <code>tools/list</code>、真电视上看画面）。本文随实现随时更新。
 </p>
 
 <div class="cards">
@@ -265,7 +266,7 @@
 <p>产品路径上它只做一件事：把已构建完成的应用在 Render 上启动，返回流地址。</p>
 <pre>start-app(app_id)              → { app_id, state: "running", stream_url, ... }
 stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
-<p>不再接受 <code>screen_id</code>：屏幕不在云端视野里，传进来也没人能执行。原来那段建 casting 会话的代码（<code>service.go:1270-1304</code>）保留在仓库里，但产品不再有任何入口触发它；调试时直接对 casting 发 HTTP，见 <a href="#s12">12</a>。</p>
+<p>不再接受 <code>screen_id</code>：屏幕不在云端视野里，传进来也没人能执行。原来那段建 casting 会话的代码（<code>service.go:1270-1304</code>）保留在仓库里，但产品不再有任何入口触发它；调试时直接对 casting 发 HTTP，见 <a href="#s13">13</a>。</p>
 
 <h3>5.2 返回流地址</h3>
 <p><code>StatusView</code> 增加 <code>stream_url</code>，在 <code>state == running</code> 且 <code>Source.URL</code> 非空时填充。地址就是 Render 已经生成的那个，不做拼接、不转码。</p>
@@ -298,8 +299,8 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
 <table class="boxed">
   <thead><tr><th style="width:28%">工具</th><th style="width:30%">参数</th><th>行为</th></tr></thead>
   <tbody>
-    <tr><td><code>self.cast.list_screens</code></td><td>—</td><td><code>GET /v1/targets</code>，返回 <code>target_id</code>、名称、状态、<code>endpoint_id</code></td></tr>
-    <tr><td><code>self.cast.cast</code></td><td><code>url</code>, <code>target_id</code></td><td><code>POST /v1/projection-sessions</code>，固定 <code>mpegts / h264 / aac</code>；被占用返回 409 原文</td></tr>
+    <tr><td><code>self.cast.list_screens</code></td><td>—</td><td><code>GET /v1/targets</code>，对模型报「名字 + 状态」（<code>Macast(...)空闲</code>）；id 与 <code>endpoint_id</code> 留在设备缓存里</td></tr>
+    <tr><td><code>self.cast.cast</code></td><td><code>url</code>, <code>target_id</code></td><td>按 id → 唯一名字 → <code>GET /v1/targets/{id}</code> 的顺序解析屏幕，再 <code>POST /v1/projection-sessions</code>，固定 <code>mpegts / h264 / aac</code>；被占用返回 409 原文</td></tr>
     <tr><td><code>self.cast.stop</code></td><td><code>session_id</code></td><td><code>DELETE</code>，幂等</td></tr>
   </tbody>
 </table>
@@ -317,7 +318,7 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
 <ul>
   <li>不轮询构建：等待回到灵矽侧，用户再问一次或灵矽自己查 <code>get-app-status</code>。</li>
   <li>不做主动播报：<code>SendProactiveAnnouncement</code> 与 <code>agent_id_</code> 的改动一并回退。</li>
-  <li>缓存最近一次 <code>list_screens</code> 的结果，只用于把 <code>target_id</code> 解析成可用的 <code>endpoint_id</code>；缓存里没有该屏时先 <code>GET /v1/targets/{id}</code> 再决定。</li>
+  <li>缓存最近一次 <code>list_screens</code> 的结果，把模型听到的名字（或 id）解析成 target id 与可用的 <code>endpoint_id</code>；名字撞车时让模型重新确认，缓存里都没有才 <code>GET /v1/targets/{id}</code>。</li>
 </ul>
 
 <h2><span class="num">07</span>两种投屏的定位</h2>
@@ -432,7 +433,24 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
   </div>
 </div>
 
-<h2><span class="num">10</span>验收</h2>
+<h2 id="s10"><span class="num">10</span>本机联调记录（2026-10-31）</h2>
+
+<table class="boxed">
+  <thead><tr><th style="width:22%">环节</th><th>证据</th></tr></thead>
+  <tbody>
+    <tr><td>设备 → casting</td><td>模拟器以 <code>-casting-url http://127.0.0.1:18080</code> 启动，<code>self.cast.list_screens</code> 拿到 <code>Macast(DESKTOP-P907FKO)空闲</code></td></tr>
+    <tr><td>灵矽 → 设备</td><td>文字回合「cast this to the TV」触发 <code>list_screens</code> → <code>cast</code>，固件把 <code>http://127.0.0.1:9000/test.ts</code> 原样交给 casting</td></tr>
+    <tr><td>电视真的播了</td><td>casting 建出 <code>projection-LCSLCOV3ED3XC64HSZNYXLVBEI</code>，同一秒 Macast 发起 <code>GET /test.ts</code>（HTTP 200），目标状态在会话期间保持「正在播放」</td></tr>
+    <tr><td>名字解析</td><td><code>list_screens</code> 只报名字，模型把名字当 <code>target_id</code> 传回。控制面与固件都改成「id → 唯一名字 → <code>GET /v1/targets/{id}</code>」，撞名时拒绝并让模型重新确认；修好后同一条语音链路一次成功</td></tr>
+    <tr><td>整链：建应用</td><td>说「做一个一题两答的小游戏」，灵矽调控制面 <code>create-app</code>，应用「一题双答」构建完成（<code>list-apps</code> 显示 idle）——说明云端 MCP 工具已经挂在灵矽这一侧</td></tr>
+    <tr><td>整链：启动 + 投屏</td><td>灵矽调 <code>start-app</code> 拿 <code>stream_url</code>，再调 <code>self.cast.cast</code>；casting 建出 <code>projection-UGXWSYERRQWD46NKJFJJXJEGX6</code>，URL 是 <code>http://100.100.56.213:8091/streams/instance-087a…/live.ts</code></td></tr>
+    <tr><td>整链：电视拉流</td><td><strong>没出画面</strong>。本机访问 <code>100.100.56.213:8091</code> 超时（那是 render 机器的内网地址），公网 <code>http://118.89.179.167:6005</code> 同一条流返回 200。会话随即 stopped —— 电视拿到的地址它不可达</td></tr>
+  </tbody>
+</table>
+
+<p class="muted">本机的 casting 与 Macast 都在这台 Windows 上，所以测试流走 loopback；<code>/v1/targets</code> 发现必须用 <code>-interface Meta</code>（默认路由是 VPN 网卡）。真机 S3 MAX 烧录、真电视出画面仍未验证。整链卡在最后一跳是部署配置问题：render 起的时候 <code>-public-url</code> 不能写成只有 render 机器能访到的地址。</p>
+
+<h2><span class="num">11</span>验收</h2>
 
 <table class="boxed">
   <thead><tr><th style="width:30%">场景</th><th>判据</th></tr></thead>
@@ -448,7 +466,7 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
   </tbody>
 </table>
 
-<h2><span class="num">11</span>清理清单（已完成）</h2>
+<h2><span class="num">12</span>清理清单（已完成）</h2>
 <ul>
   <li><code>internal/voiceentry/casting/</code> 的云端代理实现（<code>transport.go</code>）已删除，只剩本地 casting 客户端与 3 个工具。</li>
   <li>固件 <code>CASTING_CONFIG</code> 里的 token / agent / device / 轮询配置项已删除。</li>
@@ -456,7 +474,7 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
   <li><code>feat/casting-mcp</code> 是 Phase 3 的落点，已推送到 fork <code>LUPENGHAN/xiaozhi-esp32</code>；上游仓库保持只读。</li>
 </ul>
 
-<h2 id="s12"><span class="num">12</span>待定</h2>
+<h2 id="s13"><span class="num">13</span>待定</h2>
 
 <div class="decision" style="border-color:#cfe0dd;background:#f7fbfa">
   <p><strong>已定：调试入口移出 MCP 工具面（选 A）</strong></p>

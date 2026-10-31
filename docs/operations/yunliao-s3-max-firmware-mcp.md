@@ -32,11 +32,13 @@
 
 | 设备工具 | 转发到本地 casting | 语义 |
 | --- | --- | --- |
-| `self.cast.list_screens` | `GET /v1/targets` | 列出电视及其状态，结果缓存在设备上，供 `cast` 校验 `target_id` |
-| `self.cast.cast` | `POST /v1/projection-sessions` | `url` 是控制面 `start-app` 返回的 `stream_url`，`target_id` 必须来自 `list_screens` |
+| `self.cast.list_screens` | `GET /v1/targets` | 列出电视及其状态，结果缓存在设备上，供 `cast` 解析屏幕 |
+| `self.cast.cast` | `POST /v1/projection-sessions` | `url` 是控制面 `start-app` 返回的 `stream_url`，`target_id` 用 `list_screens` 报出的屏幕名或 id |
 | `self.cast.stop` | `DELETE /v1/projection-sessions/{id}` | 不传 `session_id` 时停止本设备最近一次投屏 |
 
-`cast` 在缓存里找不到 `target_id` 时会先 `GET /v1/targets/{id}` 刷新；目标没有任何支持 `streaming + mpegts + h264 + aac` 的 endpoint 时直接拒绝，不发请求。
+说话用的屏幕名和投屏用的 id 不是一回事：`list_screens` 只报名字和状态（模型和用户说的都是名字），请求里要用发现结果的 id。所以 `cast` 拿到 `target_id` 后按 id、再按名字（精确匹配）查缓存，命中唯一一块就用它；名字撞车时让模型重新 `list_screens` 确认，不会瞎投。缓存没命中才 `GET /v1/targets/{id}` 刷新；目标没有任何支持 `streaming + mpegts + h264 + aac` 的 endpoint 时直接拒绝，不发请求。
+
+控制面侧 `internal/voiceentry/casting` 的实现与固件一致：同样按 id → 唯一名字 → 远端查询的顺序解析。
 
 工具名沿用仓库既有约定 `self.<域>.<动作>`。灵犀侧工具有数量上限，超限会静默丢弃；固件启动日志会打印工具总数与 `casting tools registered` 一行。
 
