@@ -1,397 +1,227 @@
 package casting
 
 import (
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
+	"context"
+	"errors"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	api "github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
-type recorded struct {
-	Method string
-	Path   string
-	Body   []byte
-}
-
-// fakeCasting is a stand-in for the local casting service: it serves discovery,
-// accepts projection sessions, and records what it was asked to do.
-type fakeCasting struct {
-	mu         sync.Mutex
-	calls      []recorded
+// fakeCaster stands in for the LAN: tests decide what discovery returns and
+// which failure the next control call reports.
+type fakeCaster struct {
 	targets    []api.Target
-	session    api.Session
-	create     int    // status override for POST; 0 means 201
-	createCode string // error code the POST failure reports
-	stop       int    // status override for DELETE; 0 means 200
-	delay      time.Duration
-	lastBody   api.CreateSessionRequest
+	listErr    error
+	resolveErr error
+	castErr    error
+	stopErr    error
+
+	resolvedRef string
+	castTarget  string
+	castURL     string
+	stopped     string
+	stoppedAll  bool
 }
 
-func (f *fakeCasting) handler() http.Handler {
-	mux := http.NewServeMux()
-	write := func(w http.ResponseWriter, status int, v any) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(v)
+func (f *fakeCaster) List(context.Context) ([]api.Target, error) {
+	return f.targets, f.listErr
+}
+
+func (f *fakeCaster) Resolve(_ context.Context, ref string) (api.Target, error) {
+	f.resolvedRef = ref
+	if f.resolveErr != nil {
+		return api.Target{}, f.resolveErr
 	}
-	mux.HandleFunc("GET /v1/targets", func(w http.ResponseWriter, r *http.Request) {
-		f.record(r, nil)
-		if f.delay > 0 {
-			time.Sleep(f.delay)
+	for _, target := range f.targets {
+		if target.ID == ref || target.Name == ref {
+			return target, nil
 		}
-		write(w, http.StatusOK, map[string]any{"targets": f.targets})
-	})
-	mux.HandleFunc("GET /v1/targets/{id}", func(w http.ResponseWriter, r *http.Request) {
-		f.record(r, nil)
-		for _, target := range f.targets {
-			if target.ID == r.PathValue("id") {
-				write(w, http.StatusOK, target)
-				return
-			}
+	}
+	return api.Target{}, ErrScreenNotFound
+}
+
+func (f *fakeCaster) Cast(_ context.Context, targetID, streamURL string) (api.Target, error) {
+	f.castTarget, f.castURL = targetID, streamURL
+	if f.castErr != nil {
+		return api.Target{}, f.castErr
+	}
+	for _, target := range f.targets {
+		if target.ID == targetID {
+			return target, nil
 		}
-		write(w, http.StatusNotFound, errorBody(CodeNotFound, "target not found"))
-	})
-	mux.HandleFunc("POST /v1/projection-sessions", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		f.record(r, body)
-		if f.create >= 300 {
-			write(w, f.create, errorBody(f.createCode, "request refused"))
-			return
-		}
-		var request api.CreateSessionRequest
-		_ = json.Unmarshal(body, &request)
-		f.mu.Lock()
-		f.lastBody = request
-		f.mu.Unlock()
-		write(w, http.StatusCreated, f.session)
-	})
-	mux.HandleFunc("DELETE /v1/projection-sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		f.record(r, nil)
-		if f.stop >= 300 {
-			write(w, f.stop, errorBody(CodeNotFound, "session not found"))
-			return
-		}
-		write(w, http.StatusOK, api.Session{ID: r.PathValue("id"), State: api.SessionStopped})
-	})
-	return mux
+	}
+	return api.Target{}, ErrScreenNotFound
 }
 
-func (f *fakeCasting) record(r *http.Request, body []byte) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, recorded{Method: r.Method, Path: r.URL.Path, Body: body})
+func (f *fakeCaster) Stop(_ context.Context, targetID string) error {
+	f.stopped = targetID
+	f.stoppedAll = targetID == ""
+	return f.stopErr
 }
 
-func (f *fakeCasting) snapshot() []recorded {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]recorded(nil), f.calls...)
-}
-
-func (f *fakeCasting) posted() api.CreateSessionRequest {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.lastBody
-}
-
-func errorBody(code, message string) map[string]any {
-	return map[string]any{"error": map[string]any{"code": code, "message": message}}
-}
-
-func livingRoom() api.Target {
+func renderer(id, name string) api.Target {
 	return api.Target{
-		ID: "uuid-living-room", Name: "客厅电视", State: api.TargetOnline,
+		ID:    id,
+		Name:  name,
+		State: api.TargetOnline,
 		Endpoints: []api.Endpoint{{
-			ID: "dlna", Protocol: "dlna",
+			ID:       "dlna-renderer",
+			Protocol: "dlna",
 			Capabilities: api.Capabilities{
-				Formats: []string{"mpegts"}, VideoCodecs: []string{"h264"},
-				AudioCodecs: []string{"aac"}, Streaming: true,
+				Formats:     []string{"mpegts"},
+				VideoCodecs: []string{"h264"},
+				AudioCodecs: []string{"aac"},
+				Streaming:   true,
 			},
 		}},
 	}
 }
 
-func studyBusy() api.Target {
-	target := livingRoom()
-	target.ID, target.Name, target.ActiveSessionID = "uuid-study", "书房电视", "projection-other"
-	return target
-}
-
-func bedroomOffline() api.Target {
-	target := livingRoom()
-	target.ID, target.Name, target.State = "uuid-bedroom", "卧室电视", api.TargetOffline
-	return target
-}
-
-func newTestTools(t *testing.T, fake *fakeCasting, timeout time.Duration) (*Tools, *[]string) {
+func call(t *testing.T, tools *Tools, name string, args map[string]any) (string, error) {
 	t.Helper()
-	server := httptest.NewServer(fake.handler())
-	t.Cleanup(server.Close)
-	client := New(Config{
-		URL:         server.URL,
-		CallTimeout: timeout,
-		ListTimeout: timeout,
-		HTTPClient:  server.Client(),
-	})
-	var events []string
-	return NewTools(client, func(text string) { events = append(events, text) }), &events
+	for _, tool := range tools.List() {
+		if tool.Name == name {
+			return tool.Call(args)
+		}
+	}
+	t.Fatalf("tool %s is not registered", name)
+	return "", nil
 }
 
-func TestToolsListNamesAndUniqueness(t *testing.T) {
-	tools, _ := newTestTools(t, &fakeCasting{}, time.Second)
-	list := tools.List()
-	if len(list) != 3 {
-		t.Fatalf("tools=%d", len(list))
-	}
-	seen := map[string]bool{}
-	for _, tool := range list {
-		if !strings.HasPrefix(tool.Name, "self.cast.") {
-			t.Errorf("tool %q outside self.cast namespace", tool.Name)
-		}
-		if seen[tool.Name] {
-			t.Errorf("duplicate %q", tool.Name)
-		}
-		seen[tool.Name] = true
-		if tool.Call == nil {
-			t.Errorf("%s has no call", tool.Name)
-		}
-	}
-	for _, want := range []string{"self.cast.list_screens", "self.cast.cast", "self.cast.stop"} {
-		if !seen[want] {
-			t.Errorf("missing %s", want)
-		}
-	}
-}
-
-func TestListScreensWordsTargets(t *testing.T) {
-	fake := &fakeCasting{targets: []api.Target{livingRoom(), studyBusy(), bedroomOffline()}}
-	tools, _ := newTestTools(t, fake, time.Second)
-	text, err := tools.listScreens(nil)
+func TestListScreensReportsEmptyNetwork(t *testing.T) {
+	tools := NewTools(&fakeCaster{}, nil)
+	text, err := call(t, tools, "self.cast.list_screens", nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("list: %v", err)
 	}
-	want := "客厅电视空闲；书房电视正在播放；卧室电视离线"
-	if text != want {
-		t.Fatalf("got %q want %q", text, want)
-	}
-}
-
-func TestListScreensWithoutTargetsSaysSo(t *testing.T) {
-	tools, _ := newTestTools(t, &fakeCasting{}, time.Second)
-	text, err := tools.listScreens(nil)
-	if err != nil || !strings.Contains(text, "没有发现") {
-		t.Fatalf("text=%q err=%v", text, err)
+	if text != "附近没有发现可以投屏的电视" {
+		t.Fatalf("text=%q", text)
 	}
 }
 
-func TestCastPostsTheCloudStreamToTheChosenEndpoint(t *testing.T) {
-	fake := &fakeCasting{
-		targets: []api.Target{livingRoom(), studyBusy()},
-		session: api.Session{ID: "projection-1", State: api.SessionPlaying, TargetID: "uuid-living-room"},
-	}
-	tools, events := newTestTools(t, fake, time.Second)
-	if _, err := tools.listScreens(nil); err != nil {
-		t.Fatal(err)
-	}
-
-	text, err := tools.cast(map[string]any{
-		"url":       "https://render.example.com/streams/inst_1/live.ts",
-		"target_id": "uuid-living-room",
-	})
+func TestListScreensSpeaksNames(t *testing.T) {
+	fake := &fakeCaster{targets: []api.Target{renderer("uuid-1", "客厅电视"), renderer("uuid-2", "书房电视")}}
+	tools := NewTools(fake, nil)
+	text, err := call(t, tools, "self.cast.list_screens", nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("list: %v", err)
+	}
+	if text != "客厅电视空闲；书房电视空闲" {
+		t.Fatalf("text=%q", text)
+	}
+}
+
+func TestListScreensPropagatesDiscoveryFailure(t *testing.T) {
+	tools := NewTools(&fakeCaster{listErr: errors.New("multicast unavailable")}, nil)
+	if _, err := call(t, tools, "self.cast.list_screens", nil); err == nil {
+		t.Fatal("discovery failure was swallowed")
+	}
+}
+
+func TestCastRequiresURLAndTarget(t *testing.T) {
+	tools := NewTools(&fakeCaster{}, nil)
+	if _, err := call(t, tools, "self.cast.cast", map[string]any{"target_id": "x"}); err == nil {
+		t.Fatal("cast accepted an empty url")
+	}
+	if _, err := call(t, tools, "self.cast.cast", map[string]any{"url": "http://stream"}); err == nil {
+		t.Fatal("cast accepted an empty target")
+	}
+}
+
+func TestCastUsesResolvedScreenAndRemembersIt(t *testing.T) {
+	fake := &fakeCaster{targets: []api.Target{renderer("uuid-1", "客厅电视")}}
+	tools := NewTools(fake, nil)
+	text, err := call(t, tools, "self.cast.cast", map[string]any{"url": "http://stream/live.ts", "target_id": "客厅电视"})
+	if err != nil {
+		t.Fatalf("cast: %v", err)
 	}
 	if text != "已经投到客厅电视了" {
 		t.Fatalf("text=%q", text)
 	}
-	if len(*events) != 1 || !strings.Contains((*events)[0], "客厅电视") {
-		t.Fatalf("events=%v", *events)
+	if fake.castTarget != "uuid-1" || fake.castURL != "http://stream/live.ts" {
+		t.Fatalf("cast target=%q url=%q", fake.castTarget, fake.castURL)
 	}
-
-	request := fake.posted()
-	if request.TargetID != "uuid-living-room" || request.EndpointID != "dlna" {
-		t.Fatalf("request=%+v", request)
+	if text, err := call(t, tools, "self.cast.stop", nil); err != nil || text != "已经停止投屏" {
+		t.Fatalf("stop after cast: text=%q err=%v", text, err)
 	}
-	want := api.StreamSource{
-		Type: "stream", URL: "https://render.example.com/streams/inst_1/live.ts",
-		Format: "mpegts", VideoCodec: "h264", AudioCodec: "aac",
-	}
-	if request.Source != want {
-		t.Fatalf("source=%+v want %+v", request.Source, want)
-	}
-	// The URL is passed through untouched: the device never rewrites it.
-	calls := fake.snapshot()
-	if last := calls[len(calls)-1]; last.Method != http.MethodPost || last.Path != "/v1/projection-sessions" {
-		t.Fatalf("last call = %+v", last)
+	if fake.stopped != "uuid-1" {
+		t.Fatalf("stopped=%q", fake.stopped)
 	}
 }
 
-func TestCastWithoutPriorListLooksUpTheTarget(t *testing.T) {
-	fake := &fakeCasting{
-		targets: []api.Target{livingRoom()},
-		session: api.Session{ID: "projection-1", State: api.SessionPlaying},
-	}
-	tools, _ := newTestTools(t, fake, time.Second)
-	if _, err := tools.cast(map[string]any{"url": "http://cloud/live.ts", "target_id": "uuid-living-room"}); err != nil {
-		t.Fatal(err)
-	}
-	calls := fake.snapshot()
-	if len(calls) != 2 || calls[0].Method != http.MethodGet || calls[0].Path != "/v1/targets/uuid-living-room" {
-		t.Fatalf("calls=%+v", calls)
-	}
-	if fake.posted().EndpointID != "dlna" {
-		t.Fatalf("endpoint=%q", fake.posted().EndpointID)
-	}
-}
-
-func TestCastAcceptsTheScreenNameFromTheLastList(t *testing.T) {
-	fake := &fakeCasting{
-		targets: []api.Target{livingRoom(), studyBusy()},
-		session: api.Session{ID: "projection-1", State: api.SessionPlaying},
-	}
-	tools, _ := newTestTools(t, fake, time.Second)
-	if _, err := tools.listScreens(nil); err != nil {
-		t.Fatal(err)
-	}
-	// list_screens speaks "客厅电视空闲"; the model repeats the name it heard.
-	if _, err := tools.cast(map[string]any{"url": "http://cloud/live.ts", "target_id": "客厅电视"}); err != nil {
-		t.Fatal(err)
-	}
-	if fake.posted().TargetID != "uuid-living-room" {
-		t.Fatalf("target=%q", fake.posted().TargetID)
-	}
-	for _, call := range fake.snapshot() {
-		if strings.HasPrefix(call.Path, "/v1/targets/") {
-			t.Fatalf("looked the name up remotely: %+v", call)
-		}
-	}
-}
-
-func TestCastRejectsAnAmbiguousScreenName(t *testing.T) {
-	twin := livingRoom()
-	twin.ID = "uuid-living-room-2"
-	fake := &fakeCasting{targets: []api.Target{livingRoom(), twin}}
-	tools, _ := newTestTools(t, fake, time.Second)
-	if _, err := tools.listScreens(nil); err != nil {
-		t.Fatal(err)
-	}
-	_, err := tools.cast(map[string]any{"url": "http://cloud/live.ts", "target_id": "客厅电视"})
-	if err == nil || !strings.Contains(err.Error(), "好几块") {
+func TestCastRejectsIncompatibleScreen(t *testing.T) {
+	target := renderer("uuid-1", "旧电视")
+	target.Endpoints[0].Capabilities.Formats = []string{"hls"}
+	tools := NewTools(&fakeCaster{targets: []api.Target{target}}, nil)
+	_, err := call(t, tools, "self.cast.cast", map[string]any{"url": "http://stream", "target_id": "uuid-1"})
+	if err == nil || !strings.Contains(err.Error(), "不支持这种画面格式") {
 		t.Fatalf("err=%v", err)
 	}
 }
 
-func TestCastRejectsAScreenWithoutTheStreamProfile(t *testing.T) {
-	target := livingRoom()
-	target.Endpoints[0].Capabilities.AudioCodecs = []string{"opus"}
-	fake := &fakeCasting{targets: []api.Target{target}}
-	tools, _ := newTestTools(t, fake, time.Second)
-	_, err := tools.cast(map[string]any{"url": "http://cloud/live.ts", "target_id": "uuid-living-room"})
-	if err == nil || !strings.Contains(err.Error(), "不支持") {
-		t.Fatalf("err=%v", err)
+func TestCastSpeaksUPnPFailures(t *testing.T) {
+	cases := map[string]string{
+		"upnp 714": "不支持这种画面格式",
+		"upnp 715": "正在播放别的内容",
+		"upnp 716": "找不到这个视频地址",
+		"upnp 718": "拒绝了投屏请求",
 	}
-	for _, call := range fake.snapshot() {
-		if call.Method == http.MethodPost {
-			t.Fatalf("posted anyway: %+v", call)
+	for raw, want := range cases {
+		fake := &fakeCaster{
+			targets: []api.Target{renderer("uuid-1", "客厅电视")},
+			castErr: errors.New("SetAVTransportURI: UPnP " + strings.TrimPrefix(raw, "upnp ") + " fault"),
+		}
+		tools := NewTools(fake, nil)
+		_, err := call(t, tools, "self.cast.cast", map[string]any{"url": "http://stream", "target_id": "uuid-1"})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err=%v, want %q", raw, err, want)
 		}
 	}
 }
 
-func TestCastExplainsBusyAndOfflineScreens(t *testing.T) {
-	for name, test := range map[string]struct {
-		status int
-		code   string
-		want   string
+func TestCastSpeaksTransportFailure(t *testing.T) {
+	fake := &fakeCaster{
+		targets: []api.Target{renderer("uuid-1", "客厅电视")},
+		castErr: errors.New("dial tcp: connection refused"),
+	}
+	tools := NewTools(fake, nil)
+	_, err := call(t, tools, "self.cast.cast", map[string]any{"url": "http://stream", "target_id": "uuid-1"})
+	if err == nil || !strings.Contains(err.Error(), "没有响应投屏指令") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestStopWithoutSessionExplainsItself(t *testing.T) {
+	tools := NewTools(&fakeCaster{}, nil)
+	_, err := call(t, tools, "self.cast.stop", nil)
+	if err == nil || !strings.Contains(err.Error(), "不知道要停哪一次投屏") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestStopOnAnotherScreenIsNotAnError(t *testing.T) {
+	fake := &fakeCaster{stopErr: ErrSessionGone}
+	tools := NewTools(fake, nil)
+	_, err := call(t, tools, "self.cast.stop", map[string]any{"session_id": "uuid-1"})
+	if err == nil || !strings.Contains(err.Error(), "已经不在投屏了") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestResolveFailuresBecomeSpeakable(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
 	}{
-		"busy":    {http.StatusConflict, CodeTargetBusy, "正在播放别的内容"},
-		"offline": {http.StatusConflict, CodeTargetOffline, "离线"},
+		{ErrScreenNotFound, "没有找到这块电视"},
+		{ErrAmbiguousName, "有好几块叫这个名字的电视"},
 	} {
-		t.Run(name, func(t *testing.T) {
-			fake := &fakeCasting{targets: []api.Target{livingRoom()}, create: test.status, createCode: test.code}
-			tools, _ := newTestTools(t, fake, time.Second)
-			_, err := tools.cast(map[string]any{"url": "http://cloud/live.ts", "target_id": "uuid-living-room"})
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("err=%v", err)
-			}
-		})
-	}
-}
-
-func TestCastRejectsAnUnknownScreenBeforePosting(t *testing.T) {
-	fake := &fakeCasting{}
-	tools, _ := newTestTools(t, fake, time.Second)
-	_, err := tools.cast(map[string]any{"url": "http://cloud/live.ts", "target_id": "made-up"})
-	if err == nil || !strings.Contains(err.Error(), "先调用 self.cast.list_screens") {
-		t.Fatalf("err=%v", err)
-	}
-	if calls := fake.snapshot(); len(calls) != 1 || calls[0].Method != http.MethodGet {
-		t.Fatalf("calls=%+v", calls)
-	}
-}
-
-func TestCastNeedsBothArguments(t *testing.T) {
-	tools, _ := newTestTools(t, &fakeCasting{}, time.Second)
-	for _, args := range []map[string]any{
-		{"target_id": "uuid-living-room"},
-		{"url": "http://cloud/live.ts"},
-	} {
-		if _, err := tools.cast(args); err == nil {
-			t.Fatalf("accepted %+v", args)
+		tools := NewTools(&fakeCaster{resolveErr: tc.err}, nil)
+		_, err := call(t, tools, "self.cast.cast", map[string]any{"url": "http://stream", "target_id": "客厅"})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v: err=%v", tc.err, err)
 		}
-	}
-}
-
-func TestStopUsesTheSessionJustStarted(t *testing.T) {
-	fake := &fakeCasting{
-		targets: []api.Target{livingRoom()},
-		session: api.Session{ID: "projection-9", State: api.SessionPlaying},
-	}
-	tools, _ := newTestTools(t, fake, time.Second)
-	if _, err := tools.cast(map[string]any{"url": "http://cloud/live.ts", "target_id": "uuid-living-room"}); err != nil {
-		t.Fatal(err)
-	}
-	text, err := tools.stop(nil)
-	if err != nil || text != "已经停止投屏" {
-		t.Fatalf("text=%q err=%v", text, err)
-	}
-	calls := fake.snapshot()
-	last := calls[len(calls)-1]
-	if last.Method != http.MethodDelete || last.Path != "/v1/projection-sessions/projection-9" {
-		t.Fatalf("last call = %+v", last)
-	}
-	// A second stop has nothing left to stop.
-	if _, err := tools.stop(nil); err == nil {
-		t.Fatal("stopped again without a session")
-	}
-}
-
-func TestStopOfAMissingSessionReadsAsDone(t *testing.T) {
-	fake := &fakeCasting{stop: http.StatusNotFound}
-	tools, _ := newTestTools(t, fake, time.Second)
-	text, err := tools.stop(map[string]any{"session_id": "projection-gone"})
-	if err != nil || !strings.Contains(text, "已经不在投屏") {
-		t.Fatalf("text=%q err=%v", text, err)
-	}
-}
-
-func TestUnconfiguredCastingURLFailsBeforeNetwork(t *testing.T) {
-	tools := NewTools(New(Config{}), nil)
-	if _, err := tools.listScreens(nil); err == nil || !strings.Contains(err.Error(), "未配置") {
-		t.Fatalf("err=%v", err)
-	}
-}
-
-func TestSlowCastingServiceTimesOutReadably(t *testing.T) {
-	fake := &fakeCasting{targets: []api.Target{livingRoom()}, delay: 300 * time.Millisecond}
-	tools, _ := newTestTools(t, fake, 30*time.Millisecond)
-	_, err := tools.listScreens(nil)
-	if err == nil || !strings.Contains(err.Error(), "没有响应") {
-		t.Fatalf("err=%v", err)
 	}
 }

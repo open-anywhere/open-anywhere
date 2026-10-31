@@ -133,7 +133,6 @@ export interface AppSummary {
   built_at?: string
   build_duration_seconds?: number
   operation_count: number
-  screen_id?: string
   started_at?: string
   stopped_at?: string
   error?: AppError
@@ -174,24 +173,18 @@ export interface ServiceBindingState {
   managed: {
     available: boolean
     render_url: string
-    casting_url: string
   }
   custom: {
     render_url: string
-    casting_url: string
     render_token_configured: boolean
-    casting_token_configured: boolean
   }
 }
 
 export interface ServiceBindingInput {
   mode: ServiceMode
   render_url?: string
-  casting_url?: string
   render_token?: string
-  casting_token?: string
   clear_render_token?: boolean
-  clear_casting_token?: boolean
 }
 
 export interface ServiceCheck {
@@ -201,8 +194,6 @@ export interface ServiceCheck {
 
 export interface ServiceTestResult {
   render: ServiceCheck
-  casting: ServiceCheck
-  screens: number
 }
 
 export interface AdminAgent {
@@ -289,9 +280,7 @@ export interface PlatformSettings {
   }
   services: {
     render_url: string
-    casting_url: string
     render_token: SecretState
-    casting_token: SecretState
   }
   registration: { open: boolean }
   ready: { agentapi: boolean; linx: boolean; mcp: boolean; services: boolean }
@@ -324,9 +313,7 @@ export interface PlatformSettingsPatch {
   }
   services?: {
     render_url?: string
-    casting_url?: string
     render_token?: SecretPatch
-    casting_token?: SecretPatch
   }
   registration?: { open?: boolean }
 }
@@ -334,31 +321,6 @@ export interface PlatformSettingsPatch {
 export interface SettingsTestResult {
   linx: ServiceCheck
   render: ServiceCheck
-  casting: ServiceCheck
-  screens: number
-}
-
-export type ScreenStatus = 'free' | 'showing_app' | 'external' | 'unavailable'
-
-export interface ScreenAppRef {
-  app_id: string
-  name: string
-}
-
-export interface Screen {
-  screen_id: string
-  name: string
-  online: boolean
-  status: ScreenStatus
-  current_app?: ScreenAppRef
-}
-
-export interface StopScreenResult {
-  screen_id: string
-  app: {
-    app_id: string
-    state: AppState
-  }
 }
 
 export interface VoiceStatus {
@@ -509,9 +471,6 @@ export const api = {
       method: 'DELETE',
       body: '{}',
     }),
-  listScreens: () => request<{ screens: Screen[] }>('/screens'),
-  stopScreen: (screenId: string) =>
-    postJSON<StopScreenResult>(`/screens/${encodeURIComponent(screenId)}/stop`, {}),
   openapi: async (id: string) => {
     const response = await fetch(`${BASE}/apps/${encodeURIComponent(id)}/openapi.yaml`, {
       credentials: 'same-origin',
@@ -592,6 +551,10 @@ export const adminApi = {
 export const voice = {
   base: voiceBase,
   status: (deviceId: string) => requestURL<VoiceStatus>(`${voiceBase(deviceId)}/status`),
+  say: (deviceId: string, text: string) =>
+    postJSONURL<unknown>(`${voiceBase(deviceId)}/say`, { text }),
+  announce: (deviceId: string, text: string) =>
+    postJSONURL<unknown>(`${voiceBase(deviceId)}/announce`, { text }),
   pause: (deviceId: string) => postJSONURL<unknown>(`${voiceBase(deviceId)}/pause`),
   resume: (deviceId: string) => postJSONURL<unknown>(`${voiceBase(deviceId)}/resume`),
   abort: (deviceId: string) => postJSONURL<unknown>(`${voiceBase(deviceId)}/abort`),

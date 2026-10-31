@@ -2,7 +2,6 @@ import {
   AppstoreOutlined,
   AudioOutlined,
   CloudServerOutlined,
-  DesktopOutlined,
   PlusOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -12,7 +11,7 @@ import { Alert, App as AntApp, Button, Skeleton, Space, Tag } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ApiError, api } from '../../api'
-import { appsQueryOptions, meQueryOptions, screensQueryOptions, servicesQueryOptions } from '../../api/queries'
+import { appsQueryOptions, meQueryOptions, servicesQueryOptions } from '../../api/queries'
 import { EmptyState } from '../../components/EmptyState'
 import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { usePageTitle } from '../../hooks/usePageTitle'
@@ -20,7 +19,6 @@ import { primaryDevice } from '../../lib/device'
 import { AppRow } from './components/AppRow'
 import { DevicePanel } from './components/DevicePanel'
 import { PageHeader } from './components/PageHeader'
-import { ScreenRow } from './components/ScreenRow'
 import { StatTile } from './components/StatTile'
 
 export function OverviewPage() {
@@ -40,7 +38,6 @@ export function OverviewPage() {
     refetchInterval: (query) =>
       query.state.data?.apps.some((app) => app.state === 'building') ? 5_000 : false,
   })
-  const screens = useQuery(screensQueryOptions)
   const services = useQuery(servicesQueryOptions)
 
   const createDevice = useMutation({
@@ -69,19 +66,16 @@ export function OverviewPage() {
 
   const devices = me.data?.devices ?? []
   const appList = apps.data?.apps ?? []
-  const screenList = screens.data?.screens ?? []
   const device = primaryDevice(devices)
   const registered = devices.filter((item) => item.state === 'registered').length
   const provisioning = devices.filter((item) => item.state === 'provisioning').length
   const building = appList.filter((app) => app.state === 'building').length
   const running = appList.filter((app) => app.state === 'running').length
-  const onlineScreens = screenList.filter((screen) => screen.online).length
-  const refreshing = me.isFetching || apps.isFetching || screens.isFetching
+  const refreshing = me.isFetching || apps.isFetching
 
   const refreshAll = () => {
     void me.refetch()
     void apps.refetch()
-    void screens.refetch()
   }
 
   const call = (deviceId?: string) => {
@@ -127,7 +121,7 @@ export function OverviewPage() {
           type="warning"
           showIcon
           className="panel-alert"
-          message="投屏服务还没有准备好"
+          message="应用运行服务还没有准备好"
           description="应用可以继续生成，但暂时不能出现在屏幕上。可以先检查屏幕连接，或稍后再试。"
           action={
             <Link to="/portal/services">
@@ -152,19 +146,6 @@ export function OverviewPage() {
           note={appList.length ? `${running} 个正在播放 · ${building} 个生成中` : '暂无应用'}
         />
         <StatTile
-          icon={<DesktopOutlined />}
-          label="屏幕"
-          value={screens.error ? '—' : screenList.length}
-          note={
-            screens.error
-              ? '投屏服务暂时不可用'
-              : screenList.length
-                ? `${onlineScreens} 个在线`
-                : '尚未发现屏幕'
-          }
-          tone={screens.error ? 'danger' : 'neutral'}
-        />
-        <StatTile
           icon={<ThunderboltOutlined />}
           label="进行中"
           value={building + provisioning}
@@ -176,7 +157,7 @@ export function OverviewPage() {
       {services.data ? (
         <div className="service-status">
           <CloudServerOutlined aria-hidden="true" />
-          <span>投屏服务</span>
+          <span>应用运行服务</span>
           <Tag>{services.data.mode === 'custom' ? '自己接入' : '平台提供'}</Tag>
           <Tag color={services.data.ready ? 'green' : 'orange'}>
             {services.data.ready ? '已就绪' : '未就绪'}
@@ -212,41 +193,6 @@ export function OverviewPage() {
           />
         </section>
 
-        <section className="surface">
-          <div className="section-header">
-            <div>
-              <h2>屏幕</h2>
-              <p>身边的电视与投影，以及它们此刻正在播放的内容。</p>
-            </div>
-            <Link to="/portal/screens" className="text-link">
-              全部屏幕
-            </Link>
-          </div>
-          {screens.isPending ? (
-            <Skeleton active paragraph={{ rows: 4 }} title={false} />
-          ) : screens.error ? (
-            <Alert
-              type="warning"
-              showIcon
-              message="无法发现屏幕"
-              description={
-                screens.error instanceof ApiError ? screens.error.message : '投屏服务暂时不可用。'
-              }
-            />
-          ) : screenList.length ? (
-            <div className="data-list">
-              {screenList.slice(0, 4).map((screen) => (
-                <ScreenRow key={screen.screen_id} screen={screen} />
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              icon={<DesktopOutlined />}
-              title="还没有发现屏幕"
-              description="确认电视或投影已经打开，并和投屏服务连在一起，然后刷新。"
-            />
-          )}
-        </section>
       </div>
 
       <section className="surface">
@@ -280,11 +226,6 @@ export function OverviewPage() {
                     item.id === app.device_id ||
                     item.agent_id === app.device_id,
                 )}
-                screenName={
-                  app.screen_id
-                    ? screenList.find((screen) => screen.screen_id === app.screen_id)?.name
-                    : undefined
-                }
               />
             ))}
           </div>

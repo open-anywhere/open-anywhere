@@ -5,7 +5,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import type { AppState } from '../../api'
 import { ApiError } from '../../api'
-import { appsQueryOptions, meQueryOptions, screensQueryOptions } from '../../api/queries'
+import { appsQueryOptions, meQueryOptions } from '../../api/queries'
 import { EmptyState } from '../../components/EmptyState'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { deviceForApp, primaryDevice } from '../../lib/device'
@@ -29,7 +29,6 @@ export function AppsPage() {
   const [deviceKey, setDeviceKey] = useState<string>('all')
 
   const me = useQuery(meQueryOptions)
-  const screens = useQuery(screensQueryOptions)
   const apps = useQuery({
     ...appsQueryOptions,
     refetchOnWindowFocus: true,
@@ -40,7 +39,6 @@ export function AppsPage() {
   const devices = me.data?.devices ?? []
   const device = primaryDevice(devices)
   const appList = apps.data?.apps ?? []
-  const screenList = screens.data?.screens ?? []
 
   const selectedDevice = devices.find((item) => item.mac === deviceKey)
   const visible = useMemo(() => {
@@ -150,11 +148,6 @@ export function AppsPage() {
                 key={app.app_id}
                 app={app}
                 device={deviceForApp(devices, app)}
-                screenName={
-                  app.screen_id
-                    ? screenList.find((screen) => screen.screen_id === app.screen_id)?.name
-                    : undefined
-                }
               />
             ))}
           </div>

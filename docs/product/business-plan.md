@@ -1341,7 +1341,7 @@ Render（运行 / 页面采集 / 视频编码）
 
 ### 7.6 计量口径与校准
 
-**已埋点。** 每次构建在应用记录中写入 `BuildStartedAt`、`BuildFinishedAt`、`BuildDuration`（`internal/gateway/build/builder.go`），可直接导出构建时长分布；运行时长由 Render 记录，投屏状态在设备固件与电视，控制面只保留兼容的 Casting 视图。构建是异步的，语音回合不等待构建（见 `AGENTS.md` 的不变量）。
+**已埋点。** 每次构建在应用记录中写入 `BuildStartedAt`、`BuildFinishedAt`、`BuildDuration`（`internal/gateway/build/builder.go`），可直接导出构建时长分布；运行时长由 Render 记录，投屏状态在设备固件与电视，控制面不保留投屏状态。构建是异步的，语音回合不等待构建（见 `AGENTS.md` 的不变量）。
 
 **待补。** token 用量、单次生成成本、上屏 P50/P95、生成成功率、首次通过率、布局溢出率。补齐前，本文的 1.8–6.8 元、P50 < 3 分钟、60% 毛利均为**经营参数**，不是实测值。
 
@@ -1369,7 +1369,7 @@ Render（运行 / 页面采集 / 视频编码）
 | 维度 | Open Anywhere | Jackbox / Kahoot | Lovable / Bolt / v0 | 证据 |
 | --- | --- | --- | --- | --- |
 | 内容来源 | 现场生成 | 预制游戏包 / 题库 | 生成代码 | 代码：build + AgentAPI |
-| 交付终点 | 电视 / 投影（DLNA） | 手机 + 主机 / 浏览器 | 浏览器预览 | `docs/operations/casting.md` |
+| 交付终点 | 电视 / 投影（DLNA） | 手机 + 主机 / 浏览器 | 浏览器预览 | `docs/architecture/home-casting.md` |
 | 多人现场 | 语音参与；手机加入在路线图 | 手机加入成熟 | 无现场主持 | `docs/product/research.md` |
 | 单次内容成本 | 1.8–6.8 元（待校准） | 游戏包 / 订阅分摊 | 订阅额度 | §5.5 |
 | 上屏延迟 | 异步构建，目标 P50 < 3 分钟 | 秒级 | 不适用 | §7.6 |

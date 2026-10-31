@@ -13,7 +13,6 @@ import (
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/netguard"
-	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/secret"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/settings"
@@ -31,17 +30,12 @@ func newResolverEnvAtPath(t *testing.T, path string) *resolverEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := screen.LoadCatalog("")
-	if err != nil {
-		t.Fatal(err)
-	}
 	provider := settings.New(db, box)
 	return &resolverEnv{
 		db:       db,
 		box:      box,
 		provider: provider,
-		resolver: NewResolver(db, provider, box, netguard.New(false), catalog),
-		catalog:  catalog,
+		resolver: NewResolver(db, provider, box, netguard.New(false)),
 	}
 }
 
@@ -116,19 +110,18 @@ func TestResolverRejectsMissingUserIDs(t *testing.T) {
 func TestBindingForCustomReportsUnreadableTokens(t *testing.T) {
 	env := newResolverEnv(t)
 	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
-	// The casting token is sealed for the render field, so decrypting the
-	// casting column must fail.
+	// The render token is sealed for another field, so it must not decrypt.
 	seedBinding(t, env, store.PortalServiceBinding{
-		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc:  env.encrypt(t, user.ID, "render", "render-secret"),
-		CastingTokenEnc: env.encrypt(t, user.ID, "render", "casting-secret"),
+		UserID:         user.ID,
+		Mode:           store.ServiceModeCustom,
+		RenderURL:      "https://my-render.example",
+		RenderTokenEnc: env.encrypt(t, user.ID, "other", "render-secret"),
 	})
 	_, err := env.resolver.BindingFor(context.Background(), app.Identity{DeviceID: "mac-1", AgentID: "agent-1"})
 	if err == nil || !strings.Contains(err.Error(), "decrypt service token") {
 		t.Fatalf("err = %v", err)
 	}
-	if strings.Contains(err.Error(), "casting-secret") {
+	if strings.Contains(err.Error(), "render-secret") {
 		t.Fatalf("the error leaked token material: %v", err)
 	}
 }
@@ -137,10 +130,10 @@ func TestPreviewBindingReusesSavedCustomBinding(t *testing.T) {
 	env := newResolverEnv(t)
 	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
 	seedBinding(t, env, store.PortalServiceBinding{
-		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc:  env.encrypt(t, user.ID, "render", "render-secret"),
-		CastingTokenEnc: env.encrypt(t, user.ID, "casting", "casting-secret"),
+		UserID:         user.ID,
+		Mode:           store.ServiceModeCustom,
+		RenderURL:      "https://my-render.example",
+		RenderTokenEnc: env.encrypt(t, user.ID, "render", "render-secret"),
 	})
 
 	binding, err := env.resolver.PreviewBinding(context.Background(), user.ID, BindingOverride{})
@@ -150,39 +143,27 @@ func TestPreviewBindingReusesSavedCustomBinding(t *testing.T) {
 	if binding.Managed {
 		t.Fatal("a saved custom binding was previewed as managed")
 	}
-	if binding.RenderURL != "https://my-render.example" || binding.CastingURL != "https://my-casting.example" {
-		t.Fatalf("urls = %q %q", binding.RenderURL, binding.CastingURL)
+	if binding.RenderURL != "https://my-render.example" {
+		t.Fatalf("url = %q", binding.RenderURL)
 	}
-	if binding.RenderToken != "render-secret" || binding.CastingToken != "casting-secret" {
-		t.Fatalf("tokens = %q %q", binding.RenderToken, binding.CastingToken)
+	if binding.RenderToken != "render-secret" {
+		t.Fatalf("token = %q", binding.RenderToken)
 	}
 }
 
 func TestPreviewBindingReportsUndecryptableTokens(t *testing.T) {
 	env := newResolverEnv(t)
 	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
-	validCasting := env.encrypt(t, user.ID, "casting", "casting-secret")
-	validRender := env.encrypt(t, user.ID, "render", "render-secret")
 	ctx := context.Background()
 
 	seedBinding(t, env, store.PortalServiceBinding{
-		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc:  "enc:v1:broken",
-		CastingTokenEnc: validCasting,
+		UserID:         user.ID,
+		Mode:           store.ServiceModeCustom,
+		RenderURL:      "https://my-render.example",
+		RenderTokenEnc: "enc:v1:broken",
 	})
 	if _, err := env.resolver.PreviewBinding(ctx, user.ID, BindingOverride{}); err == nil || !strings.Contains(err.Error(), "decrypt service token") {
 		t.Fatalf("render error = %v", err)
-	}
-
-	seedBinding(t, env, store.PortalServiceBinding{
-		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc:  validRender,
-		CastingTokenEnc: "enc:v1:broken",
-	})
-	if _, err := env.resolver.PreviewBinding(ctx, user.ID, BindingOverride{}); err == nil || !strings.Contains(err.Error(), "decrypt service token") {
-		t.Fatalf("casting error = %v", err)
 	}
 }
 
@@ -190,20 +171,19 @@ func TestPreviewBindingClearsTokensOnRequest(t *testing.T) {
 	env := newResolverEnv(t)
 	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
 	seedBinding(t, env, store.PortalServiceBinding{
-		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc:  env.encrypt(t, user.ID, "render", "render-secret"),
-		CastingTokenEnc: env.encrypt(t, user.ID, "casting", "casting-secret"),
+		UserID:         user.ID,
+		Mode:           store.ServiceModeCustom,
+		RenderURL:      "https://my-render.example",
+		RenderTokenEnc: env.encrypt(t, user.ID, "render", "render-secret"),
 	})
 	binding, err := env.resolver.PreviewBinding(context.Background(), user.ID, BindingOverride{
-		ClearRenderToken:  true,
-		ClearCastingToken: true,
+		ClearRenderToken: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if binding.RenderToken != "" || binding.CastingToken != "" {
-		t.Fatalf("tokens = %q %q", binding.RenderToken, binding.CastingToken)
+	if binding.RenderToken != "" {
+		t.Fatalf("token = %q", binding.RenderToken)
 	}
 }
 
@@ -223,52 +203,31 @@ func TestSaveBindingRejectsInvalidInput(t *testing.T) {
 func TestSaveBindingAppliesTheOutboundPolicy(t *testing.T) {
 	env := newResolverEnv(t)
 	env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
-	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(false), env.catalog)
+	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(false))
 	ctx := context.Background()
 
 	_, err := resolver.SaveBinding(ctx, "usr_1", BindingOverride{
-		Mode:       store.ServiceModeCustom,
-		RenderURL:  "http://127.0.0.1:8080",
-		CastingURL: "http://127.0.0.1:8081",
+		Mode:      store.ServiceModeCustom,
+		RenderURL: "http://127.0.0.1:8080",
 	})
 	if netguard.CodeOf(err) != netguard.CodePrivateTarget {
 		t.Fatalf("render policy err = %v", err)
-	}
-
-	_, err = resolver.SaveBinding(ctx, "usr_1", BindingOverride{
-		Mode:       store.ServiceModeCustom,
-		RenderURL:  "http://8.8.8.8:8080",
-		CastingURL: "http://127.0.0.1:8081",
-	})
-	if netguard.CodeOf(err) != netguard.CodePrivateTarget {
-		t.Fatalf("casting policy err = %v", err)
 	}
 }
 
 func TestSaveBindingRequiresASecretBoxForTokens(t *testing.T) {
 	env := newResolverEnv(t)
 	env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
-	resolver := NewResolver(env.db, env.provider, nil, netguard.New(true), env.catalog)
+	resolver := NewResolver(env.db, env.provider, nil, netguard.New(true))
 	ctx := context.Background()
 
 	_, err := resolver.SaveBinding(ctx, "usr_1", BindingOverride{
 		Mode:        store.ServiceModeCustom,
 		RenderURL:   "https://my-render.example",
-		CastingURL:  "https://my-casting.example",
 		RenderToken: "render-secret",
 	})
 	if err == nil || !strings.Contains(err.Error(), "no secret box") {
 		t.Fatalf("render token err = %v", err)
-	}
-
-	_, err = resolver.SaveBinding(ctx, "usr_1", BindingOverride{
-		Mode:         store.ServiceModeCustom,
-		RenderURL:    "https://my-render.example",
-		CastingURL:   "https://my-casting.example",
-		CastingToken: "casting-secret",
-	})
-	if err == nil || !strings.Contains(err.Error(), "no secret box") {
-		t.Fatalf("casting token err = %v", err)
 	}
 }
 
@@ -276,24 +235,22 @@ func TestSaveBindingClearsTokensInCustomMode(t *testing.T) {
 	env := newResolverEnv(t)
 	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
 	seedBinding(t, env, store.PortalServiceBinding{
-		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc:  env.encrypt(t, user.ID, "render", "render-secret"),
-		CastingTokenEnc: env.encrypt(t, user.ID, "casting", "casting-secret"),
+		UserID:         user.ID,
+		Mode:           store.ServiceModeCustom,
+		RenderURL:      "https://my-render.example",
+		RenderTokenEnc: env.encrypt(t, user.ID, "render", "render-secret"),
 	})
-	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true), env.catalog)
+	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true))
 	stored, err := resolver.SaveBinding(context.Background(), user.ID, BindingOverride{
-		Mode:              store.ServiceModeCustom,
-		RenderURL:         "https://my-render.example",
-		CastingURL:        "https://my-casting.example",
-		ClearRenderToken:  true,
-		ClearCastingToken: true,
+		Mode:             store.ServiceModeCustom,
+		RenderURL:        "https://my-render.example",
+		ClearRenderToken: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.RenderTokenEnc != "" || stored.CastingTokenEnc != "" {
-		t.Fatalf("tokens were not cleared: %+v", stored)
+	if stored.RenderTokenEnc != "" {
+		t.Fatalf("token was not cleared: %+v", stored)
 	}
 }
 
@@ -301,13 +258,13 @@ func TestSaveBindingKeepsStoredValuesWhenFieldsAreEmpty(t *testing.T) {
 	env := newResolverEnv(t)
 	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
 	renderEnc := env.encrypt(t, user.ID, "render", "render-secret")
-	castingEnc := env.encrypt(t, user.ID, "casting", "casting-secret")
 	seedBinding(t, env, store.PortalServiceBinding{
-		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc: renderEnc, CastingTokenEnc: castingEnc,
+		UserID:         user.ID,
+		Mode:           store.ServiceModeCustom,
+		RenderURL:      "https://my-render.example",
+		RenderTokenEnc: renderEnc,
 	})
-	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true), env.catalog)
+	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true))
 	// An empty override keeps the saved mode, addresses and tokens.
 	stored, err := resolver.SaveBinding(context.Background(), user.ID, BindingOverride{})
 	if err != nil {
@@ -316,11 +273,11 @@ func TestSaveBindingKeepsStoredValuesWhenFieldsAreEmpty(t *testing.T) {
 	if stored.Mode != store.ServiceModeCustom {
 		t.Fatalf("mode = %q", stored.Mode)
 	}
-	if stored.RenderURL != "https://my-render.example" || stored.CastingURL != "https://my-casting.example" {
-		t.Fatalf("urls = %q %q", stored.RenderURL, stored.CastingURL)
+	if stored.RenderURL != "https://my-render.example" {
+		t.Fatalf("url = %q", stored.RenderURL)
 	}
-	if stored.RenderTokenEnc != renderEnc || stored.CastingTokenEnc != castingEnc {
-		t.Fatal("stored tokens were replaced by empty values")
+	if stored.RenderTokenEnc != renderEnc {
+		t.Fatal("stored token was replaced by an empty value")
 	}
 }
 
@@ -328,16 +285,15 @@ func TestSaveBindingClearsTokensWhenRestoringManagedMode(t *testing.T) {
 	env := newResolverEnv(t)
 	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
 	seedBinding(t, env, store.PortalServiceBinding{
-		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc:  env.encrypt(t, user.ID, "render", "render-secret"),
-		CastingTokenEnc: env.encrypt(t, user.ID, "casting", "casting-secret"),
+		UserID:         user.ID,
+		Mode:           store.ServiceModeCustom,
+		RenderURL:      "https://my-render.example",
+		RenderTokenEnc: env.encrypt(t, user.ID, "render", "render-secret"),
 	})
-	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true), env.catalog)
+	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true))
 	stored, err := resolver.SaveBinding(context.Background(), user.ID, BindingOverride{
-		Mode:              store.ServiceModeManaged,
-		ClearRenderToken:  true,
-		ClearCastingToken: true,
+		Mode:             store.ServiceModeManaged,
+		ClearRenderToken: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -345,21 +301,20 @@ func TestSaveBindingClearsTokensWhenRestoringManagedMode(t *testing.T) {
 	if stored.Mode != store.ServiceModeManaged {
 		t.Fatalf("mode = %q", stored.Mode)
 	}
-	if stored.RenderTokenEnc != "" || stored.CastingTokenEnc != "" {
-		t.Fatalf("tokens were not cleared: %+v", stored)
+	if stored.RenderTokenEnc != "" {
+		t.Fatalf("token was not cleared: %+v", stored)
 	}
-	if stored.RenderURL != "https://my-render.example" || stored.CastingURL != "https://my-casting.example" {
-		t.Fatalf("custom addresses should be kept for a later switch back: %+v", stored)
+	if stored.RenderURL != "https://my-render.example" {
+		t.Fatalf("custom address should be kept for a later switch back: %+v", stored)
 	}
 }
 
 func TestSaveBindingReportsPersistenceFailures(t *testing.T) {
 	env := newResolverEnv(t)
-	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true), env.catalog)
+	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true))
 	_, err := resolver.SaveBinding(context.Background(), "usr_missing", BindingOverride{
-		Mode:       store.ServiceModeCustom,
-		RenderURL:  "https://my-render.example",
-		CastingURL: "https://my-casting.example",
+		Mode:      store.ServiceModeCustom,
+		RenderURL: "https://my-render.example",
 	})
 	if err == nil || !strings.Contains(err.Error(), "save service binding") {
 		t.Fatalf("err = %v", err)
@@ -368,7 +323,7 @@ func TestSaveBindingReportsPersistenceFailures(t *testing.T) {
 
 func TestResolverGuardFallbacks(t *testing.T) {
 	env := newResolverEnv(t)
-	resolver := NewResolver(env.db, env.provider, env.box, nil, nil)
+	resolver := NewResolver(env.db, env.provider, env.box, nil)
 	if err := resolver.CheckURL(context.Background(), "http://127.0.0.1:8080"); err != nil {
 		t.Fatalf("a resolver without a guard rejected a private address: %v", err)
 	}
@@ -389,31 +344,13 @@ func TestResolverGuardFallbacks(t *testing.T) {
 
 func TestDecryptRequiresABoxForStoredValues(t *testing.T) {
 	env := newResolverEnv(t)
-	resolver := NewResolver(env.db, env.provider, nil, env.resolver.guard, env.catalog)
+	resolver := NewResolver(env.db, env.provider, nil, env.resolver.guard)
 	plain, err := resolver.decrypt("", "")
 	if err != nil || plain != "" {
 		t.Fatalf("decrypt(empty) = %q %v", plain, err)
 	}
 	if _, err := resolver.decrypt("enc:v1:value", "aad"); err == nil || !strings.Contains(err.Error(), "no secret box") {
 		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestValidateSecretsReportsCastingTokenFailures(t *testing.T) {
-	env := newResolverEnv(t)
-	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
-	seedBinding(t, env, store.PortalServiceBinding{
-		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc:  env.encrypt(t, user.ID, "render", "render-secret"),
-		CastingTokenEnc: "enc:v1:broken",
-	})
-	err := env.resolver.ValidateSecrets(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "casting token") {
-		t.Fatalf("err = %v", err)
-	}
-	if strings.Contains(err.Error(), "render-secret") {
-		t.Fatalf("the error leaked token material: %v", err)
 	}
 }
 

@@ -15,7 +15,7 @@ func fullEnv() map[string]string {
 		"AGENTAPI_AGENT_ID":       "agent",
 		"AGENTAPI_ENVIRONMENT_ID": "env",
 		"RENDER_BASE_URL":         "http://render",
-		"CASTING_BASE_URL":        "http://casting",
+		"CASTING_INTERFACE":       "en0",
 		"ARTIFACT_BASE_URL":       "http://gateway:8090",
 		"AGENTAPI_AGENT_VERSION":  "3",
 		"GATEWAY_ADDR":            ":9000",
@@ -23,7 +23,6 @@ func fullEnv() map[string]string {
 		"MONITOR_INTERVAL":        "2s",
 		"PORT_MIN":                "40000",
 		"PORT_MAX":                "40010",
-		"SCREENS_CONFIG":          "/tmp/screens.json",
 		"ARTIFACTS_DIR":           "/tmp/artifacts",
 		"GATEWAY_DB":              "/tmp/gateway.db",
 	}
@@ -47,11 +46,14 @@ func TestParseUsesEnvironmentDefaults(t *testing.T) {
 	if cfg.BuildTimeout != 30*time.Minute || cfg.MonitorInterval != 2*time.Second {
 		t.Fatalf("durations = %+v", cfg)
 	}
-	if cfg.ScreensPath != "/tmp/screens.json" || cfg.ArtifactsDir != "/tmp/artifacts" || cfg.DBPath != "/tmp/gateway.db" {
+	if cfg.ArtifactsDir != "/tmp/artifacts" || cfg.DBPath != "/tmp/gateway.db" {
 		t.Fatalf("paths = %+v", cfg)
 	}
 	if cfg.ConfigPath != "gateway.yaml" {
 		t.Fatalf("config path = %q", cfg.ConfigPath)
+	}
+	if cfg.CastingInterface != "en0" {
+		t.Fatalf("casting interface = %q", cfg.CastingInterface)
 	}
 }
 
@@ -85,7 +87,6 @@ func TestValidateRejectsMissingAndInvalidValues(t *testing.T) {
 		"missing agent id":  func(c *Config) { c.AgentID = "" },
 		"missing env id":    func(c *Config) { c.EnvironmentID = "" },
 		"missing render":    func(c *Config) { c.RenderURL = "" },
-		"missing casting":   func(c *Config) { c.CastingURL = "" },
 		"missing artifact":  func(c *Config) { c.ArtifactBaseURL = "" },
 		"missing artifacts": func(c *Config) { c.ArtifactsDir = "" },
 		"missing db":        func(c *Config) { c.DBPath = "" },
@@ -145,8 +146,7 @@ agentapi:
 render:
   base_url: "http://yaml-render"
 casting:
-  base_url: "http://yaml-casting"
-screens: "screens.json"
+  interface: "en0"
 artifacts:
   dir: "data/artifacts"
   base_url: "http://gateway:7000"
@@ -176,10 +176,10 @@ timeouts:
 	if cfg.AgentAPIURL != "http://yaml-agent" || cfg.AgentAPIKey != "yaml-key" || cfg.AgentID != "yaml-agent-id" || cfg.AgentVersion != 2 || cfg.EnvironmentID != "yaml-env" {
 		t.Fatalf("agentapi = %+v", cfg)
 	}
-	if cfg.RenderURL != "http://yaml-render" || cfg.CastingURL != "http://yaml-casting" {
+	if cfg.RenderURL != "http://yaml-render" || cfg.CastingInterface != "en0" {
 		t.Fatalf("services = %+v", cfg)
 	}
-	if cfg.ScreensPath != "screens.json" || cfg.ArtifactsDir != "data/artifacts" || cfg.ArtifactBaseURL != "http://gateway:7000" || cfg.DBPath != "data/gateway.db" {
+	if cfg.ArtifactsDir != "data/artifacts" || cfg.ArtifactBaseURL != "http://gateway:7000" || cfg.DBPath != "data/gateway.db" {
 		t.Fatalf("paths = %+v", cfg)
 	}
 	if cfg.PortMin != 41000 || cfg.PortMax != 41010 {

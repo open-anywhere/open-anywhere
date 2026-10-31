@@ -33,9 +33,9 @@ sequenceDiagram
 
 关键分工：
 
-- **控制面只负责应用。** `start-app` 启动 Render 并返回 `stream_url`，它不接触任何投屏设备，也不接受 `screen_id`，不建立投屏会话。控制面的 `get-screens` 只是一份兼容视图，现场屏幕以 `self.cast.list_screens` 为准。
+- **控制面只负责应用。** `start-app` 启动 Render 并返回 `stream_url`，它不接触任何投屏设备，也不接受 `screen_id`，不建立投屏会话。控制面不提供屏幕查询、也不持有屏幕状态，现场屏幕以 `self.cast.list_screens` 为准。
 - **设备负责屏幕。** 固件注册 `self.cast.list_screens` / `self.cast.cast` / `self.cast.stop`，自己发现电视、自己发 SOAP。
-- **没有中间服务。** 旧方案里的「现场 Casting 进程 + `CONFIG_CASTING_URL`」已从生产链路移除；仓库里的 Go Casting 只用于桌面调试、模拟硬件和控制面兼容屏幕视图。
+- **没有中间服务。** 旧方案里的「现场 Casting 进程 + `CONFIG_CASTING_URL`」已从生产链路移除；仓库里的 Go DLNA 实现只用于设备运行时的本地模拟与调试。
 
 ## 2. 触发：设备 MCP 随语音连接自带
 

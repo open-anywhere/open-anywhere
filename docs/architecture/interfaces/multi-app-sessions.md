@@ -17,7 +17,7 @@
 - 同一设备与智能体可以并行创建多个应用，互不抢占彼此的构建会话。
 - 每个应用在控制面持有稳定的 AgentAPI `session_id` 绑定，重启后可恢复监听与后续更新。
 - 用户说「改一下这个应用」时，灵矽用 `update-app(app_id, prompt)` 走同一会话，而不是再 `create-app`。
-- MCP 面仍只暴露 `app_id` 与设备投屏所需的 `stream_url`；`session_id`、Render、Casting 标识不外泄。`screen_id` 只出现在 `get-screens` 的兼容视图里，不参与 `start-app`。
+- MCP 面仍只暴露 `app_id` 与设备投屏所需的 `stream_url`；`session_id` 与 Render 标识不外泄。控制面不提供屏幕查询，`screen_id` 也不参与 `start-app`。
 
 ### 2.2 非目标
 

@@ -8,11 +8,8 @@ import (
 	"github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
-// The product start path runs the application in the cloud and hands back a
-// stream address. It must never contact casting: which screen shows the stream
-// is decided on site.
 func TestStartAppRunsWithoutAScreen(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	entry := env.registry.Add(idleApp(t, owner))
 	ctx := context.Background()
@@ -23,9 +20,6 @@ func TestStartAppRunsWithoutAScreen(t *testing.T) {
 	}
 	if view.State != app.StateRunning || view.Name != "quiz" {
 		t.Fatalf("view = %+v", view)
-	}
-	if view.ScreenID != "" {
-		t.Fatalf("start-app claimed a screen: %q", view.ScreenID)
 	}
 	if view.StreamURL != "http://127.0.0.1:39000/stream" {
 		t.Fatalf("stream_url = %q", view.StreamURL)
@@ -38,17 +32,8 @@ func TestStartAppRunsWithoutAScreen(t *testing.T) {
 	if snapshot.InstanceID != "inst_1" || snapshot.Source.URL == "" || snapshot.StartedAt.IsZero() {
 		t.Fatalf("runtime = %+v", snapshot)
 	}
-	if snapshot.ScreenID != "" || snapshot.TargetID != "" || snapshot.EndpointID != "" || snapshot.ProjectionSessionID != "" {
-		t.Fatalf("screen bindings leaked into the run: %+v", snapshot)
-	}
-	if snapshot.OccupiesScreen() {
-		t.Fatal("a running application without a screen must not occupy one")
-	}
 	if created := env.render.requests(); len(created) != 1 {
 		t.Fatalf("render requests = %+v", created)
-	}
-	if sessions := env.casting.requests(); len(sessions) != 0 {
-		t.Fatalf("start-app called casting: %+v", sessions)
 	}
 
 	// A repeated start converges on the running application.
@@ -64,10 +49,8 @@ func TestStartAppRunsWithoutAScreen(t *testing.T) {
 	}
 }
 
-// get-app-status is how Linx picks the stream up, so the address must survive
-// a later status query and not just the start response.
 func TestGetAppStatusReturnsStreamURL(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	env.registry.Add(idleApp(t, owner))
 	ctx := context.Background()
@@ -79,15 +62,13 @@ func TestGetAppStatusReturnsStreamURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAppStatus: %v", err)
 	}
-	if view.StreamURL != "http://127.0.0.1:39000/stream" || view.ScreenID != "" {
+	if view.StreamURL != "http://127.0.0.1:39000/stream" {
 		t.Fatalf("view = %+v", view)
 	}
 }
 
-// Stop releases the runtime and leaves casting alone: there is nothing on a
-// screen to stop on the site's behalf.
 func TestStopAppReleasesOnlyTheRuntime(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	env.registry.Add(idleApp(t, owner))
 	ctx := context.Background()
@@ -105,15 +86,12 @@ func TestStopAppReleasesOnlyTheRuntime(t *testing.T) {
 	if deleted := env.render.deletedIDs(); len(deleted) != 1 || deleted[0] != "inst_1" {
 		t.Fatalf("render deleted = %+v", deleted)
 	}
-	if stopped := env.casting.stoppedIDs(); len(stopped) != 0 {
-		t.Fatalf("stop-app stopped casting sessions: %+v", stopped)
-	}
 }
 
 // The monitor only knows about the runtime now; a missing projection is not a
 // failure because the application is not supposed to have one.
 func TestMonitorKeepsRunningWithoutAScreen(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	entry := env.registry.Add(idleApp(t, owner))
 	ctx := context.Background()
@@ -130,10 +108,8 @@ func TestMonitorKeepsRunningWithoutAScreen(t *testing.T) {
 	}
 }
 
-// Render can be ready before it serves a stream; starting then would hand Linx
-// an empty address, so the start fails and the application reports why.
 func TestStartAppRequiresAStream(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	entry := env.registry.Add(idleApp(t, owner))
 	env.render.instance = readyApp()
@@ -145,8 +121,5 @@ func TestStartAppRequiresAStream(t *testing.T) {
 	}
 	if got := entry.Snapshot().State; got != app.StateError {
 		t.Fatalf("state = %s", got)
-	}
-	if sessions := env.casting.requests(); len(sessions) != 0 {
-		t.Fatalf("casting was called: %+v", sessions)
 	}
 }

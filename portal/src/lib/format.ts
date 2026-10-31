@@ -68,9 +68,3 @@ export const voiceStateLabels: Record<string, string> = {
   error: '需要处理',
 }
 
-export const screenStatusLabels: Record<string, string> = {
-  free: '空闲',
-  showing_app: '正在播放',
-  external: '被其他内容占用',
-  unavailable: '不可用',
-}

@@ -11,7 +11,6 @@ import (
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/netguard"
-	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/secret"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/settings"
@@ -23,7 +22,6 @@ type resolverEnv struct {
 	box      *secret.Box
 	provider *settings.Provider
 	resolver *Resolver
-	catalog  *screen.Catalog
 }
 
 func newResolverEnv(t *testing.T) *resolverEnv {
@@ -36,8 +34,6 @@ func (e *resolverEnv) seedDefaults(t *testing.T) {
 	err := e.provider.Seed(context.Background(), []settings.Seed{
 		{Key: settings.KeyDefaultRenderURL, Value: "https://render.example"},
 		{Key: settings.KeyDefaultRenderToken, Value: "platform-render-token"},
-		{Key: settings.KeyDefaultCastingURL, Value: "https://casting.example"},
-		{Key: settings.KeyDefaultCastingToken, Value: "platform-casting-token"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -80,14 +76,11 @@ func TestBindingForManagedUsesPlatformDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !binding.Managed || binding.RenderURL != "https://render.example" || binding.CastingURL != "https://casting.example" {
+	if !binding.Managed || binding.RenderURL != "https://render.example" {
 		t.Fatalf("binding = %+v", binding)
 	}
-	if binding.RenderToken != "platform-render-token" || binding.CastingToken != "platform-casting-token" {
-		t.Fatalf("tokens = %q %q", binding.RenderToken, binding.CastingToken)
-	}
-	if binding.Screens != env.catalog {
-		t.Fatalf("managed binding should carry the platform catalog")
+	if binding.RenderToken != "platform-render-token" {
+		t.Fatalf("token = %q", binding.RenderToken)
 	}
 	_ = user
 }
@@ -101,15 +94,11 @@ func TestBindingForCustomDecryptsTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	castingToken, err := env.box.Encrypt("casting-secret", secret.BindingAAD(user.ID, "casting"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	err = env.db.UpsertServiceBinding(context.Background(), store.PortalServiceBinding{
 		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc: renderToken, CastingTokenEnc: castingToken,
-		CreatedAt: now, UpdatedAt: now,
+		RenderURL:      "https://my-render.example",
+		RenderTokenEnc: renderToken,
+		CreatedAt:      now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,14 +108,14 @@ func TestBindingForCustomDecryptsTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if binding.Managed || binding.Screens != nil {
+	if binding.Managed {
 		t.Fatalf("binding = %+v", binding)
 	}
-	if binding.RenderURL != "https://my-render.example" || binding.CastingURL != "https://my-casting.example" {
-		t.Fatalf("urls = %q %q", binding.RenderURL, binding.CastingURL)
+	if binding.RenderURL != "https://my-render.example" {
+		t.Fatalf("url = %q", binding.RenderURL)
 	}
-	if binding.RenderToken != "render-secret" || binding.CastingToken != "casting-secret" {
-		t.Fatalf("tokens = %q %q", binding.RenderToken, binding.CastingToken)
+	if binding.RenderToken != "render-secret" {
+		t.Fatalf("token = %q", binding.RenderToken)
 	}
 }
 
@@ -137,7 +126,7 @@ func TestBindingForManagedRowFallsBackToDefaults(t *testing.T) {
 	now := time.Now().UTC()
 	err := env.db.UpsertServiceBinding(context.Background(), store.PortalServiceBinding{
 		UserID: user.ID, Mode: store.ServiceModeManaged,
-		RenderURL: "https://ignored.example", CastingURL: "https://ignored.example",
+		RenderURL: "https://ignored.example",
 		CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
@@ -152,14 +141,13 @@ func TestBindingForManagedRowFallsBackToDefaults(t *testing.T) {
 	}
 }
 
-func TestBindingForRequiresCompleteCustomAddresses(t *testing.T) {
+func TestBindingForRequiresACustomRenderAddress(t *testing.T) {
 	env := newResolverEnv(t)
 	env.seedDefaults(t)
 	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
 	now := time.Now().UTC()
 	err := env.db.UpsertServiceBinding(context.Background(), store.PortalServiceBinding{
 		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example",
 		CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
@@ -203,14 +191,14 @@ func TestBindingForRejectsATokenFromAnotherField(t *testing.T) {
 	env.seedDefaults(t)
 	user := env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
 	now := time.Now().UTC()
-	// A casting token moved into the render column must not decrypt.
-	moved, err := env.box.Encrypt("top-secret-token", secret.BindingAAD(user.ID, "casting"))
+	// A token sealed for another field must not decrypt in the render column.
+	moved, err := env.box.Encrypt("top-secret-token", secret.BindingAAD(user.ID, "other"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = env.db.UpsertServiceBinding(context.Background(), store.PortalServiceBinding{
 		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
+		RenderURL: "https://my-render.example",
 		RenderTokenEnc: moved, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
@@ -283,20 +271,18 @@ func TestPreviewBindingTrimsCustomAddressesAndTokens(t *testing.T) {
 	env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
 
 	binding, err := env.resolver.PreviewBinding(context.Background(), "usr_1", BindingOverride{
-		Mode:         store.ServiceModeCustom,
-		RenderURL:    "  https://my-render.example  ",
-		CastingURL:   "\t https://my-casting.example \n",
-		RenderToken:  "  render-token  ",
-		CastingToken: "\ncasting-token\t",
+		Mode:        store.ServiceModeCustom,
+		RenderURL:   "  https://my-render.example  ",
+		RenderToken: "  render-token  ",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if binding.RenderURL != "https://my-render.example" || binding.CastingURL != "https://my-casting.example" {
-		t.Fatalf("urls = %q %q", binding.RenderURL, binding.CastingURL)
+	if binding.RenderURL != "https://my-render.example" {
+		t.Fatalf("url = %q", binding.RenderURL)
 	}
-	if binding.RenderToken != "render-token" || binding.CastingToken != "casting-token" {
-		t.Fatalf("tokens = %q %q", binding.RenderToken, binding.CastingToken)
+	if binding.RenderToken != "render-token" {
+		t.Fatalf("token = %q", binding.RenderToken)
 	}
 	if binding.Managed {
 		t.Fatal("a custom preview was marked managed")
@@ -312,10 +298,9 @@ func TestPreviewBindingRequiresServiceAddresses(t *testing.T) {
 	if _, err := env.resolver.PreviewBinding(ctx, "usr_1", BindingOverride{Mode: store.ServiceModeManaged}); toolCode(t, err) != "SERVICE_NOT_CONFIGURED" {
 		t.Fatalf("managed err = %v", err)
 	}
-	// Custom mode still missing the casting address.
+	// Custom mode still missing the render address.
 	_, err := env.resolver.PreviewBinding(ctx, "usr_1", BindingOverride{
-		Mode:      store.ServiceModeCustom,
-		RenderURL: "https://my-render.example",
+		Mode: store.ServiceModeCustom,
 	})
 	if code := toolCode(t, err); code != "SERVICE_NOT_CONFIGURED" {
 		t.Fatalf("custom err code = %q (%v)", code, err)
@@ -326,31 +311,29 @@ func TestSaveBindingTrimsCustomAddressesAndTokens(t *testing.T) {
 	env := newResolverEnv(t)
 	env.createUser(t, "usr_1", "alice", "mac-1", "agent-1", store.PortalDeviceRegistered)
 	// allowPrivate skips DNS resolution; trimming is what this test checks.
-	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true), env.catalog)
+	resolver := NewResolver(env.db, env.provider, env.box, netguard.New(true))
 
 	stored, err := resolver.SaveBinding(context.Background(), "usr_1", BindingOverride{
-		Mode:         store.ServiceModeCustom,
-		RenderURL:    "  http://127.0.0.1:8080  ",
-		CastingURL:   "\thttp://127.0.0.1:8081\n",
-		RenderToken:  "  render-token  ",
-		CastingToken: "\ncasting-token\t",
+		Mode:        store.ServiceModeCustom,
+		RenderURL:   "  http://127.0.0.1:8080  ",
+		RenderToken: "  render-token  ",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.RenderURL != "http://127.0.0.1:8080" || stored.CastingURL != "http://127.0.0.1:8081" {
-		t.Fatalf("stored urls = %q %q", stored.RenderURL, stored.CastingURL)
+	if stored.RenderURL != "http://127.0.0.1:8080" {
+		t.Fatalf("stored url = %q", stored.RenderURL)
 	}
 
 	binding, err := resolver.BindingFor(context.Background(), app.Identity{DeviceID: "mac-1", AgentID: "agent-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if binding.RenderURL != "http://127.0.0.1:8080" || binding.CastingURL != "http://127.0.0.1:8081" {
-		t.Fatalf("resolved urls = %q %q", binding.RenderURL, binding.CastingURL)
+	if binding.RenderURL != "http://127.0.0.1:8080" {
+		t.Fatalf("resolved url = %q", binding.RenderURL)
 	}
-	if binding.RenderToken != "render-token" || binding.CastingToken != "casting-token" {
-		t.Fatalf("resolved tokens = %q %q", binding.RenderToken, binding.CastingToken)
+	if binding.RenderToken != "render-token" {
+		t.Fatalf("resolved token = %q", binding.RenderToken)
 	}
 }
 
@@ -364,15 +347,11 @@ func TestValidateSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	castingToken, err := env.box.Encrypt("casting-secret", secret.BindingAAD(user.ID, "casting"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	binding := store.PortalServiceBinding{
 		UserID: user.ID, Mode: store.ServiceModeCustom,
-		RenderURL: "https://my-render.example", CastingURL: "https://my-casting.example",
-		RenderTokenEnc: renderToken, CastingTokenEnc: castingToken,
-		CreatedAt: now, UpdatedAt: now,
+		RenderURL:      "https://my-render.example",
+		RenderTokenEnc: renderToken,
+		CreatedAt:      now, UpdatedAt: now,
 	}
 	if err := env.db.UpsertServiceBinding(ctx, binding); err != nil {
 		t.Fatal(err)

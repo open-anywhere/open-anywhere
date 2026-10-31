@@ -27,13 +27,13 @@ Everything in this table can be verified by reading the named files; none of it 
 
 | Capability | Code | Tests and supporting evidence |
 | --- | --- | --- |
-| Stable MCP surface — 8 tools | `internal/gateway/mcp/tools.go` (8 tool definitions), `server.go` | `tools_edge_test.go`, `server_owner_test.go`, `server_test.go` |
+| Stable MCP surface — 7 tools | `internal/gateway/mcp/tools.go` (8 tool definitions), `server.go` | `tools_edge_test.go`, `server_owner_test.go`, `server_test.go` |
 | Compatibility helper — `list-apps` | `internal/gateway/mcp/compatibility.go` | `compatibility_test.go`; not part of the stable surface |
 | Asynchronous build through AgentAPI | `internal/gateway/build/builder.go` | `builder_test.go`, `builder_extra_test.go`; build duration is recorded (`builder.go:513`); a failed update keeps the previous artifact |
 | Artifact and OpenAPI validation | `internal/gateway/artifact/validate.go`, `internal/gateway/openapi/spec.go` | package tests; Render validates the artifact again before running |
 | Render runtime and stage capture | `cmd/render`, `internal/render` | `e2e/render_test.go` drives real Node, Chromium and FFmpeg |
-| DLNA casting (Go debug/compat; production casting lives in the device firmware) | `cmd/casting`, `internal/casting/service.go`, `internal/casting/dlna` | `service_test.go`, `http_test.go`, `casting_adversarial_test.go` |
-| Voice entry | `cmd/voiceentry` | `docs/architecture/voice-entry.md`; the live gateway E2E is opt-in (`e2e/gateway_live_test.go`) |
+| DLNA casting (device-side; the prototype lives in the voice runtime) | `internal/casting/dlna`, `internal/voiceentry/casting` | `caster_test.go`, `tools_test.go`, `transport_test.go` |
+| Voice entry (embedded in the portal runtime) | `internal/voiceentry` | `docs/architecture/voice-entry.md`; the live gateway E2E is opt-in (`e2e/gateway_live_test.go`) |
 | Multi-tenant portal with identity isolation | `internal/gateway/portal/` (`auth.go`, `admin.go`, `http.go`) | Go tests in the package; the React frontend (`portal/src`) has no unit tests |
 | Multi-app sessions | `internal/gateway/service/service.go` | package tests; see the switching limitation below |
 | Recorded happy path | First-screen demo badges in `README.md` link to Bilibili (4K), Xiaohongshu, and the GitHub release (1080p) | the recording shows the chain running; it is not evidence of demand |
@@ -84,7 +84,7 @@ Roadmap, not shipped: mobile join and controller, template instantiation and the
 
 Roadmap items must not be described as implemented anywhere in this repository.
 
-Multi-app sessions are implemented, but switching apps stops the old app and requires the device to cast the new stream (`self.cast.cast`); the control plane does not create a Casting session. The invariant that switching must not re-establish casting is not met; do not describe switching as seamless or zero-downtime.
+Multi-app sessions are implemented, but switching apps stops the old app and requires the device to cast the new stream (`self.cast.cast`); the control plane creates no casting session. The invariant that switching must not re-establish casting is not met; do not describe switching as seamless or zero-downtime.
 
 ## Evidence Rules for Commercial Claims
 
@@ -110,13 +110,13 @@ Display, input, and compute are deliberately isolated. Each plane can be replace
 | --- | --- | --- | --- |
 | Input | On-site voice entry (Linx hardware or the local simulator) and Linx cloud | Device session and audio relay; ASR, TTS, intent recognition; calling MCP tools; casting the cloud stream to a screen over the local network | Build or run apps |
 | Compute | Control plane, AgentAPI, Render | MCP routing and orchestration, app registry, asynchronous builds in a sandbox, app runtime, stage capture | Understand the app's business semantics; speak the device protocol |
-| Display | Device firmware (SSDP + DLNA) and the target TV, projector, or other display; the Go Casting service is a debug/compat implementation | Device discovery, DLNA control, playing a media stream; the control plane only exposes a compat screen view | Know which app produced the stream |
+| Display | Device firmware (SSDP + DLNA) and the target TV, projector, or other display | Device discovery, DLNA control, playing a media stream | Know which app produced the stream |
 
 The planes meet through three narrow contracts, plus a browser-facing Portal API that sits on the control plane.
 
 1. **MCP** between Linx and the control plane. Linx sees a stable set of tools and never talks to AgentAPI or Render directly.
 2. **OpenAPI + `launch.json` + HTTP** between the control plane, Render, and apps. Apps expose HTTP and know nothing about MCP; the control plane validates and forwards requests.
-3. **SSDP + DLNA/UPnP** between the on-site voice device and the TV. The control plane starts the app and returns a `stream_url`; the device discovers the TV and sends `SetAVTransportURI` / `Play`. The Go Casting HTTP API is debug/compat only; the control plane does not call it for `start-app`.
+3. **SSDP + DLNA/UPnP** between the on-site voice device and the TV. The control plane starts the app and returns a `stream_url`; the device discovers the TV and sends `SetAVTransportURI` / `Play`. The control plane has no casting client and exposes no screen query.
 4. **Portal HTTP API** between the browser and the control plane. Session cookie, same-origin JSON writes; user routes under `/api/portal/*`, admin routes under `/api/admin/*`.
 
 Invariants to preserve when changing code:
@@ -124,16 +124,16 @@ Invariants to preserve when changing code:
 - The MCP surface stays stable while app capabilities remain dynamic. Do not register a tool per app or per OpenAPI operation.
 - Builds are slow and asynchronous; control is fast and synchronous. Never make a voice turn wait for a build.
 - **Cloud-initiated casting is frozen.** The control-plane path that started an app on a `screen_id` remains only as a debug harness with no product surface; the product path is device-initiated: `start-app` returns a `stream_url` and the device's `self.cast.*` tools cast it. Do not add `screen_id` or `force` back to the MCP tools.
-- Casting is device-initiated: the device discovers the TV and sends `SetAVTransportURI` / `Play`. Re-casting to the same screen overwrites the URI; switching screens stops the old screen after the new one accepts the stream. The control plane does not hold a production projection session; `get-screens` is only a compat view.
+- Casting is device-initiated: the device discovers the TV and sends `SetAVTransportURI` / `Play`. Re-casting to the same screen overwrites the URI; switching screens stops the old screen after the new one accepts the stream. The control plane does not hold a production projection session and exposes no screen query; device tools are the only screen authority.
 - The screen is a display, not a runtime. Keep app logic out of the display plane and display logic out of apps.
 - Generated artifacts are untrusted input. Validate structure, launch contract, and OpenAPI before running; Render validates again.
-- State belongs to its owner: control-plane state in SQLite, app state in the app, casting state in the device firmware and the TV; the control plane keeps only a compat Casting view.
+- State belongs to its owner: control-plane state in SQLite, app state in the app, casting state in the device firmware and the TV; the control plane keeps none.
 
 When working in this repository:
 
 - Keep the control plane a router and orchestrator, not an app runtime.
 - Put generation and build rules in the app-builder skill and AgentAPI, runtime behavior in Render, protocol behavior in the firmware casting module (and the Go Casting debug service), and device behavior in the voice entry.
-- Read the design documents before changing a contract: [`docs/architecture/overview.md`](docs/architecture/overview.md), [`docs/architecture/interfaces/app-artifact.md`](docs/architecture/interfaces/app-artifact.md), [`docs/architecture/home-casting.md`](docs/architecture/home-casting.md), [`docs/operations/yunliao-s3-max-firmware-mcp.md`](docs/operations/yunliao-s3-max-firmware-mcp.md), [`docs/operations/casting.md`](docs/operations/casting.md), [`docs/operations/render.md`](docs/operations/render.md), and [`docs/architecture/voice-entry.md`](docs/architecture/voice-entry.md).
+- Read the design documents before changing a contract: [`docs/architecture/overview.md`](docs/architecture/overview.md), [`docs/architecture/interfaces/app-artifact.md`](docs/architecture/interfaces/app-artifact.md), [`docs/architecture/home-casting.md`](docs/architecture/home-casting.md), [`docs/operations/yunliao-s3-max-firmware-mcp.md`](docs/operations/yunliao-s3-max-firmware-mcp.md), [`docs/operations/render.md`](docs/operations/render.md), and [`docs/architecture/voice-entry.md`](docs/architecture/voice-entry.md).
 
 ## Scope of These Instructions
 

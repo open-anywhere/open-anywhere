@@ -46,20 +46,9 @@ type AppView struct {
 	BuiltAt              *time.Time `json:"built_at,omitempty"`
 	BuildDurationSeconds int64      `json:"build_duration_seconds,omitempty"`
 	OperationCount       int        `json:"operation_count"`
-	ScreenID             string     `json:"screen_id,omitempty"`
 	StartedAt            *time.Time `json:"started_at,omitempty"`
 	StoppedAt            *time.Time `json:"stopped_at,omitempty"`
 	Error                *app.Error `json:"error,omitempty"`
-}
-
-// ScreenView is the portal-facing screen row. It never carries a casting
-// target or projection session identifier.
-type ScreenView struct {
-	ScreenID   string               `json:"screen_id"`
-	Name       string               `json:"name"`
-	Online     bool                 `json:"online"`
-	Status     service.ScreenStatus `json:"status"`
-	CurrentApp *service.AppRef      `json:"current_app,omitempty"`
 }
 
 // AppDetailView adds status, operations and OpenAPI availability.
@@ -132,7 +121,6 @@ func (a *API) appItems(ctx context.Context, user store.PortalUser) ([]ownedAppIt
 					BuiltAt:              summary.BuiltAt,
 					BuildDurationSeconds: summary.BuildDurationSeconds,
 					OperationCount:       summary.OperationCount,
-					ScreenID:             summary.ScreenID,
 					StartedAt:            summary.StartedAt,
 					StoppedAt:            summary.StoppedAt,
 					Error:                summary.Error,

@@ -13,7 +13,6 @@ export type ConsolePath =
   | '/portal/agents'
   | '/portal/devices'
   | '/portal/apps'
-  | '/portal/screens'
   | '/portal/services'
   | '/portal/activity'
   | '/portal/settings'

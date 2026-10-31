@@ -1,11 +1,6 @@
 import type { ReactNode } from 'react'
-import type { AppState, DeviceState, ScreenStatus } from '../api'
-import {
-  appStateLabels,
-  deviceStateLabels,
-  screenStatusLabels,
-  voiceStateLabels,
-} from '../lib/format'
+import type { AppState, DeviceState } from '../api'
+import { appStateLabels, deviceStateLabels, voiceStateLabels } from '../lib/format'
 
 type Tone = 'neutral' | 'primary' | 'success' | 'warning' | 'danger' | 'info'
 
@@ -47,19 +42,4 @@ export function DeviceStateTag({ state }: { state: DeviceState }) {
           ? 'danger'
           : 'neutral'
   return <Pill tone={tone}>{deviceStateLabels[state] ?? state}</Pill>
-}
-
-export function ScreenStatusTag({ status, online }: { status: ScreenStatus; online: boolean }) {
-  if (!online && status === 'unavailable') {
-    return <Pill tone="neutral">离线</Pill>
-  }
-  const tone: Tone =
-    status === 'showing_app'
-      ? 'success'
-      : status === 'external'
-        ? 'warning'
-        : status === 'unavailable'
-          ? 'danger'
-          : 'neutral'
-  return <Pill tone={tone}>{screenStatusLabels[status] ?? status}</Pill>
 }

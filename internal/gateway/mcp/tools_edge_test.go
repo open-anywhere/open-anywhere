@@ -13,7 +13,6 @@ func TestEveryToolPropagatesServiceErrors(t *testing.T) {
 	session, _, ctx := connectLogged(t, fake)
 
 	calls := []sdk.CallToolParams{
-		{Name: "get-screens", Arguments: map[string]any{}},
 		{Name: "create-app", Arguments: map[string]any{"prompt": "build it"}},
 		{Name: "update-app", Arguments: map[string]any{"app_id": "app_1", "prompt": "改主题"}},
 		{Name: "get-app-status", Arguments: map[string]any{"app_id": "app_1"}},

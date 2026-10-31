@@ -879,7 +879,7 @@ func TestAdminTestSettingsProbesEveryGroup(t *testing.T) {
 		t.Fatalf("malformed: %d %s", response.StatusCode, payload)
 	}
 	response, payload = env.do(t, http.MethodPost, "/api/admin/settings/test",
-		`{"services":{"casting_url":"not-a-url"}}`, origin)
+		`{"services":{"render_url":"not-a-url"}}`, origin)
 	if response.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("invalid url: %d %s", response.StatusCode, payload)
 	}
@@ -894,16 +894,13 @@ func TestAdminTestSettingsProbesEveryGroup(t *testing.T) {
 		t.Fatalf("unconfigured: %d %s", response.StatusCode, payload)
 	}
 	var unconfigured struct {
-		Linx    serviceCheck `json:"linx"`
-		Render  serviceCheck `json:"render"`
-		Casting serviceCheck `json:"casting"`
-		Screens int          `json:"screens"`
+		Linx   serviceCheck `json:"linx"`
+		Render serviceCheck `json:"render"`
 	}
 	if err := json.Unmarshal(payload, &unconfigured); err != nil {
 		t.Fatalf("body %s: %v", payload, err)
 	}
-	if unconfigured.Linx.OK || unconfigured.Render.OK || unconfigured.Casting.OK || unconfigured.Screens != 0 ||
-		unconfigured.Render.Message == "" || unconfigured.Casting.Message == "" {
+	if unconfigured.Linx.OK || unconfigured.Render.OK || unconfigured.Render.Message == "" {
 		t.Fatalf("unconfigured=%+v", unconfigured)
 	}
 
@@ -924,36 +921,21 @@ func TestAdminTestSettingsProbesEveryGroup(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer renderServer.Close()
-	castingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/healthz":
-			w.WriteHeader(http.StatusOK)
-		case "/v1/targets":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"targets":[{"id":"tv_1","name":"客厅","state":"online"}]}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer castingServer.Close()
-
 	body := fmt.Sprintf(`{"linx":{"api_base":%q,"api_key":{"value":"key"}},`+
-		`"services":{"render_url":%q,"casting_url":%q}}`,
-		linxServer.URL, renderServer.URL, castingServer.URL)
+		`"services":{"render_url":%q}}`,
+		linxServer.URL, renderServer.URL)
 	response, payload = env.do(t, http.MethodPost, "/api/admin/settings/test", body, origin)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("configured: %d %s", response.StatusCode, payload)
 	}
 	var configured struct {
-		Linx    serviceCheck `json:"linx"`
-		Render  serviceCheck `json:"render"`
-		Casting serviceCheck `json:"casting"`
-		Screens int          `json:"screens"`
+		Linx   serviceCheck `json:"linx"`
+		Render serviceCheck `json:"render"`
 	}
 	if err := json.Unmarshal(payload, &configured); err != nil {
 		t.Fatalf("body %s: %v", payload, err)
 	}
-	if !configured.Linx.OK || !configured.Render.OK || !configured.Casting.OK || configured.Screens != 1 {
+	if !configured.Linx.OK || !configured.Render.OK {
 		t.Fatalf("configured=%+v body=%s", configured, payload)
 	}
 
@@ -970,14 +952,14 @@ func TestAdminTestSettingsProbesEveryGroup(t *testing.T) {
 	}
 
 	response, payload = env.do(t, http.MethodPost, "/api/admin/settings/test",
-		`{"services":{"render_url":"http://127.0.0.1:1","casting_url":"http://127.0.0.1:2"}}`, origin)
+		`{"services":{"render_url":"http://127.0.0.1:1"}}`, origin)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("unreachable services: %d %s", response.StatusCode, payload)
 	}
 	if err := json.Unmarshal(payload, &unconfigured); err != nil {
 		t.Fatal(err)
 	}
-	if unconfigured.Render.OK || unconfigured.Casting.OK || unconfigured.Screens != 0 {
+	if unconfigured.Render.OK {
 		t.Fatalf("unreachable services=%+v", unconfigured)
 	}
 
@@ -1024,8 +1006,7 @@ func configureReadyPlatform(t *testing.T, env *portalHTTPEnv) {
 			APIKey:  &settings.SecretValue{Value: "linx-secret"},
 		},
 		Services: &settings.ServicesPatch{
-			RenderURL:  settingsString("https://render.example.com"),
-			CastingURL: settingsString("https://casting.example.com"),
+			RenderURL: settingsString("https://render.example.com"),
 		},
 		Registration: &settings.RegistrationPatch{Open: settingsBool(true)},
 	}

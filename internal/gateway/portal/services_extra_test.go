@@ -26,7 +26,7 @@ func useStrictResolver(t *testing.T, env *portalHTTPEnv) {
 		t.Fatalf("secret.New: %v", err)
 	}
 	env.api.SetPlatform(env.api.settings, env.api.pool,
-		endpoints.NewResolver(env.db, env.api.settings, box, netguard.New(false), nil))
+		endpoints.NewResolver(env.db, env.api.settings, box, netguard.New(false)))
 }
 
 func TestPortalServicesSaveCustomAndManagedBindings(t *testing.T) {
@@ -37,13 +37,8 @@ func TestPortalServicesSaveCustomAndManagedBindings(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer renderServer.Close()
-	castingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer castingServer.Close()
-
-	body := fmt.Sprintf(`{"mode":"custom","render_url":%q,"casting_url":%q,"render_token":"render-key","casting_token":"casting-key"}`,
-		renderServer.URL, castingServer.URL)
+	body := fmt.Sprintf(`{"mode":"custom","render_url":%q,"render_token":"render-key"}`,
+		renderServer.URL)
 	response, payload := env.do(t, http.MethodPut, "/api/portal/services", body,
 		map[string]string{"Origin": env.server.URL})
 	if response.StatusCode != http.StatusOK {
@@ -53,22 +48,20 @@ func TestPortalServicesSaveCustomAndManagedBindings(t *testing.T) {
 		Mode   string `json:"mode"`
 		Ready  bool   `json:"ready"`
 		Custom struct {
-			RenderURL              string `json:"render_url"`
-			CastingURL             string `json:"casting_url"`
-			RenderTokenConfigured  bool   `json:"render_token_configured"`
-			CastingTokenConfigured bool   `json:"casting_token_configured"`
+			RenderURL             string `json:"render_url"`
+			RenderTokenConfigured bool   `json:"render_token_configured"`
 		} `json:"custom"`
 	}
 	if err := json.Unmarshal(payload, &view); err != nil {
 		t.Fatalf("body %s: %v", payload, err)
 	}
 	if view.Mode != store.ServiceModeCustom || !view.Ready || view.Custom.RenderURL != renderServer.URL ||
-		!view.Custom.RenderTokenConfigured || !view.Custom.CastingTokenConfigured {
+		!view.Custom.RenderTokenConfigured {
 		t.Fatalf("view=%+v body=%s", view, payload)
 	}
 
 	response, payload = env.do(t, http.MethodPut, "/api/portal/services",
-		`{"mode":"managed","clear_render_token":true,"clear_casting_token":true}`,
+		`{"mode":"managed","clear_render_token":true}`,
 		map[string]string{"Origin": env.server.URL})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("save managed: %d %s", response.StatusCode, payload)
@@ -77,11 +70,11 @@ func TestPortalServicesSaveCustomAndManagedBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if view.Mode != store.ServiceModeManaged || view.Ready ||
-		view.Custom.RenderTokenConfigured || view.Custom.CastingTokenConfigured {
+		view.Custom.RenderTokenConfigured {
 		t.Fatalf("managed view=%+v body=%s", view, payload)
 	}
 	saved, err := env.db.ServiceBindingByUser(context.Background(), user.ID)
-	if err != nil || saved.Mode != store.ServiceModeManaged || saved.RenderTokenEnc != "" || saved.CastingTokenEnc != "" {
+	if err != nil || saved.Mode != store.ServiceModeManaged || saved.RenderTokenEnc != "" {
 		t.Fatalf("saved=%+v err=%v", saved, err)
 	}
 }
@@ -105,14 +98,14 @@ func TestPortalServicesSaveRejectsBadInput(t *testing.T) {
 		t.Fatalf("incomplete: %d %s", response.StatusCode, payload)
 	}
 	response, payload = env.do(t, http.MethodPut, "/api/portal/services",
-		`{"mode":"custom","render_url":"ftp://render.example.com","casting_url":"https://casting.example.com"}`, origin)
+		`{"mode":"custom","render_url":"ftp://render.example.com"}`, origin)
 	if response.StatusCode != http.StatusBadRequest || errorCode(t, payload) != netguard.CodeInvalidURL {
 		t.Fatalf("invalid url: %d %s", response.StatusCode, payload)
 	}
 
 	useStrictResolver(t, env)
 	response, payload = env.do(t, http.MethodPut, "/api/portal/services",
-		`{"mode":"custom","render_url":"http://127.0.0.1:9000","casting_url":"https://casting.example.com"}`, origin)
+		`{"mode":"custom","render_url":"http://127.0.0.1:9000"}`, origin)
 	if response.StatusCode != http.StatusBadRequest || errorCode(t, payload) != netguard.CodePrivateTarget {
 		t.Fatalf("private target: %d %s", response.StatusCode, payload)
 	}
@@ -213,19 +206,14 @@ func TestPortalServiceTestsCoverPolicyAndRateLimits(t *testing.T) {
 		t.Fatalf("incomplete: %d %s", response.StatusCode, payload)
 	}
 	response, payload = env.do(t, http.MethodPost, "/api/portal/services/test",
-		`{"mode":"custom","render_url":"ftp://render.example.com","casting_url":"https://casting.example.com"}`, origin)
+		`{"mode":"custom","render_url":"ftp://render.example.com"}`, origin)
 	if response.StatusCode != http.StatusBadRequest || errorCode(t, payload) != netguard.CodeInvalidURL {
 		t.Fatalf("invalid render: %d %s", response.StatusCode, payload)
-	}
-	response, payload = env.do(t, http.MethodPost, "/api/portal/services/test",
-		`{"mode":"custom","render_url":"https://render.example.com","casting_url":"ftp://casting.example.com"}`, origin)
-	if response.StatusCode != http.StatusBadRequest || errorCode(t, payload) != netguard.CodeInvalidURL {
-		t.Fatalf("invalid casting: %d %s", response.StatusCode, payload)
 	}
 
 	useStrictResolver(t, env)
 	response, payload = env.do(t, http.MethodPost, "/api/portal/services/test",
-		`{"mode":"custom","render_url":"http://10.0.0.5","casting_url":"https://casting.example.com"}`, origin)
+		`{"mode":"custom","render_url":"http://10.0.0.5"}`, origin)
 	if response.StatusCode != http.StatusBadRequest || errorCode(t, payload) != netguard.CodePrivateTarget {
 		t.Fatalf("private target: %d %s", response.StatusCode, payload)
 	}

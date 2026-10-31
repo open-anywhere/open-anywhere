@@ -82,47 +82,6 @@ func (s *Service) reconcileWith(parent context.Context, rt runtime, record *app.
 			a = record.Snapshot()
 		}
 	}
-	if a.PendingProjection {
-		target, err := rt.casting.GetTarget(ctx, a.TargetID)
-		if err != nil {
-			return err
-		}
-		if target.ActiveSessionID == "" {
-			// The target reports no active session, so the unknown projection
-			// outcome is resolved: either nothing was created or what was
-			// created is already gone. Keeping the reservation would leave the
-			// screen occupied by an application that is not projecting.
-			if err := persistRuntime(record, func(v *app.App) { v.PendingProjection = false }); err != nil {
-				return err
-			}
-			a = record.Snapshot()
-		} else {
-			p, err := rt.casting.GetSession(ctx, target.ActiveSessionID)
-			if err != nil {
-				return err
-			}
-			if p.TargetID != a.TargetID || p.EndpointID != a.EndpointID || p.Source.URL != a.Source.URL {
-				return fmt.Errorf("foreign projection session; no cleanup")
-			}
-			if err := persistRuntime(record, func(v *app.App) { v.ProjectionSessionID = p.ID; v.PendingProjection = false }); err != nil {
-				return err
-			}
-			a = record.Snapshot()
-		}
-	}
-	if a.ProjectionSessionID != "" {
-		p, err := rt.casting.StopSession(ctx, a.ProjectionSessionID)
-		if err != nil && !casting.IsStatus(err, http.StatusNotFound) {
-			return err
-		}
-		if err == nil && p.State != casting.SessionStopped {
-			return fmt.Errorf("projection cleanup not complete")
-		}
-		if err := persistRuntime(record, func(v *app.App) { v.ProjectionSessionID = "" }); err != nil {
-			return err
-		}
-		a = record.Snapshot()
-	}
 	if a.InstanceID != "" {
 		r, err := rt.render.Delete(ctx, a.InstanceID)
 		if err != nil && !render.IsStatus(err, http.StatusNotFound) {
@@ -137,9 +96,6 @@ func (s *Service) reconcileWith(parent context.Context, rt runtime, record *app.
 	}
 	return persistRuntime(record, func(v *app.App) {
 		v.CleanupPending = false
-		v.ScreenID = ""
-		v.TargetID = ""
-		v.EndpointID = ""
 		v.Source = casting.StreamSource{}
 	})
 }
@@ -147,7 +103,7 @@ func (s *Service) reconcileWith(parent context.Context, rt runtime, record *app.
 // RecoverRuntime marks interrupted starts for read-only reconciliation, never restarting them.
 func (s *Service) RecoverRuntime() error {
 	for _, a := range s.apps.List() {
-		if a.PendingRuntime || a.PendingProjection || (a.State == app.StateIdle && (a.CleanupPending || a.InstanceID != "" || a.ProjectionSessionID != "")) {
+		if a.PendingRuntime || (a.State == app.StateIdle && (a.CleanupPending || a.InstanceID != "")) {
 			if err := s.updateRuntime(a.ID, func(v *app.App) {
 				v.State = app.StateError
 				v.CleanupPending = true

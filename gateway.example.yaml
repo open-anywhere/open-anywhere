@@ -19,14 +19,11 @@ addr: ":8091"
 
 services:
   # 仅本地调试或受信单租户部署使用。设为 true 后允许用户填写 127.0.0.1、局域网等内网
-  # Render/Casting 地址；生产环境保持 false，否则用户可以借服务绑定探测部署所在内网。
+  # Render 地址；生产环境保持 false，否则用户可以借服务绑定探测部署所在内网。
   # 门户模式下管理员保存的平台默认服务也受同一策略约束；本地使用 127.0.0.1
   # 默认地址调试时，需要设为 true。该开关同时放宽 custom 用户的地址校验，
   # 只应在自己信任的单租户环境打开。
   allow_private_targets: false
-
-# 屏幕映射 JSON 文件；留空时直接使用投屏服务发现的目标。
-screens: ""
 
 artifacts:
   dir: "artifacts"
@@ -107,8 +104,6 @@ linx:
 # render:
 #   base_url: ""        # 平台托管用户使用的默认渲染服务，本机调试例如 http://127.0.0.1:8090
 #
-# casting:
-#   base_url: ""        # 平台托管用户使用的默认投屏服务，本机调试例如 http://127.0.0.1:8080
 #
 # 灵矽的平台项加到上面第 1 部分已有的 linx: 块里，不要再写一个 linx:
 #   api_base: "https://xrobo.qiniu.com"

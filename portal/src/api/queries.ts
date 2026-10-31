@@ -31,14 +31,6 @@ export function appQueryOptions(appId: string) {
   })
 }
 
-export const screensQueryOptions = queryOptions({
-  queryKey: ['screens'] as const,
-  queryFn: api.listScreens,
-  staleTime: 5_000,
-  refetchInterval: 10_000,
-  retry: false,
-})
-
 export const adminOverviewQueryOptions = queryOptions({
   queryKey: ['admin', 'overview'] as const,
   queryFn: adminApi.overview,

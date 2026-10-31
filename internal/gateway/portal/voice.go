@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -31,6 +32,18 @@ type VoiceManager struct {
 	mu   sync.Mutex
 	apps map[string]*voiceRuntime
 	logf func(string, ...any)
+	// casting is the LAN address on-site casting starts from. Nil keeps the
+	// self.cast.* tools off, matching a deployment with no screens nearby.
+	casting net.IP
+}
+
+// VoiceOption adjusts a manager at construction time.
+type VoiceOption func(*VoiceManager)
+
+// WithOnSiteCasting makes every virtual device report the self.cast.* tools,
+// backed by DLNA on the given LAN address instead of a casting service.
+func WithOnSiteCasting(localIP net.IP) VoiceOption {
+	return func(m *VoiceManager) { m.casting = localIP }
 }
 
 type voiceRuntime struct {
@@ -46,8 +59,12 @@ type voiceRuntime struct {
 const voiceStopWait = 5 * time.Second
 
 // NewVoiceManager returns a manager whose runtimes stop when ctx is canceled.
-func NewVoiceManager(ctx context.Context) *VoiceManager {
-	return &VoiceManager{ctx: ctx, apps: make(map[string]*voiceRuntime), logf: log.Printf}
+func NewVoiceManager(ctx context.Context, options ...VoiceOption) *VoiceManager {
+	manager := &VoiceManager{ctx: ctx, apps: make(map[string]*voiceRuntime), logf: log.Printf}
+	for _, option := range options {
+		option(manager)
+	}
+	return manager
 }
 
 // Start launches the runtime for a registered device. Repeated calls return
@@ -64,13 +81,18 @@ func (m *VoiceManager) Start(device store.PortalDevice) error {
 	if running, ok := m.apps[device.ID]; ok && running.err == "" {
 		return nil
 	}
-	app, err := voiceentry.New(voiceentry.Config{
+	config := voiceentry.Config{
 		DevicePath: device.CredentialPath,
 		Mode:       voice.Realtime,
 		Serve:      true,
 		NoListen:   true,
 		Out:        io.Discard,
-	})
+	}
+	if m.casting != nil {
+		config.Casting = true
+		config.CastingLocalIP = m.casting
+	}
+	app, err := voiceentry.New(config)
 	if err != nil {
 		return fmt.Errorf("portal: create voice runtime: %w", err)
 	}

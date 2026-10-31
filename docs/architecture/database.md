@@ -12,7 +12,7 @@
 | 产物元数据、下载令牌 | `artifacts` 表 | 是 |
 | 产物压缩包 | `{artifacts.dir}/{app_id}.tar.gz` | 否，文件系统 |
 | 屏幕映射 | `screens` 指向的 JSON 文件 | 否 |
-| 投屏会话（兼容/调试） | Casting 服务内存；真机投屏状态在设备固件与电视 | 否 |
+| 投屏会话 | 设备固件与电视；控制面不保存 | 否 |
 | Render 实例 | Render 服务内存 | 否 |
 | 门户账号、角色/状态、会话、设备记录 | `portal_users` / `portal_sessions` / `portal_devices` | 是（v2，v3 增加角色与状态） |
 | 用户服务绑定 | `portal_service_bindings` | 是（v3；token 为密文） |
@@ -583,7 +583,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 - `credential_path` 只是相对 `portal.data_dir` 的文件名，设备 token 不进数据库；凭证文件 `0600`，目录 `0700`。
 - `portal_sessions.token_hash` 存会话 token 的 SHA-256，不存明文；启动时清理 `expires_at < now` 的行。
 - `portal_settings` 只保存平台侧 MCP Server/实例 ID 等少量缓存，不保存 API Key。
-- `portal_service_bindings` 每个用户最多一行。`mode=managed` 时忽略用户地址，使用 `platform_settings` 的默认服务；`mode=custom` 时必须同时有 Render/Casting 地址。Casting 地址只服务控制面 `get-screens`/Portal 屏幕页的兼容视图与调试，不参与 `start-app`。切换到 managed 不会删除已保存的自定义地址与 token。
+- `portal_service_bindings` 每个用户最多一行。`mode=managed` 时忽略用户地址，使用 `platform_settings` 的默认 Render；`mode=custom` 时必须填写 Render 地址。切换到 managed 不会删除已保存的自定义地址与 token。
 - `platform_settings` 是平台级键值表，`updated_by` 记录最后修改的管理员用户 ID（配置 seed 的值为 `bootstrap`）。键包括：
   - `agentapi.base_url`、`agentapi.api_key`、`agentapi.agent_id`、`agentapi.agent_version`、`agentapi.environment_id`
   - `linx.api_base`、`linx.ota_url`、`linx.api_key`

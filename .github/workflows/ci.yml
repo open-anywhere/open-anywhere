@@ -28,7 +28,7 @@ jobs:
       # 四个作用域按顺序执行，共用同一个 Go 构建缓存与依赖，避免重复下载。
       - name: Test casting with coverage
         env:
-          PACKAGES: ./cmd/casting/... ./internal/casting/... ./pkg/casting/...
+          PACKAGES: ./internal/casting/... ./internal/voiceentry/casting/...
         run: |
           go test $PACKAGES -race -count=1 -covermode=atomic \
             -coverpkg="$(echo "$PACKAGES" | tr ' ' ',')" \
@@ -52,7 +52,7 @@ jobs:
 
       - name: Test voiceentry with coverage
         env:
-          PACKAGES: ./cmd/voiceentry/... ./internal/voiceentry/...
+          PACKAGES: ./internal/voiceentry/...
         run: |
           go test $PACKAGES -race -count=1 -covermode=atomic \
             -coverpkg="$(echo "$PACKAGES" | tr ' ' ',')" \

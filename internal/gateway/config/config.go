@@ -33,10 +33,12 @@ type Config struct {
 	AgentVersion  int // 0 means "use the agent's latest version"
 	EnvironmentID string
 
-	RenderURL  string
-	CastingURL string
+	RenderURL string
+	// CastingInterface enables on-site casting for virtual devices: their
+	// self.cast.* tools send SSDP and DLNA from this interface. Empty keeps
+	// the tools off.
+	CastingInterface string
 
-	ScreensPath     string
 	ArtifactsDir    string
 	ArtifactBaseURL string
 	DBPath          string
@@ -96,12 +98,11 @@ type fileConfig struct {
 		BaseURL string `yaml:"base_url"`
 	} `yaml:"render"`
 	Casting struct {
-		BaseURL string `yaml:"base_url"`
+		Interface string `yaml:"interface"`
 	} `yaml:"casting"`
 	Services struct {
 		AllowPrivateTargets bool `yaml:"allow_private_targets"`
 	} `yaml:"services"`
-	Screens   string `yaml:"screens"`
 	Artifacts struct {
 		Dir     string `yaml:"dir"`
 		BaseURL string `yaml:"base_url"`
@@ -210,8 +211,7 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	flags.IntVar(&cfg.AgentVersion, "agent-version", envInt(getenv, "AGENTAPI_AGENT_VERSION", base.AgentVersion), "build agent version (0 = latest)")
 	flags.StringVar(&cfg.EnvironmentID, "environment-id", env(getenv, "AGENTAPI_ENVIRONMENT_ID", base.EnvironmentID), "build environment ID")
 	flags.StringVar(&cfg.RenderURL, "render-url", env(getenv, "RENDER_BASE_URL", base.RenderURL), "Render base URL")
-	flags.StringVar(&cfg.CastingURL, "casting-url", env(getenv, "CASTING_BASE_URL", base.CastingURL), "casting service base URL")
-	flags.StringVar(&cfg.ScreensPath, "screens", env(getenv, "SCREENS_CONFIG", base.ScreensPath), "screen mapping JSON file")
+	flags.StringVar(&cfg.CastingInterface, "casting-interface", env(getenv, "CASTING_INTERFACE", base.CastingInterface), "interface virtual devices use to discover and control screens (empty disables self.cast.*)")
 	flags.StringVar(&cfg.ArtifactsDir, "artifacts-dir", env(getenv, "ARTIFACTS_DIR", base.ArtifactsDir), "artifact storage directory")
 	flags.StringVar(&cfg.ArtifactBaseURL, "artifact-base-url", env(getenv, "ARTIFACT_BASE_URL", base.ArtifactBaseURL), "public base URL Render uses to download artifacts")
 	flags.StringVar(&cfg.DBPath, "db", env(getenv, "GATEWAY_DB", base.DBPath), "SQLite database file")
@@ -279,7 +279,6 @@ func (c Config) Validate() error {
 			requiredSetting{"agent-id", c.AgentID},
 			requiredSetting{"environment-id", c.EnvironmentID},
 			requiredSetting{"render-url", c.RenderURL},
-			requiredSetting{"casting-url", c.CastingURL},
 		)
 	}
 	for _, item := range required {
@@ -438,11 +437,8 @@ func applyFile(cfg *Config, file fileConfig) error {
 	if file.Render.BaseURL != "" {
 		cfg.RenderURL = file.Render.BaseURL
 	}
-	if file.Casting.BaseURL != "" {
-		cfg.CastingURL = file.Casting.BaseURL
-	}
-	if file.Screens != "" {
-		cfg.ScreensPath = file.Screens
+	if file.Casting.Interface != "" {
+		cfg.CastingInterface = file.Casting.Interface
 	}
 	if file.Artifacts.Dir != "" {
 		cfg.ArtifactsDir = file.Artifacts.Dir

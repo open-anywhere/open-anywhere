@@ -4,7 +4,7 @@
 
 ## 1. 范围
 
-本文定义灵矽云（Linx）与控制面（gateway）之间的应用管理 MCP 契约：灵矽通过控制面管理应用从构建到运行的生命周期，并由现场设备发现屏幕、完成投屏；控制面的 `get-screens` 只提供兼容视图。
+本文定义灵矽云（Linx）与控制面（gateway）之间的应用管理 MCP 契约：灵矽通过控制面管理应用从构建到运行的生命周期，并由现场设备发现屏幕、完成投屏。控制面不持有屏幕状态，也不提供屏幕查询工具。
 
 - 灵矽只看见 MCP Tool，不直接接触 AgentAPI、Render 或投屏服务。
 - 应用运行后的能力调用仍走 OpenAPI / HTTP 契约，不在本文展开。
@@ -70,7 +70,6 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 | Tool | 作用 | 输入 | 输出 |
 | --- | --- | --- | --- |
-| `get-screens` | 查询控制面 Casting 的屏幕兼容视图（仅供参考；现场屏幕以设备 `self.cast.list_screens` 为准） | 无 | `screens` 数组，见第 5 章 |
 | `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt`、可选 `player_names` | `app_id`, `state: building` |
 | `update-app` | 在已有应用的绑定会话上提交修订并重建产物 | `app_id`, `prompt` | `app_id`, `state: building` |
 | `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见第 4 章 |
@@ -318,62 +317,9 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 `error.stage` 取 `building`、`starting` 或 `running`；`error.last_agent_message` 保留最近一次 agent 消息。构建失败时进入 `error`，不会进入 `idle`。
 
-## 5. `get-screens`
+## 5. 屏幕（已移除）
 
-输入为空对象：
-
-```json
-{}
-```
-
-控制面返回调用者自己的服务绑定范围内的屏幕，数据来自控制面这一侧绑定的 Casting。这是控制面的兼容视图，不是设备实际看到的屏幕；真机投屏以设备端 `self.cast.list_screens` 为准。屏幕按 owner 作用域：`managed` 用户使用平台默认 Casting（部署配置的 `screens` catalog 可作为别名），`custom` 用户使用自己的 Casting；另一个用户即使使用相同的 `screen_id`，也是另一块屏幕。
-
-**这个工具只提供信息，不再驱动启动流程。** 投屏发生在现场：应用由 `start-app` 在云端跑起来并返回 `stream_url`，由设备端的投屏工具找屏幕、直接发 DLNA 指令。所以 `get-screens` 的结果不保证与现场能看到的电视一致，灵矽不应据此决定是否启动应用，也不应把它当作 `start-app` 的前置条件。
-
-```json
-{
-  "screens": [
-    {
-      "screen_id": "tv-living-room",
-      "name": "客厅电视",
-      "status": "free",
-      "current_app": null
-    },
-    {
-      "screen_id": "tv-study",
-      "name": "书房电视",
-      "status": "showing_app",
-      "current_app": {
-        "app_id": "app-dice",
-        "name": "掷骰子"
-      }
-    },
-    {
-      "screen_id": "tv-bedroom",
-      "name": "卧室电视",
-      "status": "external",
-      "current_app": null
-    },
-    {
-      "screen_id": "tv-kitchen",
-      "name": "厨房电视",
-      "status": "unavailable",
-      "current_app": null
-    }
-  ]
-}
-```
-
-- `status` 描述这块屏幕在控制面 Casting 视图里的现状，取值：
-  - `free`：控制面没有在这块屏幕上看到活动会话。
-  - `showing_app`：控制面能归属到自己应用的旧版/调试投屏会话正在展示，`current_app` 给出是哪一个；真机由设备直接投屏时，这里可能看不到。
-  - `external`：屏幕被无法归属的投屏会话占用（含共享 Casting 上其他租户的会话）。Casting 只知道自己管理的会话，电视被其他来源直接投屏时可能无法检测。
-  - `unavailable`：控制面探测不到这块屏幕（离线、不可达或没有支持的协议）。
-- `current_app` 只在 `showing_app` 时非 `null`，且只可能是当前 owner 自己的应用。
-- `get-screens` 不返回其他用户的屏幕或应用；跨用户的应用在 `get-app-status` 中统一表现为 `APP_NOT_FOUND`。
-- 没有发现任何目标时允许返回空数组；用户没有可用智能体或未绑定服务时返回 `SERVICE_NOT_CONFIGURED`。
-- 返回结构化字段，不生成描述屏幕列表的顶层 `message`；由灵矽组织话术。`start-app` 的成功响应也不额外生成顶层 `message`，既有构建进度、通知和错误的消息字段保留原约定。
-- 现场选哪块屏幕由设备决定，不由 `screen_id` 指定；`get-screens` 的结果不作为启动决策依据。
+控制面不再提供 `get-screens`。屏幕发现、投放和停止都由现场设备完成：设备用 SSDP 找到局域网里的电视，再用 `self.cast.*` 工具把 `stream_url` 交给电视播放。控制面既看不到电视，也不维护屏幕状态，因此不再返回屏幕列表或兼容视图。灵矽需要屏幕信息时，以设备端工具的结果为准。
 
 ## 6. `start-app`
 
@@ -501,7 +447,7 @@ sequenceDiagram
   L-->>U: TTS：游戏已投到电视
 ```
 
-控制面完全不知道画面投到了哪台电视；`start-app` 返回 `stream_url` 之后，投屏由设备端的工具完成，详见[固件投屏工具](../../operations/yunliao-s3-max-firmware-mcp.md)。控制面的 `get-screens` 只是兼容视图，不作为现场屏幕的权威列表。
+控制面完全不知道画面投到了哪台电视；`start-app` 返回 `stream_url` 之后，投屏由设备端的工具完成，详见[固件投屏工具](../../operations/yunliao-s3-max-firmware-mcp.md)。控制面不提供屏幕查询，现场屏幕以设备端 `self.cast.list_screens` 为准。
 
 构建完成后，控制面通过已有的 MCP SSE 连接发送通知：
 

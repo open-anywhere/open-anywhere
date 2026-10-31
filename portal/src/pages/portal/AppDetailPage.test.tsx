@@ -2,14 +2,13 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { fail, mockApi, ok } from '../../test/http'
-import { makeAppDetail, makeDevice, makeScreen, makeUser } from '../../test/fixtures'
+import { makeAppDetail, makeDevice, makeUser } from '../../test/fixtures'
 import { renderApp, settledAt } from '../../test/router'
 
 function routes(detail = makeAppDetail(), overrides: Record<string, unknown> = {}) {
   return {
     'GET /api/portal/apps/app_1': ok({ app: detail }),
     'GET /api/portal/me': ok({ user: makeUser(), devices: [makeDevice()] }),
-    'GET /api/portal/screens': ok({ screens: [makeScreen({ name: '客厅电视' })] }),
     'GET /api/portal/apps/app_1/openapi.yaml': { text: 'openapi: 3.0.0' },
     'DELETE /api/portal/apps/app_1': ok(null, 204),
     'GET /api/portal/apps': ok({ apps: [] }),

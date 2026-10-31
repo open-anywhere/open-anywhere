@@ -20,7 +20,6 @@
 
 <p align="center">
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white" alt="Go"></a>
-  <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=casting&amp;label=casting" alt="casting coverage"></a>
   <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=gateway&amp;label=gateway" alt="gateway coverage"></a>
   <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=render&amp;label=render" alt="render coverage"></a>
   <a href="https://codecov.io/gh/open-anywhere/open-anywhere"><img src="https://img.shields.io/codecov/c/github/open-anywhere/open-anywhere?token=U6SNW7NYZQ&amp;component=voiceentry&amp;label=voiceentry" alt="voiceentry coverage"></a>
@@ -136,31 +135,27 @@
 cp gateway.example.yaml gateway.yaml
 go build ./... && go test ./... -race
 go run ./cmd/render -addr :8090 -public-url http://192.168.1.20:8090
-go run ./cmd/casting -addr :8080 -interface en0   # 可选：调试投屏与 get-screens 兼容视图
-go run ./cmd/gateway -config gateway.yaml     # 控制面；独立模式需先填写 gateway.yaml 第 2 部分，门户模式需先构建前端并在 /admin 配置
-go run ./cmd/voiceentry -serve                # 打开 http://127.0.0.1:8788/
+go run ./cmd/gateway -config gateway.yaml     # 控制面 + 语音运行时；门户模式需先构建前端并在 /admin 配置
 ```
 
 本地或局域网调试时，把 `gateway.yaml` 的 `services.allow_private_targets` 设为 `true`；它同时放宽 custom 用户地址，只用于受信单租户环境。
 
-先启动 Render，再启动 Gateway；需要调试投屏或 `get-screens` 兼容屏幕视图时，再启动 Casting。端口分工：
+先启动 Render，再启动 Gateway。端口分工：
 
 | 进程 | 默认端口 | 用途 |
 | --- | --- | --- |
 | Gateway | 8091 | MCP、编排、Portal；`gateway.example.yaml` 已显式设置 |
 | Render | 8090 | 应用进程、Chromium 渲染与 MPEG-TS 媒体流 |
-| Casting | 8080 | DLNA 投屏调试与兼容屏幕视图（真机投屏不经过它） |
 | 静态产物服务 | 8092 | 手工验收时给 Render 提供 `e2e/artifacts` 下载 |
-| voiceentry 控制台 | 8788 | 模拟硬件的本地 Web 控制台 |
 
-Gateway 的内置默认值仍是 `:8090`，与 Render 冲突；示例配置已改为 `:8091`，请保证 `addr`、`render.base_url` 互不冲突；如果运行 Casting，`casting.base_url` 也不能与它们冲突。`artifacts.base_url` 必须指向 Gateway 自己（示例 `http://127.0.0.1:8091`），否则 Render 拉不到产物。
+Gateway 的内置默认值仍是 `:8090`，与 Render 冲突；示例配置已改为 `:8091`，请保证 `addr`、`render.base_url` 互不冲突。`artifacts.base_url` 必须指向 Gateway 自己（示例 `http://127.0.0.1:8091`），否则 Render 拉不到产物。
 
 ### 让第一个应用上屏
 
 不需要先接灵矽，按阶段验收：
 
-0. **只验 Render + Casting（调试路径）。** 用 `./scripts/package-scoreboard.sh` 打包 `e2e/testdata/scoreboard`，用 `python3 -m http.server 8092 --directory e2e/artifacts` 提供下载，再用 `curl` 在 Render 上启动计分板。拿到 `source` 后，用 `GET /v1/targets` 取 `target_id`，再 `POST /v1/projection-sessions` 把流交给 Go Casting。这条路径只用于桌面调试；真机由固件的 `self.cast.*` 直接投屏，不需要 Go Casting。命令见 [Render 运行说明](docs/operations/render.md#可下载的计分板应用包) 与 [Casting 服务](docs/operations/casting.md#api-示例)。
-1. **本地 MCP 建应用。** 保持 `portal.enabled: false`，在 `gateway.yaml` 填好 AgentAPI、Render、Casting（Casting 只用于 `get-screens` 兼容视图与调试；Render/Casting 在 `127.0.0.1` 或 `192.168.x` 时必须把 `services.allow_private_targets` 设为 `true`），然后连接 `http://127.0.0.1:8091/mcp`（Streamable HTTP，每次请求都带身份头）：
+0. **只验 Render（调试路径）。** 用 `./scripts/package-scoreboard.sh` 打包 `e2e/testdata/scoreboard`，用 `python3 -m http.server 8092 --directory e2e/artifacts` 提供下载，再用 `curl` 在 Render 上启动计分板，确认 `source` 里的流地址可以播放。真机投屏由固件的 `self.cast.*` 直接完成。命令见 [Render 运行说明](docs/operations/render.md#可下载的计分板应用包)。
+1. **本地 MCP 建应用。** 保持 `portal.enabled: false`，在 `gateway.yaml` 填好 AgentAPI、Render（Render 在 `127.0.0.1` 或 `192.168.x` 时必须把 `services.allow_private_targets` 设为 `true`），然后连接 `http://127.0.0.1:8091/mcp`（Streamable HTTP，每次请求都带身份头）：
 
    ```bash
    curl -s http://127.0.0.1:8091/mcp \
@@ -172,10 +167,10 @@ Gateway 的内置默认值仍是 `:8090`，与 Render 冲突；示例配置已�
           "params":{"name":"create-app","arguments":{"prompt":"做一个两人掷骰子游戏"}}}'
    ```
 
-   门户模式下还要带 `X-Linx-Agent-Id` 和 `Authorization: Bearer <MCP Token>`。之后用 `get-app-status` 等构建完成，再用 `start-app` 拿到 `stream_url`，由现场设备调用 `self.cast.list_screens` 选屏、`self.cast.cast` 上屏；`get-screens` 只提供控制面的兼容屏幕视图。工具与错误码见[应用管理 MCP](docs/architecture/interfaces/app-management-mcp.md)。
+   门户模式下还要带 `X-Linx-Agent-Id` 和 `Authorization: Bearer <MCP Token>`。之后用 `get-app-status` 等构建完成，再用 `start-app` 拿到 `stream_url`，由现场设备调用 `self.cast.list_screens` 选屏、`self.cast.cast` 上屏；控制面不提供屏幕查询。工具与错误码见[应用管理 MCP](docs/architecture/interfaces/app-management-mcp.md)。
 2. **接灵矽。** 准备灵矽账号、灵矽云能访问的公网 HTTPS 地址（`https://<域名>/mcp`），在 `/admin/settings` 完成平台配置。局域网地址只适合本机联调。
 
-逐步说明见 [Gateway](docs/operations/gateway.md)、[Render](docs/operations/render.md)、[固件投屏工具](docs/operations/yunliao-s3-max-firmware-mcp.md) 启动指南；[Casting](docs/operations/casting.md) 只用于调试与兼容视图。Portal 前端在 `portal/` 下用 pnpm 构建。
+逐步说明见 [Gateway](docs/operations/gateway.md)、[Render](docs/operations/render.md)、[固件投屏工具](docs/operations/yunliao-s3-max-firmware-mcp.md) 启动指南。Portal 前端在 `portal/` 下用 pnpm 构建。
 
 ## 文档
 
@@ -185,7 +180,7 @@ Gateway 的内置默认值仍是 `:8090`，与 Render 冲突；示例配置已�
 | 看懂分层与契约 | [架构设计](docs/architecture/overview.md) |
 | 看模块职责与分工 | [模块规格](docs/architecture/modules.md) |
 | 查接口、数据与错误码 | [应用包](docs/architecture/interfaces/app-artifact.md)、[应用管理 MCP](docs/architecture/interfaces/app-management-mcp.md)、[控制面数据库](docs/architecture/database.md) |
-| 看投屏与语音 | [现场投屏](docs/architecture/home-casting.md)、[固件投屏工具](docs/operations/yunliao-s3-max-firmware-mcp.md)、[现场语音入口](docs/architecture/voice-entry.md)；调试用 [Casting](docs/operations/casting.md) |
+| 看投屏与语音 | [现场投屏](docs/architecture/home-casting.md)、[固件投屏工具](docs/operations/yunliao-s3-max-firmware-mcp.md)、[现场语音入口](docs/architecture/voice-entry.md) |
 
 完整索引见 [docs/README.md](docs/README.md)。
 

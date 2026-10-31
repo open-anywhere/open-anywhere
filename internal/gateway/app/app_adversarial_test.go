@@ -59,14 +59,3 @@ func TestRemoveLogsAStoreFailure(t *testing.T) {
 	}
 }
 
-func TestRunningOnScreenReturnsFalseWithoutAMatch(t *testing.T) {
-	registry := NewRegistry()
-	registry.Add(App{ID: "app_1", State: StateIdle})
-	if value, ok := registry.RunningOnScreen("tv_1"); ok {
-		t.Fatalf("unexpected running app: %+v", value)
-	}
-	registry.Add(App{ID: "app_2", State: StateRunning, ScreenID: "tv_2"})
-	if _, ok := registry.RunningOnScreen("tv_1"); ok {
-		t.Fatal("a different screen was reported as busy")
-	}
-}

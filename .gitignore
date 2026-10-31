@@ -15,3 +15,5 @@ portal/node_modules/
 portal/dist/
 portal-data/
 internal/gateway/portal/webdist/
+temp/
+.device.json.bak-*

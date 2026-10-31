@@ -38,7 +38,6 @@ docs/
 ├── operations/                 怎么跑、怎么排查
 │   ├── gateway.md              控制面启动、MCP 接入与门户
 │   ├── render.md               应用运行时、媒体流与端到端验收
-│   ├── casting.md              Go Casting：调试、模拟硬件与兼容屏幕视图
 │   ├── yunliao-s3-max-firmware-mcp.md  小智云聊 S3 MAX 固件内置 self.cast.*
 │   └── deploy.md               首次配置、备份与恢复
 ├── agent-system-prompts/       构建与主持用的系统提示词

@@ -11,7 +11,6 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
-	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 )
 
 func TestServerDefaultsAndSetTools(t *testing.T) {
@@ -22,7 +21,7 @@ func TestServerDefaultsAndSetTools(t *testing.T) {
 	if server.currentTools() != nil {
 		t.Fatal("tools should start nil")
 	}
-	fake := &fakeApps{screens: []service.ScreenView{{ScreenID: "tv_1"}}}
+	fake := &fakeApps{}
 	server.SetTools(fake)
 	if server.currentTools() != fake {
 		t.Fatal("SetTools did not install the service")

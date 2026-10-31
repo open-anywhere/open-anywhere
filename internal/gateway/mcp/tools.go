@@ -10,9 +10,6 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 )
 
-// emptyInput is the argument type for tools that take no input.
-type emptyInput struct{}
-
 type createAppInput struct {
 	Prompt      string   `json:"prompt" jsonschema:"整理后的中文应用需求，描述页面、交互和业务规则；不能为空"`
 	PlayerNames []string `json:"player_names,omitempty" jsonschema:"用户已确认的初始玩家名称，按加入或点名顺序填写；未知时不要编造。名称不能为空白或重复"`
@@ -38,29 +35,10 @@ type sendRequestInput struct {
 	Body        any            `json:"body,omitempty" jsonschema:"可选 JSON 请求体，结构由 get-app-operations 的 request_body 描述"`
 }
 
-type screensOutput struct {
-	Screens []service.ScreenView `json:"screens" jsonschema:"屏幕列表，允许为空数组"`
-}
-
 // addTools registers the Linx-facing tools with typed arguments, inferred
 // schemas, validation, annotations and tool error conversion provided by the
 // MCP SDK.
 func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout time.Duration) {
-	sdk.AddTool(server, &sdk.Tool{
-		Name:        "get-screens",
-		Title:       "查询可用屏幕",
-		Description: "列出这台控制面连接的屏幕以及每块屏幕正在展示的应用，仅用于查询现状。投屏本身由现场设备的工具完成；不要为了 start-app 而调用本工具，它也不再决定应用投到哪里。status 表示这块屏幕现在能做什么：free 空闲；showing_app 被某个应用占用；external 被其他来源占用；unavailable 当前不能显示应用。",
-		Annotations: readOnlyAnnotations(),
-	}, func(ctx context.Context, _ *sdk.CallToolRequest, _ emptyInput) (*sdk.CallToolResult, screensOutput, error) {
-		ctx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		screens, err := tools.GetScreens(ctx, identity)
-		if err != nil {
-			return nil, screensOutput{}, err
-		}
-		return nil, screensOutput{Screens: screens}, nil
-	})
-
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "create-app",
 		Title:       "创建应用",

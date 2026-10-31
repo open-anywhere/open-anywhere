@@ -48,11 +48,8 @@ interface SettingsFormValues {
   linx_intent_model_id?: string
   linx_rotate_mcp_token?: boolean
   render_url?: string
-  casting_url?: string
   render_token?: string
-  casting_token?: string
   clear_render_token?: boolean
-  clear_casting_token?: boolean
   registration_open?: boolean
 }
 
@@ -148,10 +145,6 @@ function toPatch(values: SettingsFormValues, baseline: PlatformSettings): Platfo
     services.render_url = trimmed(values.render_url)
     servicesChanged = true
   }
-  if (trimmed(values.casting_url) !== baseline.services.casting_url) {
-    services.casting_url = trimmed(values.casting_url)
-    servicesChanged = true
-  }
   const renderToken = secretPatch(
     values.render_token,
     values.clear_render_token,
@@ -159,15 +152,6 @@ function toPatch(values: SettingsFormValues, baseline: PlatformSettings): Platfo
   )
   if (renderToken) {
     services.render_token = renderToken
-    servicesChanged = true
-  }
-  const castingToken = secretPatch(
-    values.casting_token,
-    values.clear_casting_token,
-    baseline.services.casting_token.configured,
-  )
-  if (castingToken) {
-    services.casting_token = castingToken
     servicesChanged = true
   }
   if (servicesChanged) patch.services = services
@@ -233,11 +217,8 @@ export function AdminSettingsPage() {
       linx_intent_model_id: settingsData.linx.intent_model_id,
       linx_rotate_mcp_token: false,
       render_url: settingsData.services.render_url,
-      casting_url: settingsData.services.casting_url,
       render_token: '',
-      casting_token: '',
       clear_render_token: false,
-      clear_casting_token: false,
       registration_open: settingsData.registration.open,
     })
   }, [settingsData, form])
@@ -263,7 +244,7 @@ export function AdminSettingsPage() {
     onSuccess: (result) => {
       setError(undefined)
       setTestResult(result)
-      message[result.linx.ok && result.render.ok && result.casting.ok ? 'success' : 'warning'](
+      message[result.linx.ok && result.render.ok ? 'success' : 'warning'](
         '连接测试完成',
       )
     },
@@ -317,7 +298,7 @@ export function AdminSettingsPage() {
       {testResult ? (
         <Alert
           type={
-            testResult.linx.ok && testResult.render.ok && testResult.casting.ok
+            testResult.linx.ok && testResult.render.ok
               ? 'success'
               : 'warning'
           }
@@ -326,9 +307,7 @@ export function AdminSettingsPage() {
           message="连接测试"
           description={
             <span>
-              Linx：{checkLine(testResult.linx)} · Render：{checkLine(testResult.render)} ·
-              Casting：{checkLine(testResult.casting)}
-              {testResult.casting.ok ? ` · 发现 ${testResult.screens} 块屏幕` : ''}
+              Linx：{checkLine(testResult.linx)} · Render：{checkLine(testResult.render)}
             </span>
           }
         />
@@ -614,7 +593,7 @@ export function AdminSettingsPage() {
                     <div className="section-header">
                       <div>
                         <h2>默认屏幕服务</h2>
-                        <p>平台托管用户的 Render 与 Casting。仍有应用占用这些服务时不能修改。</p>
+                        <p>平台托管用户的应用运行服务。仍有应用占用时不能修改。</p>
                       </div>
                       {statusTag(settingsData.ready.services)}
                     </div>
@@ -640,30 +619,6 @@ export function AdminSettingsPage() {
                     {settingsData.services.render_token.configured ? (
                       <Form.Item name="clear_render_token" valuePropName="checked">
                         <Checkbox>清除已保存的 Render Token</Checkbox>
-                      </Form.Item>
-                    ) : null}
-                    <Form.Item label="Casting 地址" name="casting_url">
-                      <Input placeholder="https://casting.example.com" autoComplete="off" />
-                    </Form.Item>
-                    <Form.Item
-                      label="Casting Token"
-                      name="casting_token"
-                      extra={
-                        settingsData.services.casting_token.configured
-                          ? '已保存 Token；留空保持不变。'
-                          : '可选。'
-                      }
-                    >
-                      <Input.Password
-                        placeholder={
-                          settingsData.services.casting_token.configured ? '已保存，留空保持不变' : '可选'
-                        }
-                        autoComplete="new-password"
-                      />
-                    </Form.Item>
-                    {settingsData.services.casting_token.configured ? (
-                      <Form.Item name="clear_casting_token" valuePropName="checked">
-                        <Checkbox>清除已保存的 Casting Token</Checkbox>
                       </Form.Item>
                     ) : null}
                   </section>

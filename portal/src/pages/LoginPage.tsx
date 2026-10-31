@@ -41,7 +41,6 @@ export function LoginPage() {
       queryClient.removeQueries({ queryKey: ['me'] })
       const next = await queryClient.fetchQuery(meQueryOptions)
       queryClient.invalidateQueries({ queryKey: ['apps'] })
-      queryClient.invalidateQueries({ queryKey: ['screens'] })
       queryClient.invalidateQueries({ queryKey: ['services'] })
       message.success('已登录')
       router.history.replace(homeFor(next.user.role))

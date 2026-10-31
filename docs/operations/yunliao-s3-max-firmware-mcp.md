@@ -1,6 +1,6 @@
 # 小智云聊 S3 MAX 接入投屏：固件内置 `self.cast.*` 设备工具
 
-> 本文描述固件侧的投屏实现：设备自己用 SSDP 发现局域网里的 DLNA 电视，自己用 SOAP 把云端 `stream_url` 交给电视播放。**固件不依赖任何本地投屏服务**；仓库里的 Go Casting 只留给桌面调试、模拟硬件和控制面 `get-screens` 兼容视图。
+> 本文描述固件侧的投屏实现：设备自己用 SSDP 发现局域网里的 DLNA 电视，自己用 SOAP 把云端 `stream_url` 交给电视播放。**固件不依赖任何本地投屏服务**；仓库里同协议的 Go 实现只供设备运行时在本地模拟与调试时使用。
 >
 > 代码在固件仓库 `LUPENGHAN/xiaozhi-esp32`（fork 自 `78/xiaozhi-esp32`，基于 `addb1ed`）的分支 `feat/casting-mcp`，路径 `main/casting/`。已在 ESP-IDF v6.1 上编译通过，并在真机（yunliao-s3，ESP32-S3）上完成发现、投放、停止的联调，验证记录见最后一节。
 
@@ -11,7 +11,7 @@
 1. **屏幕发现留在现场。** 设备与电视同处一个广播域，自己发 M-SEARCH、自己解析描述、自己发 SOAP。
 2. **现场不需要再部署服务。** 没有局域网机器、没有端口、没有地址配置；设备连上 Wi-Fi 就能投。
 3. **能力随硬件走。** 换一个智能体、或用户自己配的智能体，投屏工具仍在，不依赖智能体是否挂载了控制面 MCP。
-4. **控制面保持单一职责。** `start-app` 只启动 Render 并返回 `stream_url`，不建立投屏会话；`get-screens` 仅提供兼容视图。
+4. **控制面保持单一职责。** `start-app` 只启动 Render 并返回 `stream_url`，不建立投屏会话；控制面不提供屏幕查询。
 
 ## 结构
 
@@ -78,18 +78,7 @@ UPnP Fault 的 `errorCode` 被翻成可以直接说出口的话：
 
 casting 链路没有鉴权，但也不再监听任何端口：设备只作为客户端访问局域网电视，不暴露投屏控制面。电视必须与设备在同一广播域。
 
-## 改动清单
-
-固件仓库 `feat/casting-mcp` 分支：
-
-- `main/casting/xml_lite.{h,cc}`：事件式 XML 解析，限于 description.xml 与 SOAP Fault，深度与长度都有上限。
-- `main/casting/ssdp.{h,cc}`：M-SEARCH、单播应答收集、`max-age` 解析与去重。
-- `main/casting/dlna_renderer.{h,cc}`：描述解析、`controlURL` 解析、`SetAVTransportURI` / `Play` / `Stop`。
-- `main/casting/cast_tools.{h,cc}`：3 个工具、屏幕缓存、后台扫描任务、单会话。
-- `main/casting/cast_client.{h,cc}`：**已删除**（旧的本地 casting HTTP 客户端）。
-- `main/Kconfig.projbuild`、`main/CMakeLists.txt`：`CASTING_URL` 换成 `CASTING_SCAN_INTERVAL_SEC`，源文件列表同步。
-
-设备不再直接调用控制面 MCP，也不再依赖 `X-Linx-*` 头、`mcp_token` 或本地 casting 地址。
+设备直接对电视发 SSDP 与 DLNA 指令，不调用控制面 MCP，也不需要 `X-Linx-*` 身份头、`mcp_token` 或本地 casting 地址。
 
 ## 构建与刷机
 
@@ -119,7 +108,7 @@ python scripts/build.py yunliao-s3 --name yunliao-s3 --language zh-CN
 
 尚未验证：灵犀云下发的真实 `tools/list` 里是否包含全部 3 个工具（受灵犀工具数量上限影响）、语音说"投到客厅电视"的完整链路、真实商用电视的兼容性、断网/换 IP 时的表现。
 
-## 与模拟硬件、Go Casting 的关系
+## 与模拟硬件的关系
 
-- `internal/voiceentry/casting`（模拟硬件，`-casting-url` 开关）仍然调用仓库里的 Go Casting 服务，用来在没有真机时验证协议。
-- 固件**不访问** Go Casting；两者只是同一套 DLNA 行为的两个实现。Go 服务含 HTTP API、会话表和子网扫描，适合桌面调试与控制面兼容屏幕视图，不再出现在生产链路里。
+- `internal/voiceentry/casting`（Gateway 的 `-casting-interface` 开关）在进程内直接发 SSDP 与 DLNA，不再有独立的 Casting 服务。
+- 固件与模拟硬件共用同一套 DLNA 行为：固件在 ESP32 上实现，模拟硬件在 `internal/casting/dlna` 里实现；两者都不经过控制面。
