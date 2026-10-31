@@ -137,9 +137,9 @@
 </p>
 
 <p class="muted">
-  <strong>进度（2026-10-31）：</strong>Phase 1 控制面、Phase 2 模拟器、Phase 3 固件、Phase 4 文档均已落地。控制面侧在 <code>feat/device-casting</code> 分支（<code>ca70502</code>，已推到 origin）；固件在 <code>feat/casting-mcp</code> 分支，已推到 fork <code>LUPENGHAN/xiaozhi-esp32</code>。模拟器单测全绿，固件在 ESP-IDF v6.1 上编译通过。本机已跑通「灵矽 → 设备 MCP → 本机 casting → Macast 出画面」这一段（见 <a href="#s10">10 联调记录</a>）。
-  应用整链 <code>create-app → start-app → cast</code> 也已跑到「电视拿地址」这一步，卡在 render 的 <code>-public-url</code> 写的是 render 机器内网地址（<code>100.100.56.213:8091</code>），电视拉不到。
-  <strong>还没跑：</strong>改 <code>-public-url</code> 后重测整链出画面；固件上机（真机上看 <code>tools/list</code>、真电视上看画面）。本文随实现随时更新。
+  <strong>进度（2026-10-31）：</strong>Phase 1 控制面、Phase 2 模拟器、Phase 3 固件、Phase 4 文档均已落地。控制面侧在 <code>feat/device-casting</code> 分支（<code>cdc1030</code>，已推到 origin）；固件在 <code>feat/casting-mcp</code> 分支（<code>499e0ba</code>，已推到 fork <code>LUPENGHAN/xiaozhi-esp32</code>）。模拟器单测全绿，固件在 ESP-IDF v6.1 上编译通过。
+  <strong>本机整链已跑通：</strong><code>create-app → start-app → self.cast.cast → Macast 出画面</code>，语音说完到电视播放「一题双答」，见 <a href="#s10">10 联调记录</a>。
+  <strong>还没跑：</strong>固件上机（真机上看 <code>tools/list</code>、真电视上看画面）。本文随实现随时更新。
 </p>
 
 <div class="cards">
@@ -444,11 +444,12 @@ stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
     <tr><td>名字解析</td><td><code>list_screens</code> 只报名字，模型把名字当 <code>target_id</code> 传回。控制面与固件都改成「id → 唯一名字 → <code>GET /v1/targets/{id}</code>」，撞名时拒绝并让模型重新确认；修好后同一条语音链路一次成功</td></tr>
     <tr><td>整链：建应用</td><td>说「做一个一题两答的小游戏」，灵矽调控制面 <code>create-app</code>，应用「一题双答」构建完成（<code>list-apps</code> 显示 idle）——说明云端 MCP 工具已经挂在灵矽这一侧</td></tr>
     <tr><td>整链：启动 + 投屏</td><td>灵矽调 <code>start-app</code> 拿 <code>stream_url</code>，再调 <code>self.cast.cast</code>；casting 建出 <code>projection-UGXWSYERRQWD46NKJFJJXJEGX6</code>，URL 是 <code>http://100.100.56.213:8091/streams/instance-087a…/live.ts</code></td></tr>
-    <tr><td>整链：电视拉流</td><td><strong>没出画面</strong>。本机访问 <code>100.100.56.213:8091</code> 超时（那是 render 机器的内网地址），公网 <code>http://118.89.179.167:6005</code> 同一条流返回 200。会话随即 stopped —— 电视拿到的地址它不可达</td></tr>
+    <tr><td>整链：第一次失败</td><td>那时 render 的 <code>-public-url</code> 是 <code>http://100.100.56.213:8091</code>（render 机器内网地址），本机访问超时，会话立刻 stopped。公网 <code>http://118.89.179.167:6005</code> 同一条流可以访问</td></tr>
+    <tr><td>整链：出画面</td><td>把 <code>-public-url</code> 改成 <code>http://118.89.179.167:6005</code>、<code>-app-host 127.0.0.1</code> 后重启 render。说「start the 一题双答 app and cast it」，灵矽 <code>start-app</code> → <code>self.cast.cast</code>，会话 <code>projection-CBAA2WCLGICAHW6T5I2XG6XS7R</code> 为 playing，URL 是 <code>http://118.89.179.167:6005/streams/instance-e2a2…/live.ts</code>；Macast 的播放进程与 <code>118.89.179.167:6005</code> 建立 ESTABLISHED 连接，屏幕上出现「一题双答」答题界面</td></tr>
   </tbody>
 </table>
 
-<p class="muted">本机的 casting 与 Macast 都在这台 Windows 上，所以测试流走 loopback；<code>/v1/targets</code> 发现必须用 <code>-interface Meta</code>（默认路由是 VPN 网卡）。真机 S3 MAX 烧录、真电视出画面仍未验证。整链卡在最后一跳是部署配置问题：render 起的时候 <code>-public-url</code> 不能写成只有 render 机器能访到的地址。</p>
+<p class="muted">本机的 casting 与 Macast 都在这台 Windows 上，所以测试流走 loopback；<code>/v1/targets</code> 发现必须用 <code>-interface Meta</code>（默认路由是 VPN 网卡）。真机 S3 MAX 烧录、真电视出画面仍未验证。部署上记住：render 的 <code>-public-url</code> 决定电视从哪里拉流，必须是电视可达的地址；<code>-app-host</code> 决定控制面怎么调应用接口，别跟着公网地址走。</p>
 
 <h2><span class="num">11</span>验收</h2>
 
