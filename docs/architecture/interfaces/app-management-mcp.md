@@ -491,6 +491,7 @@ sequenceDiagram
 | 应用启动或健康检查失败 | `starting` | `START_FAILED` |
 | 应用已就绪但媒体流未生成 | `starting` | `STREAM_START_FAILED` |
 | 应用运行后进程异常退出或流不可用 | `running` | `APP_EXITED` |
+| 控制面重启时启动了但未完成核对 | `starting` | `RECOVERY_PENDING`（核对完成后可重试） |
 
 `ARTIFACT_INVALID` 表示产物结构或启动契约不合法（例如入口不是 `app/app.js`、缺必填文件、`launch.json` 非法），由 Render 的 `422 INVALID_ARTIFACT` 映射而来；产物下载地址缺失也归入这一类。重试 `start-app` 不会成功：应先 `update-app` 让构建端重新交付，或重新 `create-app`。`START_FAILED` 只表示应用进程启动或健康检查失败，不再承载产物结构错误。
 
@@ -513,6 +514,7 @@ sequenceDiagram
 | `START_FAILED` | `start-app` | 应用进程启动或健康检查失败 |
 | `STREAM_START_FAILED` | `start-app` | 应用媒体流未就绪 |
 | `CLEANUP_PENDING` | `start-app`, `stop-app` | 上次启动结果还在核对或资源正在清理，稍后重试 |
+| `APP_ALREADY_RUNNING` | `start-app` | Render 上已有该应用的实例；控制面不改状态，确认实例归属后重试 |
 | `STOP_FAILED` | `stop-app` | 停止进程失败 |
 | `APP_NOT_RUNNING` | `send-request` | 应用未在运行 |
 | `RUNTIME_UNAVAILABLE` | `start-app`, `send-request` | 无法确认应用进程状态 |

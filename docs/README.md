@@ -1,6 +1,6 @@
 # 文档
 
-本目录共 21 个 Markdown 文件：这份索引加 20 篇正文，按**你要解决的问题**分三类，不按文件类型堆在一起。
+本目录共 22 个 Markdown 文件：这份索引加 21 篇正文，按**你要解决的问题**分三类，不按文件类型堆在一起。
 
 ## 我怎么找
 
@@ -9,6 +9,7 @@
 | 知道这东西为什么值得做 | [产品愿景](product/vision.md)、[商业策略](product/business.md)、[商业计划书](product/business-plan.md) |
 | 看懂系统怎么分层、模块怎么切 | [架构总览](architecture/overview.md)、[模块规格](architecture/modules.md) |
 | 弄清现场怎么部署、云端与现场怎么连 | [现场侧投屏](architecture/home-casting.md) |
+| 现场卡住时判断卡在哪一段、怎么恢复 | [状态与恢复](architecture/state-and-recovery.md) |
 | 查某条契约、某个接口 | [architecture/interfaces/](architecture/interfaces/) |
 | 把服务跑起来、排查现场问题 | [operations/](operations/) |
 | 看后续方向与同类调研 | [产品调研](product/research.md) |
@@ -28,6 +29,7 @@ docs/
 │   ├── database.md             控制面持久化模型
 │   ├── voice-entry.md          现场语音入口与设备协议
 │   ├── home-casting.md         现场部署与控制链路
+│   ├── state-and-recovery.md   生成、上屏、操作三阶段的状态归属与恢复路径
 │   └── interfaces/             六份契约
 │       ├── app-artifact.md     应用包与 launch.json
 │       ├── app-management-mcp.md

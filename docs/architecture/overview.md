@@ -124,6 +124,8 @@ flowchart LR
 
 Portal 模式下，MCP 会话必须携带 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id`，应用按 owner 作用域。
 
+生成、运行、上屏三个阶段各由谁持有状态、现场卡住时怎么恢复，见[状态与恢复](state-and-recovery.md)。
+
 ## 7. 技术特色：应用的表现形式是接口
 
 在 Open Anywhere 里，一个应用的实体不是页面，而是它通过 `openapi.yaml` 暴露的操作集合。页面只是这组操作的一个客户端：同一个「提交答案」，可以由语音调用、由电视前的按钮触发，也可以由 curl 发出。应用不区分调用者，也不需要知道调用者是谁。
