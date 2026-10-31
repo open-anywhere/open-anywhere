@@ -62,7 +62,7 @@ sequenceDiagram
 
 灵矽把设备当作 MCP Server：会话建立后先发 `initialize`，再发 `tools/list`，之后按需发 `tools/call`。`initialize` 的 `capabilities.vision` 里带有平台下发的视觉服务地址和 token，语音入口不会把 token 展示出来。
 
-模拟硬件当前上报两个仅作用于网页播放器的工具，用来验证 `tools/list` 与 `tools/call` 整条链路：
+模拟硬件默认上报两个仅作用于网页播放器的工具，用来验证 `tools/list` 与 `tools/call` 整条链路：
 
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
@@ -74,6 +74,20 @@ sequenceDiagram
 - 不为应用注册业务工具。灵矽侧的动态工具列表目前不能热更新，应用能力走第 6 章的稳定工具加 OpenAPI。
 - 调用未知工具时返回标准 JSON-RPC 错误（`-32601`）。
 - 云端自己完成的工具调用（例如查天气）不经过设备，现场语音入口只能看到最终的 `stt`、`tts`、`llm`，看不到调用过程。
+
+### 投屏工具（`-casting-url`）
+
+模拟硬件可以额外上报三个 `self.cast.*` 工具，用来把云端应用投到现场的电视上。它**只连本机的 casting 服务，不连云端**：应用由控制面构建、启动并返回 `stream_url`，设备只负责找屏和投放。同一套工具面已做进小智云聊 S3 MAX 固件，作为生产路径，见 [小智云聊 S3 MAX 接入投屏](../operations/yunliao-s3-max-firmware-mcp.md)。开启方式：
+
+```bash
+go run ./cmd/voiceentry -serve -casting-url http://192.168.1.20:8091
+```
+
+- 三个工具直接对应 casting 的 HTTP 接口：`self.cast.list_screens` → `GET /v1/targets`；`self.cast.cast(url, target_id)` → `POST /v1/projection-sessions`，固定 `mpegts / h264 / aac` 并自动选中支持该格式的 Endpoint；`self.cast.stop(session_id 可选)` → `DELETE /v1/projection-sessions/{id}`。
+- 不带任何身份头、token 或灵矽会话信息。casting 没有鉴权，只应部署在同一台可信的局域网机器上，不要暴露到公网。
+- `cast` 原样使用控制面返回的 `stream_url`，不拼接、不改写；`target_id` 来自 `list_screens`。
+- 失败翻译成可直接播报的中文：被占用（409 `target_busy`）、离线（409 `target_offline`）、格式不支持（422）、电视不响应（502）。`stop` 不传 `session_id` 时停止本进程最近一次投放的内容，会话已经不在了也视为成功。
+- 构建、启动和应用业务请求全部由灵矽直接调用控制面 MCP；设备不再代理，也不轮询构建状态。
 
 ## 设备注册
 

@@ -28,9 +28,7 @@ type appIDInput struct {
 }
 
 type startAppInput struct {
-	AppID    string `json:"app_id" jsonschema:"create-app 返回的正在创建中应用 ID"`
-	ScreenID string `json:"screen_id" jsonschema:"get-screens 返回的屏幕 ID"`
-	Force    bool   `json:"force,omitempty" jsonschema:"默认 false。为 true 时强制投屏：先停止目标屏幕上通过本工具启动的应用，再启动本应用；其他来源的投屏不能被强制停止"`
+	AppID string `json:"app_id" jsonschema:"create-app 返回的正在创建中应用 ID"`
 }
 
 type sendRequestInput struct {
@@ -51,7 +49,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "get-screens",
 		Title:       "查询可用屏幕",
-		Description: "列出当前的屏幕以及每块屏幕正在展示的应用。用户询问有哪些屏幕、投到哪块屏幕，或调用 start-app 前使用。status 表示这块屏幕现在能做什么：free 可以直接启动；showing_app 被你的应用占用，换应用要先征得用户同意；external 被其他来源占用，不能接管，建议换一块屏幕；unavailable 当前不能显示应用。current_app 非 null 表示占用它的是你的哪个应用。",
+		Description: "列出这台控制面连接的屏幕以及每块屏幕正在展示的应用，仅用于查询现状。投屏本身由现场设备的工具完成；不要为了 start-app 而调用本工具，它也不再决定应用投到哪里。status 表示这块屏幕现在能做什么：free 空闲；showing_app 被某个应用占用；external 被其他来源占用；unavailable 当前不能显示应用。",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, _ emptyInput) (*sdk.CallToolResult, screensOutput, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -96,7 +94,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "get-app-status",
 		Title:       "查询应用状态",
-		Description: "查询应用的构建、空闲、运行或错误状态。create-app 或 update-app 之后用它轮询构建进度；收到 notifications/app_status 或用户询问时也用它确认最新状态。building 返回已用时间和最近进度；idle 表示可以启动；running 返回屏幕、启动时间和运行时长；error 返回结构化 error，不要只根据通知判断失败。",
+		Description: "查询应用的构建、空闲、运行或错误状态。create-app 或 update-app 之后用它轮询构建进度；收到 notifications/app_status 或用户询问时也用它确认最新状态。building 返回已用时间和最近进度；idle 表示可以启动；running 返回 stream_url、启动时间和运行时长；error 返回结构化 error，不要只根据通知判断失败。",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input appIDInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -125,13 +123,13 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "start-app",
-		Title:       "在屏幕上启动应用",
-		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）启动到指定屏幕，历史应用也可以直接启动，等待应用就绪后返回 running。screen_id 必须来自 get-screens；status 为 external 或 unavailable 的屏幕不要选，showing_app 时只有用户明确同意替换才能传 force=true。一块屏幕同时只能展示一个应用；默认被其他应用占用返回 TARGET_BUSY。仅当用户明确要求替换或抢占屏幕时才传 force=true：它会先停止该屏幕上通过本工具启动的应用，再启动本应用；停不掉时返回错误，不会覆盖；其他来源占用的屏幕不能被 force 接管。已在其他屏幕运行返回 APP_ALREADY_RUNNING。启动需要一些时间；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。ARTIFACT_INVALID 表示产物本身无效，不要反复 start-app，改用 update-app 重做一版；连接、屏幕或就绪超时类失败可以再次 start-app 重试。上次启动还在收尾时返回 CLEANUP_PENDING，稍后再试，不要重新创建应用。",
+		Title:       "启动应用",
+		Description: "把已构建完成的应用（idle，或上次启动失败但构建成功的应用）在云端运行起来，历史应用也可以直接启动。就绪后返回 running 和 stream_url。本工具只负责让应用开始运行，不涉及任何屏幕：拿到 stream_url 后，投屏由现场设备的工具完成，只有用户明确要求投屏时才去调用它们。应用已经在运行时幂等返回当前状态。启动需要一些时间；失败时应用进入 error，并返回 error.stage=starting 的结构化原因。ARTIFACT_INVALID 表示产物本身无效，不要反复 start-app，改用 update-app 重做一版；连接或就绪超时类失败可以再次 start-app 重试。上次启动还在收尾时返回 CLEANUP_PENDING，稍后再试，不要重新创建应用。",
 		Annotations: mutatingAnnotations(false, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input startAppInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		result, err := tools.StartApp(ctx, identity, input.AppID, input.ScreenID, input.Force)
+		result, err := tools.StartApp(ctx, identity, input.AppID)
 		if err != nil {
 			return nil, service.StatusView{}, err
 		}
@@ -141,7 +139,7 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 	sdk.AddTool(server, &sdk.Tool{
 		Name:        "stop-app",
 		Title:       "停止应用",
-		Description: "停止运行中的应用并释放屏幕，返回 idle。已处于 idle 时幂等返回；应用仍在 building 时返回 APP_BUILDING；应用已处于 error 时幂等返回错误状态，若它是构建成功但启动失败的应用，会先清理上次启动遗留的内容并回到 idle。清理未完成返回 CLEANUP_PENDING，稍后再试。停止失败返回 STOP_FAILED，不会假装已释放屏幕。",
+		Description: "停止运行中的应用并释放云端运行时，返回 idle。已处于 idle 时幂等返回；应用仍在 building 时返回 APP_BUILDING；应用已处于 error 时幂等返回错误状态，若它是构建成功但启动失败的应用，会先清理上次启动遗留的内容并回到 idle。清理未完成返回 CLEANUP_PENDING，稍后再试。停止失败返回 STOP_FAILED，不会假装已释放运行时。现场屏幕上的画面需另外用设备工具停止。",
 		Annotations: mutatingAnnotations(true, true),
 	}, func(ctx context.Context, _ *sdk.CallToolRequest, input appIDInput) (*sdk.CallToolResult, service.StatusView, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)

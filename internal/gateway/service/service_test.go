@@ -571,7 +571,7 @@ func TestStartAppSuccess(t *testing.T) {
 	entry := env.registry.Add(idleApp(t, owner))
 	ctx := context.Background()
 
-	view, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false)
+	view, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false)
 	if err != nil {
 		t.Fatalf("StartApp: %v", err)
 	}
@@ -603,13 +603,13 @@ func TestStartAppSuccess(t *testing.T) {
 		t.Fatalf("casting requests = %+v", sessions)
 	}
 
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); err != nil {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); err != nil {
 		t.Fatalf("idempotent start: %v", err)
 	}
 	if len(env.render.requests()) != 1 {
 		t.Fatal("idempotent start created another instance")
 	}
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_2", false); toolCode(t, err) != "APP_ALREADY_RUNNING" {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_2", false); toolCode(t, err) != "APP_ALREADY_RUNNING" {
 		t.Fatal("running on another screen should be rejected")
 	}
 }
@@ -621,16 +621,16 @@ func TestStartAppStateFailures(t *testing.T) {
 	env.registry.Add(app.App{ID: "error", Owner: owner, State: app.StateError})
 	ctx := context.Background()
 
-	if _, err := env.svc.StartApp(ctx, owner, "missing", "tv_1", false); toolCode(t, err) != "APP_NOT_FOUND" {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "missing", "tv_1", false); toolCode(t, err) != "APP_NOT_FOUND" {
 		t.Fatal("missing app should not start")
 	}
-	if _, err := env.svc.StartApp(ctx, owner, "building", "tv_1", false); toolCode(t, err) != "APP_BUILDING" {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "building", "tv_1", false); toolCode(t, err) != "APP_BUILDING" {
 		t.Fatal("building app should not start")
 	}
-	if _, err := env.svc.StartApp(ctx, owner, "error", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "error", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
 		t.Fatal("error app should not start")
 	}
-	if _, err := env.svc.StartApp(ctx, owner, "missing", "", false); toolCode(t, err) != "INVALID_ARGUMENT" {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "missing", "", false); toolCode(t, err) != "INVALID_ARGUMENT" {
 		t.Fatal("empty screen should be rejected")
 	}
 }
@@ -644,7 +644,7 @@ func TestStartAppTargetFailures(t *testing.T) {
 		env.casting.target = testTarget()
 		env.casting.target.State = casting.TargetOffline
 		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_UNREACHABLE" {
+		if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_UNREACHABLE" {
 			t.Fatal("offline target should fail")
 		}
 		snapshot := entry.Snapshot()
@@ -664,7 +664,7 @@ func TestStartAppTargetFailures(t *testing.T) {
 		other.ID = "app_other"
 		env.registry.Add(other)
 		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_BUSY" {
+		if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_BUSY" {
 			t.Fatal("busy screen should fail")
 		}
 		if entry.Snapshot().State != app.StateIdle {
@@ -676,7 +676,7 @@ func TestStartAppTargetFailures(t *testing.T) {
 		catalog := writeCatalog(t, `[{"screen_id":"living","name":"客厅","target_id":"tv_1"}]`)
 		env := newTestEnv(t, catalog)
 		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "kitchen", false); toolCode(t, err) != "TARGET_UNREACHABLE" {
+		if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "kitchen", false); toolCode(t, err) != "TARGET_UNREACHABLE" {
 			t.Fatal("unknown screen should fail")
 		}
 		if entry.Snapshot().State != app.StateIdle {
@@ -688,7 +688,7 @@ func TestStartAppTargetFailures(t *testing.T) {
 		env := newTestEnv(t, nil)
 		env.casting.session = casting.Session{ID: "ps_1", State: casting.SessionStarting}
 		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
+		if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
 			t.Fatal("projection timeout should fail")
 		}
 		snapshot := entry.Snapshot()
@@ -713,7 +713,7 @@ func TestStartAppTargetFailures(t *testing.T) {
 		env.render.ports = []render.Port{{Port: 39000, Occupied: true}}
 		env.render.errs = []error{&render.HTTPError{Status: http.StatusConflict, Code: "PORT_IN_USE", Message: "busy"}}
 		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); err != nil {
+		if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); err != nil {
 			t.Fatalf("StartApp: %v", err)
 		}
 		created := env.render.requests()
@@ -729,7 +729,7 @@ func TestStartAppTargetFailures(t *testing.T) {
 		env := newTestEnv(t, nil)
 		env.render.errs = []error{&render.HTTPError{Status: http.StatusConflict, Code: "APP_ALREADY_RUNNING", Message: "running"}}
 		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "APP_ALREADY_RUNNING" {
+		if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "APP_ALREADY_RUNNING" {
 			t.Fatal("render conflict should be reported")
 		}
 		if entry.Snapshot().State != app.StateIdle {
@@ -989,7 +989,7 @@ func TestStartAppMapsConfiguredScreen(t *testing.T) {
 	env := newTestEnv(t, catalog)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	entry := env.registry.Add(idleApp(t, owner))
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "living", false); err != nil {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "living", false); err != nil {
 		t.Fatalf("StartApp: %v", err)
 	}
 	snapshot := entry.Snapshot()
@@ -1029,7 +1029,7 @@ func occupiedScreenEnv(t *testing.T) (*testEnv, app.Identity, *app.Record) {
 func TestStartAppForceKeepsTheAppWhenTheScreenIsOffline(t *testing.T) {
 	env, owner, _ := occupiedScreenEnv(t)
 	env.casting.target.State = casting.TargetOffline
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", true); toolCode(t, err) != "TARGET_UNREACHABLE" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", true); toolCode(t, err) != "TARGET_UNREACHABLE" {
 		t.Fatalf("err = %v", err)
 	}
 	if len(env.casting.stoppedIDs()) != 0 || len(env.render.deletedIDs()) != 0 {
@@ -1055,14 +1055,14 @@ func TestStartAppForceReplacesTheAppOnTheScreen(t *testing.T) {
 	env, owner, entry := occupiedScreenEnv(t)
 	ctx := context.Background()
 
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_BUSY" {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_BUSY" {
 		t.Fatalf("without force the screen must stay busy, err=%v", err)
 	}
 	if len(env.casting.stoppedIDs()) != 0 {
 		t.Fatal("the other app was stopped without force")
 	}
 
-	view, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", true)
+	view, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", true)
 	if err != nil {
 		t.Fatalf("forced start: %v", err)
 	}
@@ -1094,7 +1094,7 @@ func TestStartAppForceReplacesTheAppOnTheScreen(t *testing.T) {
 func TestStartAppForceDoesNotOverrideAnAppThatCannotBeStopped(t *testing.T) {
 	env, owner, entry := occupiedScreenEnv(t)
 	env.casting.stopErr = errors.New("casting down")
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", true); toolCode(t, err) != "STOP_FAILED" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", true); toolCode(t, err) != "STOP_FAILED" {
 		t.Fatalf("err=%v", err)
 	}
 	if other, _ := env.registry.Get("app_other"); other.Snapshot().State != app.StateRunning {
@@ -1109,7 +1109,7 @@ func TestStartAppForceOnAFreeScreenReplacesNothing(t *testing.T) {
 	env := newTestEnv(t, nil)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	env.registry.Add(idleApp(t, owner))
-	view, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", true)
+	view, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", true)
 	if err != nil || view.State != app.StateRunning || view.ReplacedAppID != "" {
 		t.Fatalf("view=%+v err=%v", view, err)
 	}

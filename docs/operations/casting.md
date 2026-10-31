@@ -2,6 +2,8 @@
 
 Casting 是独立的局域网投屏控制服务。第一版支持通过 SSDP 发现 DLNA MediaRenderer，并控制它播放 Client 已准备好的 HTTP(S) MPEG-TS 实时流。Client 负责媒体生成、编码和 URL 可达性；电视直接拉流，Casting 不读取、代理或转码媒体。
 
+部署上它跑在客户现场，与目标屏处在同一广播域。调用它的是同一局域网里的语音设备（固件或模拟硬件的 `self.cast.*` 工具），控制面不访问它，所以它不监听公网、也没有鉴权：把下面的 `-addr` 暴露到公网等于公开投屏控制面。现场与云端的边界见 [现场侧投屏](../architecture/home-casting.md)。
+
 ## 目录
 
 ```text

@@ -15,22 +15,22 @@
 | 组件 | 本文中的职责 | 调用方 |
 | --- | --- | --- |
 | 灵矽云（Linx） | 理解用户意图、选择并调用 MCP Tool、组织播报话术 | 用户 |
-| 控制面（gateway） | MCP Server、工具路由、应用注册表、构建与启动编排、屏幕映射、按 owner 解析 Render/Casting | 灵矽 |
+| 控制面（gateway） | MCP Server、工具路由、应用注册表、构建与启动编排、按 owner 解析 Render | 灵矽 |
 | AgentAPI | 异步构建应用 artifact | 控制面 |
 | Render | 启动应用、提供应用 HTTP 与媒体流 | 控制面 |
-| 投屏服务 | 把媒体流投放到物理屏幕 | 控制面 |
+| 设备端 MCP + Casting | 发现现场屏幕，把 `stream_url` 投到电视上 | 灵矽（设备侧），不经控制面 |
 | Portal | 管理员引导账号、用户注册、为每个用户创建虚拟智能体并绑定服务 | 浏览器 |
 
-灵矽是唯一的 MCP 调用方。`app_id` 在 `create-app` 时分配，`get-app-status`、`start-app` 和 `stop-app` 都用它定位应用。AgentAPI 的 session id、Render 的 `instance_id`、应用端口、Casting 的 `endpoint_id` 和投屏会话 id 只在控制面内部使用，不通过 MCP 返回。
+灵矽是本文所述控制面 MCP 的唯一调用方。`app_id` 在 `create-app` 时分配，`get-app-status`、`start-app` 和 `stop-app` 都用它定位应用。AgentAPI 的 session id、Render 的 `instance_id` 和应用端口只在控制面内部使用，不通过 MCP 返回；唯一离开控制面的地址是 `start-app` 返回的 `stream_url`。
 
 ### 1.2 契约原则
 
 - 工具名按灵矽侧约定使用 kebab-case。
-- 只暴露稳定、与运行时无关的业务标识（`app_id`、`screen_id`），不暴露端口、运行目录或 Render 标识。
+- 只暴露稳定、与运行时无关的业务标识（`app_id`），加上设备端投屏需要的 `stream_url`；不暴露端口、运行目录或 Render 标识。
 - `app_id` 必须属于当前设备和智能体（device + agent）。Linx 会话重连不影响归属，控制面拒绝跨设备或跨智能体访问。
 - 构建是长任务：`create-app` 立即返回，状态通过 `get-app-status` 查询，构建完成通过 MCP 通知告知。
-- 写操作按业务键收敛：同一 `app_id` 不重复创建构建 session、应用进程或投屏会话。但 `create-app` / `update-app` 本身不是可重试的幂等调用——每次调用都会新建一轮构建；修订走 `update-app` 复用绑定 session。
-- 屏幕与应用都按 owner 作用域：同一 `screen_id` 在两个用户的 Casting 上是两块互不相关的屏幕。
+- 写操作按业务键收敛：同一 `app_id` 不重复创建构建 session 或应用进程。但 `create-app` / `update-app` 本身不是可重试的幂等调用——每次调用都会新建一轮构建；修订走 `update-app` 复用绑定 session。
+- 应用按 owner 作用域：`app_id` 只在创建它的设备和智能体下可见，跨 owner 一律表现为 `APP_NOT_FOUND`。
 
 ### 1.3 身份与租户隔离（Portal 模式）
 
@@ -70,12 +70,12 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 | Tool | 作用 | 输入 | 输出 |
 | --- | --- | --- | --- |
-| `get-screens` | 查询当前可用屏幕及占用情况 | 无 | `screens` 数组，见第 5 章 |
+| `get-screens` | 查询控制面 Casting 发现到的屏幕（仅供参考，不参与启动流程） | 无 | `screens` 数组，见第 5 章 |
 | `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt`、可选 `player_names` | `app_id`, `state: building` |
 | `update-app` | 在已有应用的绑定会话上提交修订并重建产物 | `app_id`, `prompt` | `app_id`, `state: building` |
 | `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见第 4 章 |
 | `get-app-operations` | 查询应用声明的 OpenAPI 业务操作 | `app_id` | `app_id`, `state`, `operations` |
-| `start-app` | 在指定屏幕上启动已构建的应用 | `app_id`, `screen_id`, 可选 `force` | `app_id`, `screen_id`, `state: running`, 可选 `replaced_app_id` |
+| `start-app` | 启动已构建应用的云端运行时，返回流地址；不涉及屏幕 | `app_id` | `app_id`, `state: running`, `stream_url` |
 | `stop-app` | 停止运行中的应用 | `app_id` | `app_id`, `state: idle` |
 | `send-request` | 调用应用的业务操作 | `app_id`, `operation_id`, `parameters`, `body` | `status`, `body` |
 
@@ -92,14 +92,14 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 ### 2.2 应用状态
 
-应用状态表示应用在指定屏幕上的整体可用性。`running` 要求应用健康检查通过且投屏服务报告正在播放；只启动应用进程不算成功。不向灵矽暴露独立的 `display.state`。
+应用状态只描述云端运行时的可用性。`running` 表示应用健康检查通过并已产出媒体流；画面投到哪块屏幕由现场设备决定，因此 `running` 的应用可以没有绑定任何屏幕。不向灵矽暴露独立的 `display.state`。
 
 | state | 含义 |
 | --- | --- |
 | `building` | AgentAPI 正在构建，应用还不可启动 |
 | `idle` | 构建完成并注册，进程未启动 |
-| `running` | 应用健康检查通过，指定屏幕的投屏会话处于播放状态 |
-| `error` | 构建、启动或运行失败，包含投屏失败 |
+| `running` | 应用健康检查通过，`stream_url` 可用；是否已投到屏幕不由本接口表示 |
+| `error` | 构建、启动或运行失败 |
 
 `error.stage` 区分失败阶段，取 `building`、`starting` 或 `running`；构建失败不会产生可启动的 `idle` 应用。构建成功但启动失败的应用仍处于 `error`，保留失败原因；再次 `start-app` 或 `stop-app` 会先清理上次启动遗留的资源，成功后回到 `idle`，因此连接类失败可以重试。产物结构错误（`ARTIFACT_INVALID`）不能靠重试解决，必须先 `update-app` 或重新 `create-app`。清理尚未完成时工具返回 `CLEANUP_PENDING`。错误结构与错误码见第 9 章。
 
@@ -183,8 +183,7 @@ Portal 启用时，MCP 请求必须携带三个头：
       "built_at": "2026-10-24T08:20:00Z",
       "build_duration_seconds": 95,
       "operation_count": 1,
-      "operations": ["rollDice"],
-      "screen_id": ""
+      "operations": ["rollDice"]
     }
   ]
 }
@@ -262,8 +261,8 @@ Portal 启用时，MCP 请求必须携带三个头：
 | --- | --- | --- |
 | `building` | AgentAPI 正在构建，应用还不可启动 | `app_id`, `state`, `elapsed_seconds`, `message` |
 | `idle` | 构建完成并注册，进程未启动 | `app_id`, `state`, `name`, `build_duration_seconds` |
-| `running` | 应用健康检查通过，指定屏幕的投屏会话处于播放状态 | `app_id`, `state`, `screen_id`, `name`, `started_at`, `uptime_seconds` |
-| `error` | 构建、启动或运行失败，包含投屏失败 | `app_id`, `state`, `error`；已指定屏幕时带 `screen_id` |
+| `running` | 应用健康检查通过，媒体流地址可用 | `app_id`, `state`, `name`, `stream_url`, `started_at`, `uptime_seconds` |
+| `error` | 构建、启动或运行失败 | `app_id`, `state`, `error` |
 
 `building`：
 
@@ -293,8 +292,8 @@ Portal 启用时，MCP 请求必须携带三个头：
 {
   "app_id": "app_01J...",
   "state": "running",
-  "screen_id": "tv-living-room",
   "name": "掷骰子游戏",
+  "stream_url": "https://render.example.com/streams/inst_01J/live.ts",
   "started_at": "2026-10-24T08:30:00Z",
   "uptime_seconds": 12
 }
@@ -327,7 +326,9 @@ Portal 启用时，MCP 请求必须携带三个头：
 {}
 ```
 
-控制面返回调用者自己的服务绑定范围内的屏幕。屏幕按 owner 作用域：`managed` 用户使用平台默认 Casting（部署配置的 `screens` catalog 可作为别名），`custom` 用户使用自己的 Casting；另一个用户即使使用相同的 `screen_id`，也是另一块屏幕。`screen_id` 是灵矽侧使用的屏幕标识，而非 Endpoint 或 Render 标识。控制面将 `screen_id` 映射到该用户投屏服务的 `target_id`，再选择该目标支持的 Endpoint；灵矽通过 `screen_id` 指定启动屏幕，`get-app-status(app_id)` 在结果中返回该标识。控制面把当前 owner 的 Casting 发现结果、可用的屏幕别名与当前应用占用情况汇总为屏幕列表。
+控制面返回调用者自己的服务绑定范围内的屏幕，数据来自控制面这一侧绑定的 Casting。屏幕按 owner 作用域：`managed` 用户使用平台默认 Casting（部署配置的 `screens` catalog 可作为别名），`custom` 用户使用自己的 Casting；另一个用户即使使用相同的 `screen_id`，也是另一块屏幕。
+
+**这个工具只提供信息，不再驱动启动流程。** 投屏发生在现场：应用由 `start-app` 在云端跑起来并返回 `stream_url`，由设备端的投屏工具找屏幕、建立会话。所以 `get-screens` 的结果不保证与现场能看到的电视一致，灵矽不应据此决定是否启动应用，也不应把它当作 `start-app` 的前置条件。
 
 ```json
 {
@@ -363,17 +364,16 @@ Portal 启用时，MCP 请求必须携带三个头：
 }
 ```
 
-- `status` 是这块屏幕现在能做什么，取值：
-  - `free`：可以直接 `start-app`。
-  - `showing_app`：调用者自己的应用正在展示，`current_app` 给出是哪一个；换应用要先征得用户同意，再用 `force=true` 替换。
-  - `external`：屏幕被无法归属的投屏会话占用（含共享 Casting 上其他租户的会话）；不要选择，`force=true` 也不能接管。Casting 只知道自己管理的会话，电视被其他来源直接投屏时可能无法检测。
-  - `unavailable`：当前不能接收画面（离线、不可达或没有支持的协议）；不要选择。
+- `status` 描述这块屏幕在控制面 Casting 视图里的现状，取值：
+  - `free`：控制面没有在这块屏幕上看到活动会话。
+  - `showing_app`：控制面能归属到自己应用的投屏会话正在展示，`current_app` 给出是哪一个。
+  - `external`：屏幕被无法归属的投屏会话占用（含共享 Casting 上其他租户的会话）。Casting 只知道自己管理的会话，电视被其他来源直接投屏时可能无法检测。
+  - `unavailable`：控制面探测不到这块屏幕（离线、不可达或没有支持的协议）。
 - `current_app` 只在 `showing_app` 时非 `null`，且只可能是当前 owner 自己的应用。
-- `get-screens` 不返回其他用户的屏幕或应用；跨用户的应用在 `get-app-status` / `start-app` 中统一表现为 `APP_NOT_FOUND`。
-- 没有发现任何可用目标时允许返回空数组；用户没有可用智能体或未绑定服务时返回 `SERVICE_NOT_CONFIGURED`。
+- `get-screens` 不返回其他用户的屏幕或应用；跨用户的应用在 `get-app-status` 中统一表现为 `APP_NOT_FOUND`。
+- 没有发现任何目标时允许返回空数组；用户没有可用智能体或未绑定服务时返回 `SERVICE_NOT_CONFIGURED`。
 - 返回结构化字段，不生成描述屏幕列表的顶层 `message`；由灵矽组织话术。`start-app` 的成功响应也不额外生成顶层 `message`，既有构建进度、通知和错误的消息字段保留原约定。
-- 用户明确指定屏幕时，灵矽匹配其 `screen_id`；未指定时可沿用当前会话的选择，或在只有一块 `free` 屏幕时直接选择；无法唯一确定时询问用户。调用 `start-app` 时始终传入明确的 `screen_id`。
-- MVP 中一个应用同时绑定一个屏幕，一个屏幕同时展示一个应用。列表是查询时快照，启动时控制面仍需重新校验可达性与占用，避免并发冲突。
+- 现场选哪块屏幕由设备决定，不由 `screen_id` 指定；`get-screens` 的结果不作为启动决策依据。
 
 ## 6. `start-app`
 
@@ -381,43 +381,34 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 ```json
 {
-  "app_id": "app_01J...",
-  "screen_id": "tv-living-room",
-  "force": false
+  "app_id": "app_01J..."
 }
 ```
 
-`screen_id` 必填，来自 `get-screens` 返回的屏幕列表。控制面使用当前 owner 绑定的 Render/Casting（平台默认或用户自有服务），启动应用、准备页面和媒体流，再选择目标屏幕兼容的 Endpoint 建立或复用投屏会话。只有应用健康检查通过且投屏服务报告 `playing` 后，才返回 `running`：
+`start-app` 只负责让应用的云端运行时跑起来：控制面使用当前 owner 绑定的 Render（平台默认或用户自有服务）启动实例，等待健康检查和媒体流就绪，然后返回 `running` 和 `stream_url`。
 
 ```json
 {
   "app_id": "app_01J...",
   "state": "running",
-  "screen_id": "tv-living-room",
   "name": "掷骰子游戏",
+  "stream_url": "https://render.example.com/streams/inst_01J/live.ts",
   "started_at": "2026-10-24T08:30:00Z",
   "uptime_seconds": 0
 }
 ```
 
-`force=true` 且替换了屏幕上的应用时，响应额外带 `replaced_app_id`，表示被停止的应用。这个字段只在内部使用，不需要对用户念出。
+它不接触任何投屏服务，不接受 `screen_id`，也没有 `force`。`running` 的应用可以不绑定屏幕；`stream_url`（mpegts，H.264/AAC）是设备端投屏的输入，由设备自己的投屏工具投到现场发现的电视上。拿不到 `stream_url` 时不算启动成功：Render 已就绪但流地址尚未生成，返回 `STREAM_START_FAILED`，应用进入 `error`。
 
-应用端口、Render 的 `instance_id`、Casting 的 `endpoint_id` 和投屏会话 id 只在控制面内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。
+应用端口、Render 的 `instance_id` 只在控制面内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。`stream_url` 是唯一需要离开控制面的地址。
 
-可以从 `idle` 启动，也可以从“构建成功但启动失败”的 `error` 重试；`start-app` 会先清理上次失败遗留的资源，成功后回到 `running`。`ARTIFACT_INVALID` 是例外：产物结构不合法时重试不会成功，先 `update-app` 或重新 `create-app`。已经在同一屏幕上 `running` 时幂等返回当前状态；若指定不同屏幕，返回 `APP_ALREADY_RUNNING`，由调用方先停止再启动。`building` 时返回 `APP_BUILDING`；构建失败、没有可启动产物的 `error` 返回 `APP_IN_ERROR`。
+可以从 `idle` 启动，也可以从“构建成功但启动失败”的 `error` 重试；`start-app` 会先清理上次失败遗留的资源，成功后回到 `running`。`ARTIFACT_INVALID` 是例外：产物结构不合法时重试不会成功，先 `update-app` 或重新 `create-app`。已经在 `running` 时幂等返回当前状态和同一个 `stream_url`，不会重复创建实例。`building` 时返回 `APP_BUILDING`；构建失败、没有可启动产物的 `error` 返回 `APP_IN_ERROR`；应用不属于当前 owner 时返回 `APP_NOT_FOUND`。
 
-屏幕占用按 owner 判定：
+启动流程有时限，由控制面配置超时。连接过程中请求等待最终结果，不返回 `running + connecting`；超时或失败时进入 `error`，工具返回 `isError: true`。同一应用的并发启动请求不得重复创建进程。输入校验不通过时拒绝操作，不改变已有应用状态。
 
-- 目标屏幕被**调用者自己的**另一个应用占用时，默认返回 `TARGET_BUSY`，不自动替换；只有用户明确要求替换时才传 `force=true`，控制面先停止自己的那个应用并返回 `replaced_app_id`。
-- 目标屏幕被**其他 owner** 的应用占用时，即使 `force=true` 也返回 `TARGET_BUSY`。`force` 不能跨租户停止应用；`screen_id` 只在当前 owner 的 Casting 内有意义。
-- 共享 Casting 上存在无法归属的活动投屏会话（`target.ActiveSessionID` 非空且无法对上当前 owner 的应用）时返回 `TARGET_BUSY`，`force` 同样不能接管。
-- 目标屏幕不存在、离线或无法访问时返回 `TARGET_UNREACHABLE`；应用不属于当前 owner 时返回 `APP_NOT_FOUND`。
+失败时进入 `error`，具体错误码见第 9 章。控制面只跟踪应用进程和媒体流；运行中一旦确认进程退出或流不可用，状态进入 `error`。屏幕上的画面不在控制面视野内：`stop-app` 释放云端运行时，现场屏幕上的画面需要用设备端的投屏工具另外停止。
 
-启动流程有时限，由控制面配置超时。连接过程中请求等待最终结果，不返回 `running + connecting`；超时或失败时进入 `error`，工具返回 `isError: true`。同一应用的并发启动请求不得重复创建进程或投屏会话。输入或占用校验不通过时拒绝操作，不改变已有应用状态。
-
-失败时进入 `error`，`error.stage` 不新增 `projection` 阶段；具体错误码见第 9 章。控制面内部维护应用进程和投屏会话的对应关系，跟踪投屏状态；运行中一旦确认投屏断开，整体状态进入 `error`，即使应用进程仍在运行。`screen_id` 保留用于定位失败目标。失败后的资源清理由控制面负责；只有确认进程和投屏资源已释放后才能释放屏幕占用。
-
-启动请求超时或响应丢失时，结果未知。控制面会在本次工具调用内连续核对最多三次：查到本应用资源就清理，确认没有资源就释放屏幕；三次都无法完成核对时返回 `CLEANUP_PENDING`，稍后重试即可，不要重新 `create-app`。控制面仍会在后台继续核对，恢复可达且确认没有资源后立即释放，不再按固定时间等待；应用保持在可重试的 `error`。如果电视上存在无法证明归属的投屏会话，控制面不会停止它，只放弃本应用的占用；这时屏幕在 `get-screens` 中显示为 `external`。Render/Casting 不可达时保留占用，直到能完成核对。
+启动请求超时或响应丢失时，结果未知。控制面会在本次工具调用内连续核对最多三次：查到本应用资源就清理，确认没有资源就结束；三次都无法完成核对时返回 `CLEANUP_PENDING`，稍后重试即可，不要重新 `create-app`。控制面仍会在后台继续核对，恢复可达且确认没有资源后立即结束，不再按固定时间等待；应用保持在可重试的 `error`。Render 不可达时保留待清理标记，直到能完成核对。
 
 启动成功后，后续应用操作仍通过既有的 OpenAPI / HTTP 契约完成。
 
@@ -458,7 +449,7 @@ Portal 启用时，MCP 请求必须携带三个头：
 }
 ```
 
-停止应用进程，解除它与屏幕的展示绑定并释放占用后回到 `idle`。控制面先停止该屏幕的投屏会话，再停止 Render 实例，避免电视继续拉取已关闭的流。`idle` 响应不再携带 `screen_id`：
+停止应用的云端运行时并释放资源后回到 `idle`。控制面只停止 Render 实例；现场屏幕上的画面由设备端的投屏工具负责停止，控制面看不到也不去动它。`idle` 响应不再携带 `stream_url`：
 
 ```json
 {
@@ -480,7 +471,8 @@ sequenceDiagram
   participant C as 控制面
   participant A as AgentAPI
   participant R as Render
-  participant P as 投屏服务
+  participant D as 设备端 MCP
+  participant T as 电视
 
   U->>L: 帮我做一个掷骰子游戏
   L->>C: create-app(prompt, player_names 可选)
@@ -495,17 +487,21 @@ sequenceDiagram
   C-->>L: notifications/app_status(app_id, state=idle)
   L-->>U: TTS：APP 创建完成，要开始吗？
 
-  U->>L: 在客厅电视上开始吧
-  L->>C: get-screens()
-  C-->>L: screens（screen_id / name / status / current_app）
-  L->>C: start-app(app_id, screen_id)
-  C->>R: 启动应用、准备页面和媒体流
-  R-->>C: health OK / 流地址
-  C->>P: 建立或复用目标屏幕投屏会话
-  P-->>C: playing
-  C-->>L: state=running, screen_id
-  L-->>U: TTS：游戏已投到客厅电视
+  U->>L: 放到电视上吧
+  L->>C: start-app(app_id)
+  C->>R: 启动实例、准备页面和媒体流
+  R-->>C: health OK / stream_url
+  C-->>L: state=running, stream_url
+
+  L->>D: self.cast.list_screens()
+  D-->>L: targets（target_id / name）
+  L->>D: self.cast.cast(stream_url, target_id)
+  D->>T: 建立投屏会话，电视拉流播放
+  D-->>L: session_id
+  L-->>U: TTS：游戏已投到电视
 ```
+
+控制面完全不知道画面投到了哪台电视；`start-app` 返回 `stream_url` 之后，投屏由设备端的工具完成，详见[设备端投屏](../../operations/casting.md)。
 
 构建完成后，控制面通过已有的 MCP SSE 连接发送通知：
 
@@ -533,10 +529,9 @@ sequenceDiagram
 {
   "app_id": "app_01J...",
   "state": "error",
-  "screen_id": "tv-living-room",
   "error": {
     "stage": "starting",
-    "code": "TARGET_UNREACHABLE"
+    "code": "START_FAILED"
   }
 }
 ```
@@ -548,10 +543,8 @@ sequenceDiagram
 | 构建或产物校验失败 | `building` | `BUILD_FAILED` |
 | 启动时 Render 判定产物不合法（HTTP 422、`INVALID_ARTIFACT`） | `starting` | `ARTIFACT_INVALID`（不可重试） |
 | 应用启动或健康检查失败 | `starting` | `START_FAILED` |
-| 启动过程中屏幕不可达 | `starting` | `TARGET_UNREACHABLE` |
-| 启动过程中投屏超时 | `starting` | `PROJECTION_TIMEOUT` |
-| 应用运行后进程异常退出 | `running` | `APP_EXITED` |
-| 应用运行后投屏断开 | `running` | `PROJECTION_DISCONNECTED` |
+| 应用已就绪但媒体流未生成 | `starting` | `STREAM_START_FAILED` |
+| 应用运行后进程异常退出或流不可用 | `running` | `APP_EXITED` |
 
 `ARTIFACT_INVALID` 表示产物结构或启动契约不合法（例如入口不是 `app/app.js`、缺必填文件、`launch.json` 非法），由 Render 的 `422 INVALID_ARTIFACT` 映射而来；产物下载地址缺失也归入这一类。重试 `start-app` 不会成功：应先 `update-app` 让构建端重新交付，或重新 `create-app`。`START_FAILED` 只表示应用进程启动或健康检查失败，不再承载产物结构错误。
 
@@ -569,18 +562,14 @@ sequenceDiagram
 | `MISSING_CONTEXT` | `list-apps` 等 | 缺少设备标识 |
 | `APP_BUILDING` | `start-app`, `stop-app`, `get-app-operations`, `update-app` | 应用仍在构建或修订中 |
 | `APP_IN_ERROR` | `start-app`, `get-app-operations`, `update-app` | 应用处于不可启动或不可修订的 `error` |
-| `APP_ALREADY_RUNNING` | `start-app` | 应用已在其他屏幕运行 |
-| `TARGET_BUSY` | `start-app` | 目标屏幕被其他应用或无法归属的投屏会话占用 |
-| `TARGET_UNREACHABLE` | `start-app` | 屏幕不存在、离线或无法访问 |
 | `ARTIFACT_MISSING` | `start-app` | 应用包已丢失，需要重新创建 |
 | `ARTIFACT_INVALID` | `start-app` | Render 判定产物结构或启动契约不合法（422）；重试无效，需要 `update-app` 或 `create-app` |
 | `START_FAILED` | `start-app` | 应用进程启动或健康检查失败 |
 | `STREAM_START_FAILED` | `start-app` | 应用媒体流未就绪 |
 | `CLEANUP_PENDING` | `start-app`, `stop-app` | 上次启动结果还在核对或资源正在清理，稍后重试 |
-| `STOP_FAILED` | `stop-app` | 停止进程或释放屏幕占用失败 |
+| `STOP_FAILED` | `stop-app` | 停止进程失败 |
 | `APP_NOT_RUNNING` | `send-request` | 应用未在运行 |
 | `RUNTIME_UNAVAILABLE` | `start-app`, `send-request` | 无法确认应用进程状态 |
-| `PROJECTION_UNAVAILABLE` | `start-app`, `send-request` | 无法确认投屏状态 |
 | `OPERATION_NOT_FOUND` | `send-request` | 应用 OpenAPI 中没有该 operationId |
 | `APP_NOT_FOUND` | 所有接收 `app_id` 的工具 | 应用不存在，或不属于当前设备和智能体 |
 | `PERSISTENCE_FAILED` | 写操作 | 无法保存控制面状态，后续操作已停止 |
@@ -600,4 +589,4 @@ Portal 模式下，身份校验失败发生在进入工具层之前，不属于�
 | `403` | `USER_DISABLED` | 设备所属账号已被停用 |
 | `503` | `IDENTITY_CHECK_FAILED` | 身份校验器自身失败（例如数据库不可用），请求未进入工具层 |
 
-身份通过后，工具层仍按 owner 校验应用与屏幕；跨 owner 的应用返回 `APP_NOT_FOUND`，跨 owner 的 `force` 返回 `TARGET_BUSY`。
+身份通过后，工具层仍按 owner 校验应用；跨 owner 的应用返回 `APP_NOT_FOUND`。

@@ -175,7 +175,7 @@ func TestStartAppRunningWithoutBindingReportsRecordedState(t *testing.T) {
 	env.registry.Add(runningApp(owner))
 	env.bindings.errs[ownerKey(owner)] = errors.New("binding down")
 
-	view, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+	view, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false)
 	if err != nil {
 		t.Fatalf("StartApp: %v", err)
 	}

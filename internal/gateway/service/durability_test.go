@@ -35,7 +35,7 @@ func TestStartStopsAtUndurableBoundary(t *testing.T) {
 			owner := app.Identity{DeviceID: "d", SessionID: "s"}
 			env.registry.Add(idleApp(t, owner))
 			env.registry.SetPersister(failingRuntimeStore{tc.reject})
-			_, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+			_, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false)
 			if toolCode(t, err) != "PERSISTENCE_FAILED" {
 				t.Fatalf("expected persistence failure, got %v", err)
 			}

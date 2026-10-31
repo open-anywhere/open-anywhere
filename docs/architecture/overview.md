@@ -19,7 +19,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 
 1. **MCP**：灵矽云与控制面之间。灵矽只看见 MCP Tool，不直接接触 AgentAPI 或 Render。应用管理 Tool 见[应用管理 MCP](interfaces/app-management-mcp.md)。
 2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。产物结构、启动约定和构建提示见[应用包设计](interfaces/app-artifact.md)。
-3. **Casting HTTP API**：控制面与投屏服务之间。Render 提供媒体流地址，控制面调用 Casting 完成协议控制与播放，见 [Casting 服务](../operations/casting.md)。
+3. **Casting HTTP API**：现场语音设备与局域网投屏服务之间。Render 提供媒体流地址，设备把地址交给 Casting 完成协议控制与播放；控制面不调用 Casting，见 [Casting 服务](../operations/casting.md) 与 [现场侧投屏](home-casting.md)。
 
 Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之上的独立 HTTP 面，不属于上述三条平面契约，见[多租户用户 Portal 设计](interfaces/portal.md)。
 
@@ -27,7 +27,7 @@ Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之�
 
 现场语音入口与灵矽云之间使用灵矽自己的设备协议（WebSocket），不是 Open Anywhere 定义的契约，见 [现场语音入口](voice-entry.md)。
 
-核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容；租户按 owner 隔离。** 当前切换应用会重建投屏会话，复用会话是后续目标。
+核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容；租户按 owner 隔离；现场只出站，云端不主动连接现场。** 当前切换应用会重建投屏会话，复用会话是后续目标。
 
 ## 2. 目标与非目标
 
@@ -42,12 +42,12 @@ Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之�
 - Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
 - 控制面重启后从本地 SQLite 恢复应用和构建状态，未完成的构建继续监听，产物下载地址保持有效。持久化模型、恢复顺序与表结构见[控制面数据库设计](database.md)。
 - **多租户**：管理员引导账号配置平台；普通用户自助注册后自动获得一台虚拟 Linx 智能体；用户之间在应用、屏幕、语音与下游服务上完全隔离。
-- **服务绑定**：每个用户可以选择平台托管的 Render/Casting，或绑定自己的两个公网地址；控制面按 owner 解析端点，不在租户之间复用下游服务。
+- **服务绑定**：每个用户的 Render 端点按 owner 解析，租户之间不复用下游服务。Render 由平台托管；Casting 部署在客户现场，只由同一局域网的语音设备调用，因此不需要公网地址，也没有鉴权。
 
 ### 2.2 非目标
 
 - 计费、配额、套餐、应用市场、任意第三方应用托管。
-- 用户自行部署 Render/Casting 的安装流程、局域网发现、穿透或连接器。
+- 用户自建 Render。Render 固定由平台托管；现场只部署投屏连接器。
 - 文字输入式对话（灵矽没有发送文字的开放接口；本期只做语音 + 实时字幕）。
 - 管理员查看或操作屏幕内容；管理员单独停止/接管用户应用（仅在停用用户时 best-effort 停止）。
 - 邮箱验证、找回密码、修改密码、删除账号；多管理员邀请、审计表、细粒度权限。
@@ -64,7 +64,7 @@ Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之�
 | 灵矽（Linx） | 七牛云的 AI 智能硬件平台，负责语音入口、ASR、TTS 和意图识别 |
 | 控制面（Control Plane） | 对灵矽暴露 MCP、对 AgentAPI 编排构建、对 Render 转发请求的服务 |
 | AgentAPI | 托管智能体框架，运行编码 Agent 和沙箱，产出持久化文件 |
-| Render | 现场的应用运行时，负责启动应用、提供 HTTP、输出 MPEG-TS 媒体流 |
+| Render | 云端的应用运行时，负责启动应用、提供 HTTP、输出 MPEG-TS 媒体流；媒体流由屏幕直接拉取 |
 | Task | 一次 `create-app` 构建任务；构建结果注册为应用并使用 `app_id` 标识 |
 | App | AgentAPI 产出的、已经在 Render 上运行的应用 |
 | Artifact | 应用产物目录，包含 `app/`、OpenAPI 文档和 `launch.json` |
@@ -76,8 +76,9 @@ Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之�
 | 激活码 | 设备在 OTA 上报后获得的 6 位码，用来把设备绑定到智能体 |
 | Portal | 与 Gateway 同进程的浏览器控制台，分用户端 `/portal` 与管理端 `/admin` |
 | 虚拟智能体 | 注册时为每个用户自动创建的 Linx 智能体，对应一台 `kind=virtual` 的虚拟设备 |
-| 服务绑定 | 用户选择的 Render/Casting 来源：`managed` 使用平台默认服务，`custom` 使用自己的公网地址与可选 token |
-| 平台设置 | 管理员维护的 AgentAPI、Linx、默认 Render/Casting 与注册开关，保存在 `platform_settings` |
+| 服务绑定 | 用户选择的 Render 端点：`managed` 使用平台默认服务，`custom` 指向自建的公网地址，要求使用方自带鉴权 |
+| 现场投屏端 | 部署在客户现场的 Casting 实例，与屏幕同广播域，只接受局域网内语音设备的调用 |
+| 平台设置 | 管理员维护的 AgentAPI、Linx、默认 Render 与注册开关，保存在 `platform_settings` |
 | OpenAPI | 应用能力的 HTTP 契约，控制面据此校验和转发请求 |
 | launch.json | 应用启动契约，描述可执行文件和参数；端口由部署环境通过 `PORT` 注入 |
 
@@ -94,7 +95,7 @@ flowchart LR
   C -->|部署 / HTTP 转发| R["Render<br/>运行时 / Stage / 媒体流"]
   R -->|HTTP 响应| C
   C -->|MCP Tool 结果| L
-  C -->|source + 目标| P["Casting<br/>DLNA 控制"]
+  V -->|self.cast.cast（局域网 HTTP）| P["现场 Casting<br/>DLNA 控制"]
   P -->|DLNA MPEG-TS| T["电视 / 大屏"]
   R -.->|媒体流（电视直接拉取）| T
 ```
@@ -103,11 +104,12 @@ flowchart LR
 
 | 组件 | 负责 | 不负责 |
 | --- | --- | --- |
-| 现场语音入口 | 保持与灵矽云的设备会话、收发语音与文字、回应设备端 MCP、设备注册与重连；真实形态是灵矽硬件，当前由模拟硬件代替（另提供本地 Web 控制台） | 声纹、ASR、TTS，构建与运行应用，投屏 |
-| 灵矽云 | ASR、TTS、意图识别、选择并调用 MCP Tool | 构建应用、运行应用、投屏 |
-| 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验；Portal 注册/登录、管理 API、平台设置、按 owner 解析 Render/Casting | 写代码、运行应用、理解应用的业务语义、查看用户屏幕内容 |
+| 现场语音入口 | 保持与灵矽云的设备会话、收发语音与文字、回应设备端 MCP、设备注册与重连；通过 `self.cast.*` 把云端流地址投到局域网里的屏幕；真实形态是灵矽硬件，当前由模拟硬件代替（另提供本地 Web 控制台） | 声纹、ASR、TTS，构建与运行应用 |
+| 灵矽云 | ASR、TTS、意图识别、选择并调用 MCP Tool | 构建应用、运行应用、发现屏幕、投屏 |
+| 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验；Portal 注册/登录、管理 API、平台设置、按 owner 解析 Render | 写代码、运行应用、理解应用的业务语义、查看用户屏幕内容、触碰投屏服务 |
 | AgentAPI | 运行编码 Agent、在沙箱中写代码和自测、持久化 artifact | 承载应用运行时、直接面对灵矽 |
-| Render | 解压 artifact、按 `launch.json` 启动、健康检查、进程保活、接收控制面 HTTP 转发、Stage 与媒体流 | 理解应用业务、决定应用能力 |
+| Render | 解压 artifact、按 `launch.json` 启动、健康检查、进程保活、接收控制面 HTTP 转发、Stage 与媒体流 | 理解应用业务、决定应用能力、主动连接屏幕 |
+| 现场 Casting | 发现局域网设备、维护 Target 与 Endpoint、按协议控制播放与会话生命周期 | 生成内容、理解应用业务、承担公网接入 |
 | 应用 | 提供 UI 和 `/api/*` HTTP 接口、维护自己的状态 | 感知 MCP、直接面对灵矽 |
 | Portal | 注册、登录、角色与归属；用户查看智能体/应用/屏幕/服务/活动；管理员管理用户、智能体、全局应用与平台设置 | 代替灵矽做语音意图、直接操作屏幕内容 |
 
@@ -115,13 +117,15 @@ flowchart LR
 
 投屏服务是一个独立的局域网投屏端：探测设备、维护 Target 与 Endpoint、按协议建立和结束会话。它不生成、代理或转码媒体，只负责协议控制与会话生命周期；媒体流由 Render 提供，地址必须对电视可达。
 
+部署形态：Casting 跑在客户现场，与目标屏处在同一广播域（SSDP 是链路本地组播）。它只接受同一局域网内语音设备的调用，因此不需要公网地址，也不能直接暴露公网。Render 留在云端，屏幕自己向云端拉流。现场与云端的边界、家庭与公司的部署差异见 [现场侧投屏](home-casting.md)。
+
 当前只支持 DLNA 的 MPEG-TS 实时流，AirPlay 是后续扩展。会话是通道，应用是内容；但**当前切换应用会先停止旧会话再创建新会话**，电视会短暂黑屏，在会话内更换 source 是后续目标。目标状态、错误码、占用释放与边界见 [Casting 服务](../operations/casting.md)。
 
 ## 6. 应用管理 MCP
 
-灵矽通过控制面发现屏幕，并创建、修订、查询、启动和停止应用。工具与错误码的权威清单见[应用管理 MCP](interfaces/app-management-mcp.md#21-工具集)，本文不重复列举；多应用并行与会话绑定见[多应用并发与同会话更新](interfaces/multi-app-sessions.md)。
+灵矽通过控制面创建、修订、查询、启动和停止应用，并在 `start-app` 的结果里拿到电视可以直接拉取的 `stream_url`；屏幕由现场设备端 MCP 的 `self.cast.*` 工具发现和投放。工具与错误码的权威清单见[应用管理 MCP](interfaces/app-management-mcp.md#21-工具集)，本文不重复列举；多应用并行与会话绑定见[多应用并发与同会话更新](interfaces/multi-app-sessions.md)。
 
-Portal 模式下，MCP 会话必须携带 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id`，屏幕与应用均按 owner 作用域；跨 owner 的 `force` 不会接管屏幕。
+Portal 模式下，MCP 会话必须携带 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id`，应用按 owner 作用域。
 
 ## 7. 技术特色：应用的表现形式是接口
 

@@ -169,7 +169,7 @@ func TestTenantsWithTheSameScreenIDUseTheirOwnServices(t *testing.T) {
 	env.registry.Add(idleAppFor(t, "app_a", ownerA))
 	env.registry.Add(idleAppFor(t, "app_b", ownerB))
 	ctx := context.Background()
-	if view, err := env.svc.StartApp(ctx, ownerA, "app_a", "tv_1", false); err != nil || view.State != app.StateRunning {
+	if view, err := env.svc.startAppOnScreen(ctx, ownerA, "app_a", "tv_1", false); err != nil || view.State != app.StateRunning {
 		t.Fatalf("start A: view=%+v err=%v", view, err)
 	}
 	if len(renderA.requests()) != 1 || len(castingA.requests()) != 1 {
@@ -179,7 +179,7 @@ func TestTenantsWithTheSameScreenIDUseTheirOwnServices(t *testing.T) {
 		t.Fatal("starting A touched B's services")
 	}
 
-	if view, err := env.svc.StartApp(ctx, ownerB, "app_b", "tv_1", false); err != nil || view.State != app.StateRunning {
+	if view, err := env.svc.startAppOnScreen(ctx, ownerB, "app_b", "tv_1", false); err != nil || view.State != app.StateRunning {
 		t.Fatalf("start B: view=%+v err=%v", view, err)
 	}
 	if len(renderB.requests()) != 1 || len(castingB.requests()) != 1 {
@@ -229,7 +229,7 @@ func TestCrossOwnerForceIsRejectedOnASharedService(t *testing.T) {
 	env.registry.Add(running)
 	env.registry.Add(idleAppFor(t, "app_a", ownerA))
 
-	_, err := env.svc.StartApp(context.Background(), ownerA, "app_a", "tv_1", true)
+	_, err := env.svc.startAppOnScreen(context.Background(), ownerA, "app_a", "tv_1", true)
 	if code := toolCode(t, err); code != "TARGET_BUSY" {
 		t.Fatalf("code = %q", code)
 	}
@@ -258,7 +258,7 @@ func TestForceStillReplacesTheSameOwnersApp(t *testing.T) {
 	env.registry.Add(previous)
 	env.registry.Add(idleAppFor(t, "app_new", owner))
 
-	view, err := env.svc.StartApp(context.Background(), owner, "app_new", "tv_1", true)
+	view, err := env.svc.startAppOnScreen(context.Background(), owner, "app_new", "tv_1", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestOneTenantsSlowBindingDoesNotBlockAnother(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := env.svc.StartApp(context.Background(), ownerA, "app_a", "tv_1", false)
+		_, err := env.svc.startAppOnScreen(context.Background(), ownerA, "app_a", "tv_1", false)
 		done <- err
 	}()
 	select {
@@ -304,7 +304,7 @@ func TestOneTenantsSlowBindingDoesNotBlockAnother(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if _, err := env.svc.StartApp(ctx, ownerB, "app_b", "tv_1", false); err != nil {
+	if _, err := env.svc.startAppOnScreen(ctx, ownerB, "app_b", "tv_1", false); err != nil {
 		t.Fatalf("B was blocked by A: %v", err)
 	}
 
@@ -397,7 +397,7 @@ func TestBindingFailureIsNotMasked(t *testing.T) {
 	owner := app.Identity{DeviceID: "dev-a", AgentID: "agent-a"}
 	env.bindings.errs[ownerKey(owner)] = &ToolError{Code: "OWNER_NOT_FOUND", Message: "unknown"}
 	env.registry.Add(idleAppFor(t, "app_a", owner))
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_a", "tv_1", false); toolCode(t, err) != "OWNER_NOT_FOUND" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_a", "tv_1", false); toolCode(t, err) != "OWNER_NOT_FOUND" {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -446,7 +446,7 @@ func TestOneTenantsSlowRenderDoesNotBlockAnother(t *testing.T) {
 
 	doneA := make(chan error, 1)
 	go func() {
-		_, err := env.svc.StartApp(context.Background(), ownerA, "app_a", "tv_1", false)
+		_, err := env.svc.startAppOnScreen(context.Background(), ownerA, "app_a", "tv_1", false)
 		doneA <- err
 	}()
 	select {
@@ -457,7 +457,7 @@ func TestOneTenantsSlowRenderDoesNotBlockAnother(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if _, err := env.svc.StartApp(ctx, ownerB, "app_b", "tv_1", false); err != nil {
+	if _, err := env.svc.startAppOnScreen(ctx, ownerB, "app_b", "tv_1", false); err != nil {
 		t.Fatalf("B was blocked by A's slow Render: %v", err)
 	}
 	if requests := renderB.requests(); len(requests) != 1 {

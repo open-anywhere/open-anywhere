@@ -84,7 +84,7 @@ func TestStartAppRefusesUnknownState(t *testing.T) {
 	env := newTestEnv(t, nil)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	env.registry.Add(app.App{ID: "app_1", Owner: owner, State: app.State("paused")})
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "INVALID_STATE" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "INVALID_STATE" {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -120,7 +120,7 @@ func TestStartAppDetectsARunningRuntimeThatIsGone(t *testing.T) {
 			env := newTestEnv(t, nil)
 			env.registry.Add(runningApp(owner))
 			tc.setup(env)
-			if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != tc.code {
+			if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != tc.code {
 				t.Fatalf("err = %v, want %s", err, tc.code)
 			}
 		})
@@ -138,7 +138,7 @@ func TestStartAppRefusesItsOwnStaleProjectionReservation(t *testing.T) {
 	env.registry.Add(stale)
 	env.casting.target.ActiveSessionID = "ps_stale"
 
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "CLEANUP_PENDING" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "CLEANUP_PENDING" {
 		t.Fatalf("err = %v", err)
 	}
 	if len(env.render.requests()) != 0 {
@@ -158,7 +158,7 @@ func TestClaimScreenGivesUpAfterFourReservations(t *testing.T) {
 	}
 	env.registry.Add(idleApp(t, owner))
 
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", true); toolCode(t, err) != "TARGET_BUSY" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", true); toolCode(t, err) != "TARGET_BUSY" {
 		t.Fatalf("err = %v", err)
 	}
 	if stopped := env.casting.stoppedIDs(); len(stopped) != 4 {
@@ -177,7 +177,7 @@ func TestStartAppResetAfterAlreadyRunningIsNotDurable(t *testing.T) {
 	env.registry.SetPersister(failingRuntimeStore{func(a app.App) bool {
 		return a.State == app.StateIdle && a.ScreenID == "" && a.TargetID == "" && !a.PendingRuntime && !a.CleanupPending
 	}})
-	_, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+	_, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false)
 	if toolCode(t, err) != "PERSISTENCE_FAILED" {
 		t.Fatalf("err = %v", err)
 	}
@@ -191,7 +191,7 @@ func TestStartAppPersistsTheSessionFromACreationError(t *testing.T) {
 	// Cleanup also fails, so the session ID has to survive in the record.
 	env.casting.stopErr = errors.New("device unreachable")
 
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
 		t.Fatalf("err = %v", err)
 	}
 	if got := entry.Snapshot().ProjectionSessionID; got != "ps_leaked" {
@@ -211,7 +211,7 @@ func TestStartAppKeepsAConcurrentRunningState(t *testing.T) {
 		entry.Update(func(a *app.App) { a.State = app.StateRunning })
 	}}
 
-	_, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+	_, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false)
 	if toolCode(t, err) != "PROJECTION_TIMEOUT" {
 		t.Fatalf("err = %v", err)
 	}
@@ -228,7 +228,7 @@ func TestStartAppDoesNotOverwriteAConcurrentRunningTransition(t *testing.T) {
 		entry.Update(func(a *app.App) { a.State = app.StateRunning })
 	}}
 
-	view, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+	view, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false)
 	if err != nil {
 		t.Fatalf("StartApp: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestStartAppReportsAFailedFinalPersistence(t *testing.T) {
 	env.registry.SetPersister(failingRuntimeStore{func(a app.App) bool {
 		return a.State == app.StateRunning
 	}})
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PERSISTENCE_FAILED" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PERSISTENCE_FAILED" {
 		t.Fatalf("err = %v", err)
 	}
 	if got := entry.Snapshot(); got.State != app.StateError || !got.CleanupPending {
@@ -259,7 +259,7 @@ func TestStartAppRejectsAForeignRenderInstance(t *testing.T) {
 	instance := readyApp()
 	instance.AppID = "another_app"
 	env.render.instance = instance
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "START_FAILED" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "START_FAILED" {
 		t.Fatalf("err = %v", err)
 	}
 	if len(env.casting.requests()) != 0 {
@@ -274,7 +274,7 @@ func TestStartAppRejectsARenderInstanceWithoutID(t *testing.T) {
 	instance := readyApp()
 	instance.InstanceID = ""
 	env.render.instance = instance
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "START_FAILED" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "START_FAILED" {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -287,7 +287,7 @@ func TestStartAppClearingAPortReservationIsDurable(t *testing.T) {
 	env.registry.SetPersister(failingRuntimeStore{func(a app.App) bool {
 		return a.Port != 0 && !a.PendingRuntime && a.InstanceID == "" && a.State == app.StateIdle
 	}})
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PERSISTENCE_FAILED" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PERSISTENCE_FAILED" {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -297,7 +297,7 @@ func TestStartAppRejectsAProjectionWithoutSessionID(t *testing.T) {
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	entry := env.registry.Add(idleApp(t, owner))
 	env.casting.session = casting.Session{State: casting.SessionPlaying}
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
 		t.Fatalf("err = %v", err)
 	}
 	if got := entry.Snapshot(); got.State != app.StateError {
@@ -312,7 +312,7 @@ func TestStartAppProjectionBindingIsDurable(t *testing.T) {
 	env.registry.SetPersister(failingRuntimeStore{func(a app.App) bool {
 		return a.ProjectionSessionID != "" && !a.PendingProjection && a.State == app.StateIdle
 	}})
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PERSISTENCE_FAILED" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PERSISTENCE_FAILED" {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -323,7 +323,7 @@ func TestChoosePortFailures(t *testing.T) {
 		env := newTestEnv(t, nil)
 		env.registry.Add(idleApp(t, owner))
 		env.svc.render = &portFailRender{fakeRender: env.render}
-		if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "START_FAILED" {
+		if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "START_FAILED" {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -335,7 +335,7 @@ func TestChoosePortFailures(t *testing.T) {
 			ports = append(ports, render.Port{Port: port, Occupied: true})
 		}
 		env.render.ports = ports
-		if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "START_FAILED" {
+		if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "START_FAILED" {
 			t.Fatalf("err = %v", err)
 		}
 		if len(env.render.requests()) != 0 {
@@ -569,7 +569,7 @@ func TestTargetErrors(t *testing.T) {
 			env := newTestEnv(t, nil)
 			env.registry.Add(idleApp(t, owner))
 			env.casting.targetErr = tc.err
-			_, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+			_, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false)
 			var tool *ToolError
 			if !errors.As(err, &tool) || tool.Code != "TARGET_UNREACHABLE" || tool.Message != tc.message {
 				t.Fatalf("err = %#v", err)
@@ -622,7 +622,7 @@ func TestStartAppVerifyRunningBeforeIdempotentStart(t *testing.T) {
 	env.render.getInstance = render.App{InstanceID: "inst_1", State: render.StateReady}
 	env.casting.session = casting.Session{ID: "ps_1", State: casting.SessionPlaying}
 
-	view, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+	view, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false)
 	if err != nil || view.State != app.StateRunning {
 		t.Fatalf("view=%+v err=%v", view, err)
 	}
@@ -749,7 +749,7 @@ func TestReleaseFailedStartKeepsTheUnknownOutcomeWhenItCannotPersist(t *testing.
 	env.registry.SetPersister(failingRuntimeStore{func(a app.App) bool {
 		return !a.PendingProjection && a.TargetID != ""
 	}})
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PERSISTENCE_FAILED" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "PERSISTENCE_FAILED" {
 		t.Fatalf("err = %v", err)
 	}
 	if !entry.Snapshot().PendingProjection {
@@ -769,7 +769,7 @@ func TestReleaseFailedStartBlocksRestartWhenRenderIsUnreachable(t *testing.T) {
 	// Render cannot be queried, so the previous start stays unresolved and the
 	// retry is refused as a tool error rather than leaking the reservation.
 	env.render.listErr = errors.New("render unreachable")
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "CLEANUP_PENDING" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != "CLEANUP_PENDING" {
 		t.Fatalf("err = %v", err)
 	}
 	if !entry.Snapshot().PendingRuntime {
@@ -789,7 +789,7 @@ func TestReleaseFailedStartDropsReservationWhenRenderHasNoInstance(t *testing.T)
 	entry := env.registry.Add(value)
 	// Render answers the port query and reports no instance for app_1: the
 	// unknown start outcome is resolved and the retry must proceed.
-	view, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+	view, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false)
 	if err != nil {
 		t.Fatalf("StartApp: %v", err)
 	}
@@ -805,7 +805,7 @@ func TestStartAppOwnershipChangedWhileWaitingForTheLock(t *testing.T) {
 	entry.Begin()
 	done := make(chan error, 1)
 	go func() {
-		_, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false)
+		_, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false)
 		done <- err
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -842,7 +842,7 @@ func TestWaitPlayingStopsWhenTheStartContextIsCanceled(t *testing.T) {
 	env.casting.session = casting.Session{ID: "ps_1", State: casting.SessionStarting}
 	ctx, cancel := context.WithCancel(context.Background())
 	env.svc.casting = &hookCasting{fakeCasting: env.casting, onGet: cancel}
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
 		t.Fatalf("err = %v", err)
 	}
 }

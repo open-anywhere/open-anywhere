@@ -171,10 +171,10 @@ func TestInvalidArtifactIsNotRetriedAndCanBeUpdated(t *testing.T) {
 	env.render.errs = []error{&render.HTTPError{Status: http.StatusUnprocessableEntity, Code: render.CodeInvalidArtifact, Message: "launch.json is invalid"}}
 
 	ctx := context.Background()
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "ARTIFACT_INVALID" {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "ARTIFACT_INVALID" {
 		t.Fatalf("first start = %v", err)
 	}
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
+	if _, err := env.svc.startAppOnScreen(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
 		t.Fatalf("a retry must be refused, got %v", err)
 	}
 	if got := len(env.render.requests()); got != 1 {
@@ -248,7 +248,7 @@ func TestStartRuntimeFailures(t *testing.T) {
 			env := newTestEnv(t, nil)
 			entry := env.registry.Add(idleApp(t, owner))
 			test.setup(env)
-			if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != test.code {
+			if _, err := env.svc.startAppOnScreen(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != test.code {
 				t.Fatalf("error = %v, want %s", err, test.code)
 			}
 			snapshot := entry.Snapshot()

@@ -14,14 +14,14 @@ import (
 func TestCommandBuildsConfigAndStarts(t *testing.T) {
 	var got voiceentry.Config
 	var out bytes.Buffer
-	code := command([]string{"-serve", "-listen", "127.0.0.1:9", "-device", "d.json", "-mode", "auto", "-no-play"}, &out, func(c voiceentry.Config) error {
+	code := command([]string{"-serve", "-listen", "127.0.0.1:9", "-device", "d.json", "-mode", "auto", "-no-play", "-casting-url", "http://192.168.1.20:8091"}, &out, func(c voiceentry.Config) error {
 		got = c
 		return nil
 	})
 	if code != 0 || out.Len() != 0 {
 		t.Fatalf("code=%d out=%q", code, out.String())
 	}
-	if !got.Serve || got.Listen != "127.0.0.1:9" || got.DevicePath != "d.json" || got.Mode != voice.Auto || !got.NoPlay {
+	if !got.Serve || got.Listen != "127.0.0.1:9" || got.DevicePath != "d.json" || got.Mode != voice.Auto || !got.NoPlay || got.CastingURL != "http://192.168.1.20:8091" {
 		t.Fatalf("config=%+v", got)
 	}
 }

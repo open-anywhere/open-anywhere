@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>现场投屏 · 完整方案</title>
+<style>
+  :root {
+    --ink: #1a1d21;
+    --muted: #6b7280;
+    --line: #e3e6ea;
+    --bg: #fbfbfc;
+    --card: #ffffff;
+    --accent: #2f6f6a;
+    --accent-soft: #eaf3f1;
+    --warn: #a35a1f;
+    --warn-soft: #fdf3e8;
+    --risk: #a13b3b;
+    --risk-soft: #fbeeee;
+    --code: #f3f4f6;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.75;
+  }
+  .page { max-width: 1000px; margin: 0 auto; padding: 56px 28px 96px; }
+  header.title { border-bottom: 2px solid var(--ink); padding-bottom: 20px; margin-bottom: 40px; }
+  header.title h1 { font-size: 30px; line-height: 1.3; margin: 0 0 8px; letter-spacing: -.01em; }
+  header.title .meta { color: var(--muted); font-size: 13px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .tag {
+    display: inline-block; font-size: 12px; padding: 1px 9px; border-radius: 999px;
+    background: var(--warn-soft); color: var(--warn); border: 1px solid #f0dcc4;
+  }
+  h2 {
+    font-size: 20px; margin: 56px 0 16px; padding-top: 14px;
+    border-top: 1px solid var(--line); letter-spacing: -.005em;
+  }
+  h2 .num { color: var(--muted); font-weight: 400; margin-right: 10px; font-variant-numeric: tabular-nums; }
+  h3 { font-size: 16px; margin: 28px 0 10px; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin: 6px 0; }
+  code {
+    font-family: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+    font-size: 13px; background: var(--code); padding: 1px 5px; border-radius: 4px;
+  }
+  pre {
+    background: var(--code); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6;
+    font-family: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  }
+  .lead { font-size: 16px; color: #333; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 22px 0 8px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 16px;
+  }
+  .card .k { font-size: 12px; color: var(--muted); letter-spacing: .04em; margin-bottom: 6px; }
+  .card .v { font-size: 15px; font-weight: 600; line-height: 1.5; }
+  .callout {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 18px 0;
+  }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.risk { border-color: var(--risk); background: var(--risk-soft); }
+  .callout .h { font-weight: 600; margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 20px; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; background: #f6f7f8; border-bottom: 1px solid #d9dde1; font-size: 13px; }
+  tbody tr:last-child td { border-bottom: none; }
+  table.boxed { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .muted { color: var(--muted); }
+  .chain { margin: 20px 0 8px; }
+  .step {
+    display: grid; grid-template-columns: 34px 1fr; gap: 14px; align-items: start;
+    padding: 10px 0 10px 0; position: relative;
+  }
+  .step .n {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--ink); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600;
+    margin-top: 2px;
+  }
+  .step .b { padding-top: 1px; }
+  .step .b strong { display: block; }
+  .step .b span { color: var(--muted); font-size: 13.5px; }
+  .lane-gap {
+    margin: 6px 0 6px 48px; border: 1px dashed #c9ced4; border-radius: 8px;
+    padding: 10px 14px; font-size: 13.5px; color: var(--muted); background: #fff;
+  }
+  .pill { display: inline-block; font-size: 12px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--muted); }
+  .phase { display: grid; grid-template-columns: 120px 1fr; gap: 16px; padding: 14px 0; border-top: 1px solid var(--line); }
+  .phase .name { font-weight: 600; }
+  .phase .name small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .files { font-size: 13px; color: #3b4048; }
+  .files code { font-size: 12.5px; }
+  .decision { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 4px 18px; }
+  .badge-done {
+    display: inline-block; margin-top: 6px; font-size: 11.5px; font-weight: 500;
+    padding: 1px 8px; border-radius: 999px; background: #e8f5ef; color: #1d7a55; border: 1px solid #bfe3d2;
+  }
+  .phase ul { margin: 0 0 6px; padding-left: 20px; }
+  .phase li { margin: 3px 0; }
+  footer { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; }
+  @media (max-width: 720px) {
+    .cards { grid-template-columns: 1fr; }
+    .page { padding: 32px 18px 64px; }
+    .phase { grid-template-columns: 1fr; gap: 6px; }
+  }
+  @media print {
+    body { background: #fff; font-size: 12pt; }
+    .page { max-width: none; padding: 0; }
+    h2 { page-break-after: avoid; }
+    table, .card, .callout { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="title">
+  <h1>现场投屏：完整方案</h1>
+  <div class="meta">
+    <span>Open Anywhere · 小智云聊 S3 MAX 固件链路</span>
+    <span>2026-10-31</span>
+    <span class="tag">方案 · Phase 1–4 完成，待整链联调</span>
+  </div>
+</header>
+
+<p class="lead">
+  语音说一句，云端生成应用并在 Render 上跑起来，现场的电视出现画面。这条链上谁负责什么，什么叫「设备投屏」，
+  为什么云端投屏退成调试工具，以及要改哪些文件、怎么验收——本文是完整的一版。
+</p>
+
+<p class="muted">
+  <strong>进度（2026-10-31）：</strong>Phase 1 控制面、Phase 2 模拟器、Phase 3 固件、Phase 4 文档均已落地。控制面侧在 <code>feat/device-casting</code> 分支（<code>b1cc888</code>，本地）；固件在 <code>feat/casting-mcp</code> 分支，已推到 fork <code>LUPENGHAN/xiaozhi-esp32</code>。模拟器单测全绿，固件在 ESP-IDF v6.1 上编译通过。
+  <strong>还没跑：</strong>真灵矽 → 云端 → 本机 casting → 电视的整链联调，以及固件上机（真机上看 <code>tools/list</code>、真电视上看画面）。本文随实现随时更新。
+</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="k">结论 1</div>
+    <div class="v">产品只保留一条投屏路径：设备 MCP 直连本地 casting</div>
+  </div>
+  <div class="card">
+    <div class="k">结论 2</div>
+    <div class="v">云端投屏冻结，降级为 casting 服务的联调工具</div>
+  </div>
+  <div class="card">
+    <div class="k">结论 3</div>
+    <div class="v">设备不出网、不持凭据，身份头只出现在灵矽 → 控制面</div>
+  </div>
+</div>
+
+<h2><span class="num">01</span>链路：谁负责什么</h2>
+
+<p>三个平面各管一段，灵矽在中间编排。设备 MCP 不是「云端 MCP 的客户端」，而是灵矽伸进现场的那只手——灵矽没有别的办法触达现场，只有这条已经建好的设备通道。</p>
+
+<div class="chain">
+  <div class="step"><div class="n">1</div><div class="b"><strong>用户说话</strong><span>小智设备 → 灵矽云，ASR / 意图识别，会话里带 <code>features.mcp</code></span></div></div>
+  <div class="step"><div class="n">2</div><div class="b"><strong>灵矽调云端 MCP 建应用</strong><span><code>create-app</code> 异步返回，语音回合不等待构建</span></div></div>
+  <div class="step"><div class="n">3</div><div class="b"><strong>灵矽调云端 MCP 启动</strong><span><code>start-app(app_id)</code> 只启动 Render，返回 <code>stream_url</code>，不碰任何屏幕</span></div></div>
+  <div class="step"><div class="n">4</div><div class="b"><strong>灵矽调设备 MCP 找屏幕</strong><span><code>self.cast.list_screens</code> → 固件经局域网问本地 casting <code>GET /v1/targets</code></span></div></div>
+  <div class="step"><div class="n">5</div><div class="b"><strong>灵矽把地址交给设备</strong><span><code>self.cast.cast(url, target_id)</code> → 固件 <code>POST /v1/projection-sessions</code></span></div></div>
+  <div class="step"><div class="n">6</div><div class="b"><strong>电视拉流</strong><span>本地 casting 发 DLNA <code>SetAVTransportURI</code> + <code>Play</code>，电视自己向云端 Render 拉 mpegts</span></div></div>
+</div>
+
+<div class="callout">
+  <div class="h">关键：三段网络，只有两段是新的</div>
+  设备 ↔ 灵矽、灵矽 ↔ 控制面都是既有通道；新增的只有设备 ↔ 本地 casting 这一段，而且只在局域网里，不出网、不需要隧道。
+</div>
+
+<h3>另一条链路：人</h3>
+<p>浏览器不经过灵矽。Portal 要显示屏幕状态、要能远程停屏，只能靠 Gateway；而 Gateway 在设备投屏模式下够不到现场。</p>
+
+<div class="lane-gap">
+  语音：灵矽 → 设备 MCP → casting → 电视　<span class="pill">已通</span><br>
+  人：浏览器 → Gateway → <span style="color:#a13b3b">现场（无通道）</span>　<span class="pill">本方案的已知损失</span>
+</div>
+
+<p>这一段的补法是「现场代理出站上报」（casting 所在的那台机器每 30 秒推一次状态），但它属于共享现场多租户场景，不在本期。见 <a href="#s08">08 风险</a>。</p>
+
+<h2><span class="num">02</span>目标与范围</h2>
+
+<h3>目标</h3>
+<ul>
+  <li>一条语音回合内完成「生成应用 → 云端启动 → 投到现场电视」。</li>
+  <li>设备端只做现场的事：发现屏幕、把给定地址投出去。不建应用、不跑 Render、不调云端。</li>
+  <li>去掉设备上的云端凭据：设备不需要 MCP token，也不需要知道控制面地址。</li>
+</ul>
+
+<h3>本期交付</h3>
+<ul>
+  <li>控制面：应用可以存在于「Render 已启动、尚未上屏」的状态，并把 <code>stream_url</code> 返回给灵矽。</li>
+  <li>小智固件：<code>self.cast.*</code> 从「代理云端 MCP」改成「直连本地 casting HTTP」，工具面收到 3 个。</li>
+  <li>模拟器 <code>voiceentry</code>：与设备同构的 <code>device</code> 实现，无硬件时跑通整条链。</li>
+  <li>文档：作废「现场隧道」，重写现场边界与固件说明。</li>
+</ul>
+
+<h3>不包含</h3>
+<ul>
+  <li>反向隧道（语音链路不需要；Portal 需要时另行决定）。</li>
+  <li>控制面 <code>screen</code> 模块的下线——它继续服务云端投屏这条调试路径。</li>
+  <li>会话内换源、AirPlay、多屏并发、计费。</li>
+</ul>
+
+<h2><span class="num">03</span>规则与边界</h2>
+<ol>
+  <li><strong>设备只访问现场局域网。</strong>不持 token、不调云端；<code>X-Linx-*</code> 三个身份头只出现在灵矽 → 控制面这一段，由平台自动注入。</li>
+  <li><strong>媒体地址由云端给出，电视自己拉流。</strong>Render 的 <code>-public-url</code> 必须公网可达，按每屏 2–8 Mbps 预留上行。</li>
+  <li><strong>一屏一会话由本地 casting 的 <code>409</code> 保证。</strong>控制面不再参与占用仲裁，也不再实现 <code>force</code> 的接管逻辑。</li>
+  <li><strong>语音回合不等待构建。</strong><code>create-app</code> 异步返回；<code>start-app</code> 在 Render 就绪后作为另一次独立调用发生。</li>
+  <li><strong><code>playing</code> 不等于出画。</strong>它只代表设备确认了播放指令，验收必须看电视实际画面。</li>
+  <li><strong>现场 casting 无鉴权</strong>，只能跑在可信局域网，不得映射公网。</li>
+  <li><strong>云端投屏不可作为产品能力出现。</strong>不出现在 Portal、不进部署文档，只由开发配置开启。</li>
+</ol>
+
+<h2><span class="num">04</span>现状与缺口</h2>
+
+<table class="boxed">
+  <thead>
+    <tr><th style="width:18%">链路步骤</th><th style="width:36%">原来</th><th>缺口 / 处理</th><th style="width:13%">状态</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>建应用、启 Render</td>
+      <td><code>create-app</code> / <code>start-app</code> 已有</td>
+      <td>原来 <code>start-app</code> 强制要 <code>screen_id</code>，结尾由控制面自己调 casting；已改为只启 Render</td>
+      <td><span class="badge-done">已补</span></td>
+    </tr>
+    <tr>
+      <td>取流地址</td>
+      <td>Render 已算好 <code>{PublicURL}/streams/{id}/live.ts</code>（<code>render/service.go:442</code>）</td>
+      <td><code>StatusView</code> 原来没有这个字段；已增加 <code>stream_url</code>，启动与状态查询都返回</td>
+      <td><span class="badge-done">已补</span></td>
+    </tr>
+    <tr>
+      <td>问屏幕</td>
+      <td>云端 <code>get-screens</code> 调 casting；设备端没有任何本地工具</td>
+      <td>设备端缺本地发现</td>
+      <td><span class="badge-done">模拟器 + 固件已补</span></td>
+    </tr>
+    <tr>
+      <td>投屏</td>
+      <td>仅控制面能调 casting</td>
+      <td>设备端缺「把给定地址投出去」</td>
+      <td><span class="badge-done">模拟器 + 固件已补</span></td>
+    </tr>
+    <tr>
+      <td>停止</td>
+      <td><code>stop-app</code> 原来同时停 Render 和 casting 会话</td>
+      <td>控制面已改为只停 Render；设备端 <code>self.cast.stop</code> 已补</td>
+      <td><span class="badge-done">模拟器 + 固件已补</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="num">05</span>设计：控制面</h2>
+
+<h3>5.1 <code>start-app</code> 的产品语义</h3>
+<p>产品路径上它只做一件事：把已构建完成的应用在 Render 上启动，返回流地址。</p>
+<pre>start-app(app_id)              → { app_id, state: "running", stream_url, ... }
+stop-app(app_id)               → 停 Render，电视由设备工具停</pre>
+<p>不再接受 <code>screen_id</code>：屏幕不在云端视野里，传进来也没人能执行。原来那段建 casting 会话的代码（<code>service.go:1270-1304</code>）保留在仓库里，但产品不再有任何入口触发它；调试时直接对 casting 发 HTTP，见 <a href="#s12">12</a>。</p>
+
+<h3>5.2 返回流地址</h3>
+<p><code>StatusView</code> 增加 <code>stream_url</code>，在 <code>state == running</code> 且 <code>Source.URL</code> 非空时填充。地址就是 Render 已经生成的那个，不做拼接、不转码。</p>
+
+<h3>5.3 状态机风险（已核对）</h3>
+<div class="callout risk">
+  <div class="h">running 现在允许「没有屏幕」——已逐条验证</div>
+  <p><code>app.State</code> 仍是 <code>building / idle / running / error</code>，但 <code>running</code> 不再隐含已上屏，取值允许 <code>ScreenID == ""</code>。担心的是清理和重启恢复会把它当成异常，实际核对结果：</p>
+  <ul>
+    <li><code>OccupiesScreen()</code>（<code>app/app.go:131</code>）先判 <code>ScreenID != ""</code>，无屏 running 返回 false ✓</li>
+    <li><code>checkRunning</code>：只看进程与流，没有投屏会话不会报错，也不会发通知 ✓</li>
+    <li><code>StopApp</code>：只删 Render 实例，不调 casting ✓</li>
+    <li><code>removable</code> / <code>hasActiveResources</code>：running 仍算活跃资源，不会被 prune 误删 ✓</li>
+    <li>Portal 应用详情：<code>screen_id</code> 为空时按无屏展示，不崩 ✓</li>
+  </ul>
+  <p>结论：状态机不需要新增状态，也不需要迁移；<code>running</code> 的语义从「在屏幕上跑」收窄为「云端在跑、流可用」。</p>
+</div>
+
+<h3>5.4 兼容</h3>
+<ul>
+  <li>云端投屏路径的代码与测试全部保留，只是不再被产品调用。</li>
+  <li>存量部署在切换前不能断：切换顺序是先确认部署形态（一现场一 owner），再关掉云端调用。</li>
+</ul>
+
+<h2><span class="num">06</span>设计：设备 MCP</h2>
+
+<p>固件里的 <code>main/casting/</code> 不删，改写。目标从「云端 <code>/mcp</code>」换成「本地 casting HTTP」，删掉身份头、token、JSON-RPC 封装、构建轮询与主动播报。</p>
+
+<h3>6.1 工具面</h3>
+<table class="boxed">
+  <thead><tr><th style="width:28%">工具</th><th style="width:30%">参数</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>self.cast.list_screens</code></td><td>—</td><td><code>GET /v1/targets</code>，返回 <code>target_id</code>、名称、状态、<code>endpoint_id</code></td></tr>
+    <tr><td><code>self.cast.cast</code></td><td><code>url</code>, <code>target_id</code></td><td><code>POST /v1/projection-sessions</code>，固定 <code>mpegts / h264 / aac</code>；被占用返回 409 原文</td></tr>
+    <tr><td><code>self.cast.stop</code></td><td><code>session_id</code></td><td><code>DELETE</code>，幂等</td></tr>
+  </tbody>
+</table>
+
+<p class="muted">删掉的 8 个旧工具里，<code>create_and_cast / update_app / app_status / app_operations / app_request / list_apps</code> 全部属于云端，灵矽直接调云端 MCP 即可。</p>
+
+<h3>6.2 配置</h3>
+<ul>
+  <li>新增单一配置 <code>CONFIG_CASTING_URL</code>，例：<code>http://192.168.1.20:8091</code>。</li>
+  <li>运行时可用 NVS <code>casting/url</code> 覆盖。</li>
+  <li>删除 <code>CAST_MCP_URL</code>、<code>CAST_MCP_TOKEN</code>、<code>CAST_AGENT_ID</code>、<code>CAST_DEVICE_ID</code>。</li>
+</ul>
+
+<h3>6.3 不做的事</h3>
+<ul>
+  <li>不轮询构建：等待回到灵矽侧，用户再问一次或灵矽自己查 <code>get-app-status</code>。</li>
+  <li>不做主动播报：<code>SendProactiveAnnouncement</code> 与 <code>agent_id_</code> 的改动一并回退。</li>
+  <li>缓存最近一次 <code>list_screens</code> 的结果，只用于把 <code>target_id</code> 解析成可用的 <code>endpoint_id</code>；缓存里没有该屏时先 <code>GET /v1/targets/{id}</code> 再决定。</li>
+</ul>
+
+<h2><span class="num">07</span>两种投屏的定位</h2>
+
+<table class="boxed">
+  <thead><tr><th style="width:16%">维度</th><th style="width:42%">设备投屏（产品）</th><th>云端投屏（调试）</th></tr></thead>
+  <tbody>
+    <tr><td>谁执行 DLNA</td><td>现场设备 → 本地 casting</td><td>Gateway → casting</td></tr>
+    <tr><td>屏幕来源</td><td>设备发现，灵矽经设备 MCP 取</td><td>Gateway <code>get-screens</code></td></tr>
+    <tr><td>占用仲裁</td><td>本地 casting 409</td><td>Gateway <code>screen</code> 目录</td></tr>
+    <tr><td>Portal 屏幕页</td><td>不显示（无通道）</td><td>照旧</td></tr>
+    <tr><td>开启方式</td><td>默认，无需配置</td><td>直连 casting HTTP，不经 Gateway</td></tr>
+    <tr><td>作用</td><td>真实交付</td><td>验证 casting 服务本身：SSDP、DLNA、会话生命周期</td></tr>
+    <tr><td>投入</td><td>全部新功能</td><td>冻结：不修非阻塞问题、不加能力、不扩协议</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <div class="h">端到端调试不靠云端投屏</div>
+  整条链用模拟器走 <code>device</code> 模式——模拟器就是「没有硬件的设备」。云端路径只用来证明 casting 服务自己是对的，它证明不了设备侧链路。
+</div>
+
+<h2 id="s08"><span class="num">08</span>风险与对策</h2>
+
+<table class="boxed">
+  <thead><tr><th style="width:26%">风险</th><th style="width:38%">后果</th><th>对策</th></tr></thead>
+  <tbody>
+    <tr><td>running 无屏状态</td><td>reconcile / stop / history 误判，状态漂移</td><td>5.3 的四条路径逐个补分支并加测试</td></tr>
+    <tr><td>Portal 失去屏幕视野</td><td>用户看不到自己的屏，运维看不到现场</td><td>本期接受；共享现场场景再上现场代理上报</td></tr>
+    <tr><td>多租户共享现场</td><td>casting 无鉴权，owner 隔离只剩局域网</td><td>判定线：一现场一 owner 才用设备投屏</td></tr>
+    <tr><td>PublicURL 不可达</td><td>casting 返回 playing，电视黑屏</td><td>验收必须看画面；联调时先在电视同网段 curl 流地址</td></tr>
+    <tr><td>设备到 casting 不可达</td><td>工具调用超时，灵矽收到一句笼统错误</td><td>2 秒超时 + 可读原因（地址、错误码）；配置错误在开机日志里打出来</td></tr>
+    <tr><td>云端投屏悄悄复活</td><td>两套路径重新并行，维护成本回升</td><td>写进 <code>AGENTS.md</code> 边界段；Portal 不出现入口；默认配置不可达</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">09</span>执行</h2>
+
+<div class="phase">
+  <div class="name">Phase 0<small>前置确认</small></div>
+  <div>
+    确认线上 Gateway（<code>118.89.179.167:6004</code>）当前有没有人在用它投屏。有的话先切到设备模式，否则冻结会断掉他们出画面的路径。
+  </div>
+</div>
+
+<div class="phase done">
+  <div class="name">Phase 1<small>控制面</small><span class="badge-done">已完成</span></div>
+  <div>
+    <ul>
+      <li><code>StatusView</code> 增加 <code>stream_url</code>、<code>screen_id</code>、<code>started_at</code></li>
+      <li><code>start-app</code> 去掉 <code>screen_id</code> 与 <code>force</code>，改为只启动 Render 并返回流地址</li>
+      <li>启动路径拆成 <code>startRender</code>（产物校验、选端口、等就绪）与投屏绑定两段，产品路径只走前半段</li>
+      <li>老的整屏启动实现保留为 <code>startAppOnScreen</code>，只给回归测试用，产品侧不再有任何调用方</li>
+      <li>审计通过：<code>checkRunning</code> / <code>StopApp</code> / <code>prune</code> / <code>hasActiveResources</code> 在无屏 running 下都正常，<code>OccupiesScreen()</code> 返回 false</li>
+      <li>调试通路不加新命令：casting 的 <code>POST /v1/projection-sessions</code> 用 curl 直接打</li>
+    </ul>
+    <div class="files">
+      代码：<code>internal/gateway/service/service.go</code>、<code>start_test.go</code>（新增）、<code>history.go</code>、<code>internal/gateway/mcp/tools.go</code>、<code>server.go</code><br>
+      契约：<code>docs/architecture/interfaces/app-management-mcp.md</code> 第 1、2、4、5、6、7、8、9 章已按新语义改完<br>
+      测试：<code>go test ./internal/gateway/...</code> 全绿，仅 <code>TestWaitPlaying/timeout</code> 在 HEAD 上也失败（既有问题）
+    </div>
+  </div>
+</div>
+
+<div class="phase done">
+  <div class="name">Phase 2<small>模拟器</small><span class="badge-done">代码完成</span></div>
+  <div>
+    <ul>
+      <li><code>client.go</code> 重写为本地 casting HTTP 客户端：<code>GET /v1/targets</code>、<code>POST/DELETE /v1/projection-sessions</code>，复用 <code>pkg/casting</code> 的类型与错误码</li>
+      <li>删掉 <code>transport.go</code>：不再有身份头、token、JSON-RPC、构建轮询</li>
+      <li>工具面 8 → 3：<code>list_screens</code> / <code>cast(url, target_id)</code> / <code>stop(session_id 可选)</code></li>
+      <li><code>cast</code> 自动挑选支持 <code>mpegts/h264/aac</code> 的 Endpoint；409 占用、409 离线、422 格式、502 无响应都转成可播报的中文</li>
+      <li>flag 换成 <code>-casting-url</code>，去掉 <code>-casting-token</code></li>
+      <li>单测覆盖：列屏话术、投放报文、无需先列屏也能投、格式不兼容、占用/离线、停止与幂等、超时可读</li>
+    </ul>
+    <div class="files">
+      代码：<code>internal/voiceentry/casting/{client,tools,tools_test}.go</code>、<code>app.go</code>、<code>cmd/voiceentry/main.go</code><br>
+      文档：<code>docs/architecture/voice-entry.md</code> 投屏工具一节、<code>internal/voiceentry/README.md</code><br>
+      <strong>尚未做：</strong>真灵矽 → 云端 → 本机 casting → 电视的整链联调（需要真机/电视与已部署的控制面）
+    </div>
+  </div>
+</div>
+
+<div class="phase done">
+  <div class="name">Phase 3<small>固件</small><span class="badge-done">已完成</span></div>
+  <div>
+    <ul>
+      <li><code>cast_client.*</code> 重写为本地 casting HTTP：<code>GET /v1/targets[/{id}]</code>、<code>POST /v1/projection-sessions</code>、<code>DELETE /v1/projection-sessions/{id}</code>；删掉 <code>CastIdentity</code>、token、JSON-RPC、SSE 解析</li>
+      <li><code>cast_tools.*</code> 8 → 3 个工具；缓存屏幕，自动挑支持 <code>streaming + mpegts + h264 + aac</code> 的 endpoint；错误码翻成中文；<code>stop</code> 不传参时停最近一次会话，404 视为已停</li>
+      <li><code>Kconfig</code>：<code>CAST_MCP_URL / TOKEN / AGENT_ID / DEVICE_ID / POLL_* / TIMEOUT</code> 全部删除，换成单一 <code>CASTING_URL</code>（NVS <code>casting/url</code> 可覆盖）</li>
+      <li>回退 <code>application.{h,cc}</code> 的 <code>Announce / GetSessionId / GetAgentId</code>，以及 <code>protocol.*</code>、<code>mqtt_protocol.cc</code>、<code>websocket_protocol.cc</code> 的主动播报与 <code>agent_id</code> 解析</li>
+      <li>编译验证：<code>python scripts/build.py yunliao-s3</code> 一次通过；<code>xiaozhi.bin</code> 2702160 字节；镜像里只有 3 个新工具名，旧的 8 个已消失</li>
+    </ul>
+    <div class="files">
+      分支 <code>feat/casting-mcp</code>，基于 <code>addb1ed</code>，单个提交；已推到 fork <code>LUPENGHAN/xiaozhi-esp32</code>，共 7 个文件、+567 行，未向上游发 PR<br>
+      <strong>尚未做：</strong>烧机验证 —— <code>tools/list</code> 是否含 3 个工具、设备能否访问同网段 casting、真电视是否出画面
+    </div>
+  </div>
+</div>
+
+<div class="phase done">
+  <div class="name">Phase 4<small>文档</small><span class="badge-done">已完成</span></div>
+  <div>
+    <ul>
+      <li><code>docs/architecture/home-casting.md</code>：整篇重写为五步链路，删「现场隧道」与出站 WSS</li>
+      <li><code>docs/architecture/modules.md</code>：Casting 行与依赖方向改为「现场语音入口 → Casting」</li>
+      <li><code>docs/architecture/overview.md</code>：<code>C → P</code> 改为 <code>V → P</code>，组件职责、服务绑定、术语表同步</li>
+      <li><code>docs/architecture/interfaces/portal.md</code>、<code>docs/operations/casting.md</code>：明确控制面不再调用 Casting</li>
+      <li><code>docs/operations/yunliao-s3-max-firmware-mcp.md</code>：重写为 3 工具、单一 <code>CASTING_URL</code> 的固件说明</li>
+      <li><code>AGENTS.md</code>：写明云端投屏已冻结，仅作调试；MCP 工具不再有 <code>screen_id</code> / <code>force</code></li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="num">10</span>验收</h2>
+
+<table class="boxed">
+  <thead><tr><th style="width:30%">场景</th><th>判据</th></tr></thead>
+  <tbody>
+    <tr><td>说话 → 生成 → 上屏</td><td>电视出现新应用画面；控制面返回的 <code>stream_url</code> 与电视实际拉取的地址一致</td></tr>
+    <tr><td>没有屏幕时启动</td><td>应用进入 running，<code>stream_url</code> 可用，控制面无任何 casting 请求<br><span class="muted">单测已通过：<code>TestStartAppRunsWithoutAScreen</code></span></td></tr>
+    <tr><td>屏幕被占用</td><td><code>self.cast.cast</code> 返回 409，灵矽听到「这块屏正在放别的」，不覆盖</td></tr>
+    <tr><td>电视断电</td><td>设备工具返回设备不可达；应用仍 running，可重新投</td></tr>
+    <tr><td>停止</td><td>电视回空闲，应用回 idle；Render 与电视可分别停</td></tr>
+    <tr><td>断网 / 超时</td><td>设备侧 6 秒超时（创建会话 12 秒）返回可读原因，语音回合不挂死</td></tr>
+    <tr><td>调试路径</td><td>绕过 Gateway，对 casting 直接 POST 一次会话，完整 DLNA 流程照常走通</td></tr>
+    <tr><td>存量兼容</td><td>冻结前已部署环境的现有测试全绿</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">11</span>清理清单（已完成）</h2>
+<ul>
+  <li><code>internal/voiceentry/casting/</code> 的云端代理实现（<code>transport.go</code>）已删除，只剩本地 casting 客户端与 3 个工具。</li>
+  <li>固件 <code>CASTING_CONFIG</code> 里的 token / agent / device / 轮询配置项已删除。</li>
+  <li><code>docs/architecture/voice-entry.md</code> 的「投屏工具」一节已按新工具面重写。</li>
+  <li><code>feat/casting-mcp</code> 是 Phase 3 的落点，已推送到 fork <code>LUPENGHAN/xiaozhi-esp32</code>；上游仓库保持只读。</li>
+</ul>
+
+<h2 id="s12"><span class="num">12</span>待定</h2>
+
+<div class="decision" style="border-color:#cfe0dd;background:#f7fbfa">
+  <p><strong>已定：调试入口移出 MCP 工具面（选 A）</strong></p>
+  <p><code>start-app</code> 只认 <code>app_id</code>，签名里不留任何调试参数。调试时绕过 Gateway，直接对 casting 发请求：</p>
+  <pre>curl -X POST http://&lt;casting&gt;/v1/projection-sessions \
+  -d '{"target_id": "...", "source": {"type": "stream", "url": "...", "format": "mpegts"}}'</pre>
+  <p class="muted">代价：<code>service.go:1270-1304</code> 的集成代码不再被走，<code>screen</code> 目录与 <code>ProjectionSessionID</code> 记账停止演进。本期不删（Portal 屏幕页仍在读它），等 Portal 屏幕页下线后整块移除。</p>
+</div>
+
+<div class="decision" style="margin-top:14px">
+  <p><strong>1. 现场 casting 跑在哪台机器</strong></p>
+  <p>设备只知道自己 LAN 上的地址。v1 建议 NVS 里写死 <code>http://&lt;ip&gt;:8080</code>，不做 mDNS 发现；等现场机器多起来再说。</p>
+</div>
+
+<div class="decision" style="margin-top:14px">
+  <p><strong>2. 构建完成的通知</strong></p>
+  <p>设备不再轮询后，用户要么再问一次，要么灵矽自己查 <code>get-app-status</code>。取决于灵矽侧编排能力，需要实测确认，不在本期代码范围。</p>
+</div>
+
+<footer>
+  本文件是一次性交付物，不进入 <code>docs/</code> 索引。仓库文档仍是 Markdown；正式落地时按 09 里的清单更新对应文档。
+</footer>
+
+</div>
+</body>
+</html>

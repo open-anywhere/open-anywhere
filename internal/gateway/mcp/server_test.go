@@ -92,11 +92,8 @@ func (f *fakeApps) GetAppOperations(_ context.Context, owner app.Identity, _ str
 	}}}, f.err
 }
 
-func (f *fakeApps) StartApp(_ context.Context, owner app.Identity, _, _ string, force bool) (service.StatusView, error) {
+func (f *fakeApps) StartApp(_ context.Context, owner app.Identity, _ string) (service.StatusView, error) {
 	f.record(owner)
-	f.mu.Lock()
-	f.force = force
-	f.mu.Unlock()
 	return f.status, f.err
 }
 
@@ -298,24 +295,9 @@ func TestServerSessionFlow(t *testing.T) {
 		t.Fatalf("text = %q", text)
 	}
 
-	call(11, "tools/call", map[string]any{"name": "start-app", "arguments": map[string]any{"app_id": "app_1", "screen_id": "tv_1"}})
+	call(11, "tools/call", map[string]any{"name": "start-app", "arguments": map[string]any{"app_id": "app_1"}})
 	if text := toolText(t, resultOf(t, readResponse())); !strings.Contains(text, "app_1") {
 		t.Fatalf("text = %q", text)
-	}
-
-	fake.mu.Lock()
-	forced := fake.force
-	fake.mu.Unlock()
-	if forced {
-		t.Fatal("force must default to false")
-	}
-	call(111, "tools/call", map[string]any{"name": "start-app", "arguments": map[string]any{"app_id": "app_1", "screen_id": "tv_1", "force": true}})
-	_ = toolText(t, resultOf(t, readResponse()))
-	fake.mu.Lock()
-	forced = fake.force
-	fake.mu.Unlock()
-	if !forced {
-		t.Fatal("force=true did not reach the service")
 	}
 
 	call(12, "tools/call", map[string]any{"name": "stop-app", "arguments": map[string]any{"app_id": "app_1"}})

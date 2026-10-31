@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | 控制面 Gateway | `cmd/gateway`、`internal/gateway` | 对灵矽暴露 MCP，编排构建，转发应用请求 | 邓军辉 |
 | 应用运行时 Render | `cmd/render`、`internal/render` | 启动应用、采集画面、输出媒体流 | 张之阳 |
-| 投屏服务 Casting | `cmd/casting`、`internal/casting` | 发现设备、维护投屏会话 | 张之阳 |
+| 投屏服务 Casting | `cmd/casting`、`internal/casting` | 发现现场设备、维护投屏会话（部署在现场，仅供同局域网的设备调用） | 张之阳 |
 | 现场语音入口 | `cmd/voiceentry`、`internal/voiceentry` | 以设备身份接入灵矽，收发语音 | 韩鲁鹏 |
 | Portal | `portal/`、`internal/gateway/portal` | 多租户控制台与自助开通 | 邓军辉 |
 | AgentAPI 适配 | `pkg/agentapi`、`internal/gateway/build` | 把构建抽象成会话，不暴露沙箱细节 | 邓军辉 |
@@ -50,7 +50,7 @@
 | `app` | 应用注册表 | 应用 CRUD |
 | `screen` | 屏幕发现与占用 | 屏幕状态迁移 |
 | `render` | Render HTTP 客户端 | 启动/停止/状态 |
-| `endpoints` | 按 owner 解析 Render/Casting | `Resolve` / `ValidateOwner` |
+| `endpoints` | 按 owner 解析 Render | `Resolve` / `ValidateOwner` |
 | `portal` | 注册、登录、角色、开通 | `/api/*` handler |
 | `settings` | 平台设置与密钥 | 读写设置、加解密 |
 | `secret` | 主密钥加载与 AES-256-GCM 密文封装 | 加解密、AAD 绑定 |
@@ -84,6 +84,7 @@
 - 会话是会话级通道，应用是通道里的内容。**当前切换应用会先停止旧会话再创建新会话**；在会话内更换 source 是后续目标，不要把它当成已实现能力。
 - 只负责协议控制与生命周期，不负责媒体内容。
 - 设备失联时释放占用，避免目标被永久占住。
+- 部署在客户现场、与目标屏同广播域；只由现场的语音设备经局域网 HTTP 调用，不监听公网。
 
 ## 5. 现场语音入口
 
@@ -116,10 +117,10 @@
 | 灵矽云 | 控制面 | MCP |
 | 控制面 | AgentAPI | HTTP（构建会话） |
 | 控制面 | Render | HTTP |
-| 控制面 | Casting | HTTP |
+| 现场语音入口 | Casting | HTTP（同一局域网） |
 | Portal | 控制面 | 同进程 HTTP API |
 
-禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。Render 不调用 Casting：媒体流由电视直接拉取，投屏控制由控制面发起。
+禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。控制面不调用 Casting：它只负责启动应用并返回 `stream_url`，投屏控制由现场的语音设备发起，媒体流由电视直接拉取。
 
 ## 8. 全局不变量
 

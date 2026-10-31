@@ -56,7 +56,7 @@ func TestStartAppRefusesAScreenWithAnUnknownBusySession(t *testing.T) {
 	env := newTestEnv(t, nil)
 	env.casting.target.ActiveSessionID = "foreign"
 	entry := env.registry.Add(idleApp(t, ownerFresh))
-	if _, err := env.svc.StartApp(context.Background(), ownerFresh, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_BUSY" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), ownerFresh, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_BUSY" {
 		t.Fatalf("err = %v", err)
 	}
 	if entry.Snapshot().State != app.StateIdle {

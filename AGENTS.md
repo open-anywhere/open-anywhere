@@ -109,7 +109,7 @@ Display, input, and compute are deliberately isolated. Each plane can be replace
 
 | Plane | Components | Owns | Must not |
 | --- | --- | --- | --- |
-| Input | On-site voice entry (Linx hardware or the local simulator) and Linx cloud | Device session and audio relay; ASR, TTS, intent recognition; calling MCP tools | Build or run apps; cast to a screen |
+| Input | On-site voice entry (Linx hardware or the local simulator) and Linx cloud | Device session and audio relay; ASR, TTS, intent recognition; calling MCP tools; casting the cloud stream to a screen over the local network | Build or run apps |
 | Compute | Control plane, AgentAPI, Render | MCP routing and orchestration, app registry, asynchronous builds in a sandbox, app runtime, stage capture | Understand the app's business semantics; speak the device protocol |
 | Display | Casting service and the target TV, projector, or other display | Device discovery, DLNA session lifecycle, playing a media stream | Know which app produced the stream |
 
@@ -117,13 +117,14 @@ The planes meet through three narrow contracts, plus a browser-facing Portal API
 
 1. **MCP** between Linx and the control plane. Linx sees a stable set of tools and never talks to AgentAPI or Render directly.
 2. **OpenAPI + `launch.json` + HTTP** between the control plane, Render, and apps. Apps expose HTTP and know nothing about MCP; the control plane validates and forwards requests.
-3. **Casting HTTP API** between the control plane and the casting service. Render supplies the media stream URL; Casting owns protocol control and playback.
+3. **Casting HTTP API** between the on-site voice device and the LAN casting service. The control plane starts the app and returns a `stream_url`; the device hands that address to Casting, which owns protocol control and playback. The control plane never calls Casting.
 4. **Portal HTTP API** between the browser and the control plane. Session cookie, same-origin JSON writes; user routes under `/api/portal/*`, admin routes under `/api/admin/*`.
 
 Invariants to preserve when changing code:
 
 - The MCP surface stays stable while app capabilities remain dynamic. Do not register a tool per app or per OpenAPI operation.
 - Builds are slow and asynchronous; control is fast and synchronous. Never make a voice turn wait for a build.
+- **Cloud-initiated casting is frozen.** The control-plane path that started an app on a `screen_id` remains only as a debug harness with no product surface; the product path is device-initiated: `start-app` returns a `stream_url` and the device's `self.cast.*` tools cast it. Do not add `screen_id` or `force` back to the MCP tools.
 - Casting is a session-level channel and an app is content inside it. The current implementation stops the old session and creates a new one when switching apps; switching the source inside one session is the target, not current behavior. Do not document session reuse as if it already works.
 - The screen is a display, not a runtime. Keep app logic out of the display plane and display logic out of apps.
 - Generated artifacts are untrusted input. Validate structure, launch contract, and OpenAPI before running; Render validates again.

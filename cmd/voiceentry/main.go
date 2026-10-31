@@ -34,6 +34,7 @@ func command(args []string, output io.Writer, start func(voiceentry.Config) erro
 	flags.StringVar(&cfg.File, "file", "", "audio file to send (needs -tags 'opus nolibopusfile')")
 	flags.StringVar(&cfg.Mic, "mic", "", "system microphone device name (needs -tags 'opus nolibopusfile')")
 	flags.BoolVar(&cfg.NoPlay, "no-play", false, "do not play downlink speech locally")
+	flags.StringVar(&cfg.CastingURL, "casting-url", "", "local casting service base URL (e.g. http://192.168.1.20:8091); enables the self.cast.* device tools")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

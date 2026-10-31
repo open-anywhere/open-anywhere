@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/audio"
+	"github.com/open-anywhere/open-anywhere/internal/voiceentry/casting"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/controlapi"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/linx"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/register"
@@ -61,6 +62,12 @@ type Config struct {
 	Timeout time.Duration
 	// ReconnectDelays is the backoff after an unexpected disconnect.
 	ReconnectDelays []time.Duration
+
+	// CastingURL is the local casting service the device is paired with, for
+	// example http://192.168.1.20:8091. When set, the device reports the
+	// self.cast.* tools: Linx runs the application in the cloud, gets a stream
+	// address back, and uses these tools to put it on a screen on site.
+	CastingURL string
 }
 
 func (c *Config) applyDefaults() {
@@ -93,6 +100,7 @@ type App struct {
 	cfg        Config
 	dev        atomic.Pointer[linx.Device]
 	tools      *tools.Set
+	casting    *casting.Tools
 	transport  *transport
 	controller *voice.Controller
 	api        *controlapi.Server
@@ -125,6 +133,9 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a.tools = tools.New(func(e voice.Event) { a.api.Publish(e) })
+	a.casting = casting.NewTools(casting.New(casting.Config{URL: cfg.CastingURL}), func(text string) {
+		a.api.Publish(voice.Event{Type: "cast", Text: text})
+	})
 	a.controller = voice.NewController(a.transport, cfg.Mode)
 	a.reg = register.New(register.Config{
 		Path:   cfg.DevicePath,
@@ -134,6 +145,15 @@ func New(cfg Config) (*App, error) {
 	})
 	a.api = controlapi.New(a.controller, a.status)
 	return a, nil
+}
+
+// deviceTools is the device-side tool list for the current configuration.
+func (a *App) deviceTools() []linx.Tool {
+	list := a.tools.List()
+	if a.cfg.CastingURL != "" {
+		list = append(list, a.casting.List()...)
+	}
+	return list
 }
 
 func (a *App) status() controlapi.Status {
@@ -176,7 +196,7 @@ func (a *App) Status() controlapi.Status { return a.status() }
 func (a *App) Run(ctx context.Context) error {
 	a.runCtx = ctx
 	if dev := a.dev.Load(); dev != nil {
-		s, err := linx.NewSession(linx.Config{Device: *dev, Tools: a.tools.List()})
+		s, err := linx.NewSession(linx.Config{Device: *dev, Tools: a.deviceTools()})
 		if err != nil {
 			return err
 		}
@@ -388,7 +408,7 @@ func (a *App) loop(ctx context.Context) error {
 
 // autoReconnect re-dials after an unexpected disconnect, with backoff.
 func (a *App) autoReconnect(ctx context.Context) {
-	err := reconnect(ctx, &a.session, a.transport, a.controller, *a.dev.Load(), a.tools.List(), a.cfg.ReconnectDelays)
+	err := reconnect(ctx, &a.session, a.transport, a.controller, *a.dev.Load(), a.deviceTools(), a.cfg.ReconnectDelays)
 	if err != nil {
 		log.Printf("reconnect: %v", err)
 		return
@@ -413,7 +433,7 @@ func (a *App) handleCommand(ctx context.Context, c connCmd) {
 		c.done <- errors.New("设备未注册，请先在网页注册")
 		return
 	}
-	err := reconnect(ctx, &a.session, a.transport, a.controller, *dev, a.tools.List(), []time.Duration{0})
+	err := reconnect(ctx, &a.session, a.transport, a.controller, *dev, a.deviceTools(), []time.Duration{0})
 	a.down = err != nil
 	if err != nil {
 		a.controller.Disconnected()

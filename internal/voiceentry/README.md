@@ -52,7 +52,9 @@ go run ./cmd/voiceentry -announce "游戏开始了"
 - `self.audio_speaker.set_volume`：`volume` 为 0–100 整数
 - `self.audio_speaker.get_volume`
 
-这不是 Windows 系统音量。业务工具尚未确定。
+这不是 Windows 系统音量。
+
+加 `-casting-url <本地 casting 地址>` 后，另上报 3 个 `self.cast.*` 投屏工具：查屏（`GET /v1/targets`）、投放（`POST /v1/projection-sessions`）、停止（`DELETE`）。它只连本机局域网里的 casting，不连云端，也没有身份头或 token；应用由控制面启动并返回 `stream_url`，设备把地址原样投到现场电视上。设计背景见 [小智云聊 S3 MAX 固件方案](../../docs/operations/yunliao-s3-max-firmware-mcp.md)。
 
 ## 目录
 
@@ -63,6 +65,7 @@ internal/voiceentry/linx/       设备文件、OTA、注册底层、WebSocket �
 internal/voiceentry/voice/      监听状态机、播报队列、断开/重连
 internal/voiceentry/register/   设备注册流程
 internal/voiceentry/tools/      上报给灵矽的 MCP 工具
+internal/voiceentry/casting/    投屏工具：本地 casting HTTP 客户端与 self.cast.* 工具
 internal/voiceentry/controlapi/ HTTP/SSE/WebSocket 接口和 console.html
 internal/voiceentry/audio/      Opus codec、ffmpeg/ffplay 封装
 ```

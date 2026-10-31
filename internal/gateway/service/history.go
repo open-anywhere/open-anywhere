@@ -146,7 +146,7 @@ func (s *Service) startable(a app.App) (bool, string) {
 	case app.StateBuilding:
 		return false, "仍在构建"
 	case app.StateRunning:
-		return false, "已在屏幕上运行"
+		return false, "已在运行"
 	case app.StateError:
 		if a.Error != nil && a.Error.Code == "ARTIFACT_INVALID" {
 			return false, "产物无效，需要修订后重新构建"

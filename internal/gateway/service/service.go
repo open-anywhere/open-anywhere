@@ -118,7 +118,10 @@ type StatusView struct {
 	Name                 string     `json:"name,omitempty"`
 	BuildDurationSeconds int64      `json:"build_duration_seconds,omitempty"`
 	ScreenID             string     `json:"screen_id,omitempty"`
-	StartedAt            *time.Time `json:"started_at,omitempty"`
+	// StreamURL is the application's media stream. The device casts it to a
+	// screen on site; the control plane does not project it itself.
+	StreamURL string     `json:"stream_url,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
 	UptimeSeconds        int64      `json:"uptime_seconds,omitempty"`
 	StoppedAt            *time.Time `json:"stopped_at,omitempty"`
 	Error                *app.Error `json:"error,omitempty"`
@@ -742,10 +745,121 @@ func (s *Service) GetAppOperations(ctx context.Context, owner app.Identity, appI
 	return OperationsView{AppID: value.ID, State: value.State, Operations: operations}, nil
 }
 
-// StartApp starts the application on the screen and waits for projection.
-// A screen holds one application at a time: without force an occupied screen is
-// refused with TARGET_BUSY; with force the application on it is stopped first.
-func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID, screenID string, force bool) (StatusView, error) {
+// StartApp starts the application's Render instance and returns its stream
+// address. It never contacts a casting service: which screen shows the stream
+// is decided on site by the device's own casting tools, so a running
+// application may hold no screen at all.
+func (s *Service) StartApp(ctx context.Context, owner app.Identity, appID string) (StatusView, error) {
+	unlock := s.lifecycle.Lock(ownerKey(owner))
+	defer unlock()
+	entry, err := s.entry(owner, appID)
+	if err != nil {
+		return StatusView{}, err
+	}
+	entry.Begin()
+	defer entry.End()
+	value := entry.Snapshot()
+	if !value.Owner.SameOwner(owner) {
+		return StatusView{}, &ToolError{Code: "APP_NOT_FOUND", Message: "应用归属已改变"}
+	}
+	switch value.State {
+	case app.StateRunning:
+		// The runtime is already up. A binding that is temporarily unavailable
+		// must not turn a repeated start into an error.
+		rt, err := s.runtimeFor(ctx, value.Owner)
+		if err != nil {
+			s.logf("service: verify running app %s without binding: %v", value.ID, err)
+			return s.statusView(value), nil
+		}
+		if err := s.verifyRunningWith(ctx, rt, value); err != nil {
+			return StatusView{}, err
+		}
+		return s.statusView(value), nil
+	case app.StateBuilding:
+		return StatusView{}, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建"}
+	case app.StateError:
+		if !retryable(value) {
+			return StatusView{}, &ToolError{Code: "APP_IN_ERROR", Message: "应用处于错误状态"}
+		}
+		// Built fine, failed later: release whatever the failed start left behind
+		// and start again from idle.
+		if err := s.releaseFailedStart(ctx, entry); err != nil {
+			return StatusView{}, err
+		}
+		value = entry.Snapshot()
+	case app.StateIdle:
+	default:
+		return StatusView{}, &ToolError{Code: "INVALID_STATE", Message: "应用状态不允许启动"}
+	}
+	if s.artifacts != nil && !s.artifacts.Has(value.ID) {
+		return StatusView{}, &ToolError{Code: "ARTIFACT_MISSING", Message: "应用包已丢失，请重新创建应用"}
+	}
+	rt, err := s.runtimeFor(ctx, owner)
+	if err != nil {
+		return StatusView{}, err
+	}
+	// failStart records a start that never got as far as a running application.
+	// The application is marked before reconciliation so a crash between the
+	// two never leaves it looking idle with reservations behind.
+	failStart := func(failure *startFailure) (StatusView, error) {
+		if failure.Code == "APP_ALREADY_RUNNING" {
+			if err := persistRuntime(entry, func(a *app.App) { a.PendingRuntime = false; a.CleanupPending = false }); err != nil {
+				return StatusView{}, err
+			}
+			return StatusView{}, failure.toolError()
+		}
+		entry.Update(func(a *app.App) {
+			if a.State != app.StateIdle {
+				return
+			}
+			a.State = app.StateError
+			a.Error = &app.Error{Stage: app.StageStarting, Code: failure.Code, Message: failure.Message}
+			a.CleanupPending = true
+		})
+		_ = s.reconcileWith(ctx, rt, entry)
+		s.notifyError(entry.Snapshot(), "")
+		return StatusView{}, failure.toolError()
+	}
+	started, failure := s.startRender(ctx, rt, value)
+	if failure != nil {
+		return failStart(failure)
+	}
+	if err := persistRuntime(entry, func(a *app.App) {
+		if a.State != app.StateIdle {
+			return
+		}
+		a.State = app.StateRunning
+		a.PendingRuntime = false
+		a.PendingProjection = false
+		a.CleanupPending = false
+		a.ScreenID = ""
+		a.TargetID = ""
+		a.EndpointID = ""
+		a.ProjectionSessionID = ""
+		a.InstanceID = started.instance.InstanceID
+		a.Port = started.port
+		a.AppBaseURL = started.instance.AppBaseURL
+		a.Source = started.source
+		a.StartedAt = s.now()
+		a.StoppedAt = time.Time{}
+		a.Error = nil
+	}); err != nil {
+		// The downstream IDs were durably stored before this final transition.
+		// Retain them and let the monitor retry cleanup after storage recovers.
+		entry.Update(func(a *app.App) { a.State = app.StateError; a.CleanupPending = true })
+		return StatusView{}, err
+	}
+	return s.statusView(entry.Snapshot()), nil
+}
+
+// startAppOnScreen starts the application on one screen through the control
+// plane's own casting client.
+//
+// The product does not call this: projection happens on site, driven by the
+// device's own tools. It is kept as the frozen path that the regression tests
+// exercise, and debug builds reach casting directly over HTTP instead of
+// through this or any other MCP tool.
+func (s *Service) startAppOnScreen(ctx context.Context, owner app.Identity, appID, screenID string, force bool) (StatusView, error) {
 	unlock := s.lifecycle.Lock(ownerKey(owner))
 	defer unlock()
 	if strings.TrimSpace(screenID) == "" {
@@ -1187,15 +1301,22 @@ func (f *startFailure) toolError() error {
 	return &ToolError{Code: f.Code, Message: f.Message}
 }
 
-func (s *Service) startRuntime(ctx context.Context, rt runtime, value app.App, target casting.Target) (startBinding, *startFailure) {
-	persistFailure := func(err error) (startBinding, *startFailure) {
-		return startBinding{}, &startFailure{Code: "PERSISTENCE_FAILED", Message: "无法保存运行状态，停止后续操作", Cause: err}
-	}
-	if target.State != casting.TargetOnline {
-		return startBinding{}, &startFailure{Code: "TARGET_UNREACHABLE", Message: "目标屏幕不可达"}
+// renderStart is a started runtime, before any screen is involved.
+type renderStart struct {
+	instance render.App
+	port     int
+	source   casting.StreamSource
+}
+
+// startRender starts the application's Render instance and returns the stream
+// it serves. It touches no casting service: projection is a separate step that
+// only the frozen on-screen path performs.
+func (s *Service) startRender(ctx context.Context, rt runtime, value app.App) (renderStart, *startFailure) {
+	persistFailure := func(err error) (renderStart, *startFailure) {
+		return renderStart{}, &startFailure{Code: "PERSISTENCE_FAILED", Message: "无法保存运行状态，停止后续操作", Cause: err}
 	}
 	if value.Artifact.DownloadURL == "" {
-		return startBinding{}, &startFailure{Code: "ARTIFACT_INVALID", Message: "应用产物不可用，请修订后重新构建"}
+		return renderStart{}, &startFailure{Code: "ARTIFACT_INVALID", Message: "应用产物不可用，请修订后重新构建"}
 	}
 	startCtx, cancel := context.WithTimeout(ctx, s.cfg.StartTimeout)
 	defer cancel()
@@ -1248,25 +1369,44 @@ func (s *Service) startRuntime(ctx context.Context, rt runtime, value app.App, t
 	}
 	if createErr != nil {
 		if render.IsCode(createErr, "APP_ALREADY_RUNNING") {
-			return startBinding{}, &startFailure{Code: "APP_ALREADY_RUNNING", Message: "应用已有运行实例", Cause: createErr}
+			return renderStart{}, &startFailure{Code: "APP_ALREADY_RUNNING", Message: "应用已有运行实例", Cause: createErr}
 		}
 		if render.IsInvalidArtifact(createErr) {
-			return startBinding{}, &startFailure{Code: "ARTIFACT_INVALID", Message: "应用产物无效，请修订后重新构建", Cause: createErr}
+			return renderStart{}, &startFailure{Code: "ARTIFACT_INVALID", Message: "应用产物无效，请修订后重新构建", Cause: createErr}
 		}
-		return startBinding{}, &startFailure{Code: "START_FAILED", Message: "应用启动失败", Cause: createErr}
+		return renderStart{}, &startFailure{Code: "START_FAILED", Message: "应用启动失败", Cause: createErr}
 	}
 	if instance.State != render.StateReady {
 		if instance.Error != nil && instance.Error.Code == render.CodeInvalidArtifact {
-			return startBinding{}, &startFailure{Code: "ARTIFACT_INVALID", Message: "应用产物无效，请修订后重新构建"}
+			return renderStart{}, &startFailure{Code: "ARTIFACT_INVALID", Message: "应用产物无效，请修订后重新构建"}
 		}
 		// Cleanup uses the persisted application record.
-		return startBinding{}, &startFailure{Code: "START_FAILED", Message: "应用未就绪"}
+		return renderStart{}, &startFailure{Code: "START_FAILED", Message: "应用未就绪"}
 	}
 	source := instance.Source
 	if source.Type == "" || source.URL == "" {
 		// Cleanup uses the persisted application record.
-		return startBinding{}, &startFailure{Code: "STREAM_START_FAILED", Message: "应用媒体流未就绪"}
+		return renderStart{}, &startFailure{Code: "STREAM_START_FAILED", Message: "应用媒体流未就绪"}
 	}
+	return renderStart{instance: instance, port: port, source: source}, nil
+}
+
+// startRuntime is the frozen on-screen start: the runtime first, then a casting
+// session on the target. Only startAppOnScreen reaches it.
+func (s *Service) startRuntime(ctx context.Context, rt runtime, value app.App, target casting.Target) (startBinding, *startFailure) {
+	persistFailure := func(err error) (startBinding, *startFailure) {
+		return startBinding{}, &startFailure{Code: "PERSISTENCE_FAILED", Message: "无法保存运行状态，停止后续操作", Cause: err}
+	}
+	if target.State != casting.TargetOnline {
+		return startBinding{}, &startFailure{Code: "TARGET_UNREACHABLE", Message: "目标屏幕不可达"}
+	}
+	started, failure := s.startRender(ctx, rt, value)
+	if failure != nil {
+		return startBinding{}, failure
+	}
+	source := started.source
+	startCtx, cancel := context.WithTimeout(ctx, s.cfg.StartTimeout)
+	defer cancel()
 	endpoint, ok := screen.SelectEndpoint(target, source)
 	if !ok {
 		// Cleanup uses the persisted application record.
@@ -1306,7 +1446,7 @@ func (s *Service) startRuntime(ctx context.Context, rt runtime, value app.App, t
 		// Cleanup uses the persisted application record.
 		return startBinding{}, &startFailure{Code: "PROJECTION_TIMEOUT", Message: "投屏超时", Cause: err}
 	}
-	return startBinding{instance: instance, port: port, source: source, endpoint: endpoint, session: session}, nil
+	return startBinding{instance: started.instance, port: started.port, source: source, endpoint: endpoint, session: session}, nil
 }
 
 func (s *Service) waitPlaying(ctx context.Context, sessionID string) error {
@@ -1453,6 +1593,7 @@ func (s *Service) statusView(value app.App) StatusView {
 	case app.StateRunning:
 		view.Name = value.Name
 		view.ScreenID = value.ScreenID
+		view.StreamURL = value.Source.URL
 		if !value.StartedAt.IsZero() {
 			started := value.StartedAt.UTC().Truncate(time.Second)
 			view.StartedAt = &started

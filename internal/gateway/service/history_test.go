@@ -163,7 +163,7 @@ func TestStartRetriesABuiltAppWhoseLastStartFailed(t *testing.T) {
 	failed.InstanceID, failed.Port, failed.ScreenID, failed.CleanupPending = "inst_stale", 39000, "tv_1", true
 	entry := env.registry.Add(failed)
 
-	view, err := env.svc.StartApp(context.Background(), ownerFresh, "app_1", "tv_1", false)
+	view, err := env.svc.startAppOnScreen(context.Background(), ownerFresh, "app_1", "tv_1", false)
 	if err != nil || view.State != app.StateRunning {
 		t.Fatalf("view=%+v err=%v", view, err)
 	}
@@ -186,10 +186,10 @@ func TestStartRefusesWhatCannotBeStarted(t *testing.T) {
 	env.registry.Add(builtApp(t, "app_lost", 1, app.StateIdle))
 	ctx := context.Background()
 
-	if _, err := env.svc.StartApp(ctx, ownerFresh, "app_bad", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
+	if _, err := env.svc.startAppOnScreen(ctx, ownerFresh, "app_bad", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
 		t.Fatalf("a failed build must stay unstartable, err=%v", err)
 	}
-	if _, err := env.svc.StartApp(ctx, ownerFresh, "app_lost", "tv_1", false); toolCode(t, err) != "ARTIFACT_MISSING" {
+	if _, err := env.svc.startAppOnScreen(ctx, ownerFresh, "app_lost", "tv_1", false); toolCode(t, err) != "ARTIFACT_MISSING" {
 		t.Fatalf("a lost package must be reported, err=%v", err)
 	}
 	if len(env.render.requests()) != 0 {
@@ -322,7 +322,7 @@ func TestStartRetriesAfterAProjectionTimeoutWhenTheScreenIsFree(t *testing.T) {
 	env.svc.SetArtifactStore(&fakeArtifacts{})
 	env.registry.Add(failedStart(t))
 
-	view, err := env.svc.StartApp(context.Background(), ownerFresh, "app_1", "tv_1", false)
+	view, err := env.svc.startAppOnScreen(context.Background(), ownerFresh, "app_1", "tv_1", false)
 	if err != nil || view.State != app.StateRunning {
 		t.Fatalf("view=%+v err=%v", view, err)
 	}
@@ -359,7 +359,7 @@ func TestAFailedStartIsKeptWhileAnotherSessionHoldsTheScreen(t *testing.T) {
 	entry := env.registry.Add(failedStart(t))
 	env.casting.target.ActiveSessionID = "someone-elses-session"
 
-	if _, err := env.svc.StartApp(context.Background(), ownerFresh, "app_1", "tv_1", false); toolCode(t, err) != "CLEANUP_PENDING" {
+	if _, err := env.svc.startAppOnScreen(context.Background(), ownerFresh, "app_1", "tv_1", false); toolCode(t, err) != "CLEANUP_PENDING" {
 		t.Fatalf("err=%v", err)
 	}
 	snapshot := entry.Snapshot()

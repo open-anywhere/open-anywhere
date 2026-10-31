@@ -10,8 +10,8 @@ Portal 与 Gateway 同进程、同端口、同 SQLite：
 
 - 管理员与普通用户使用同一个登录入口，按角色进入 `/admin` 或 `/portal`。
 - 注册时自动创建一台虚拟智能体；之后用户可以再添加虚拟设备（各自创建一个智能体），也可以用激活码把硬件设备绑定到已有智能体，最多 10 台。应用归属仍是 `(MAC, AgentID)`，与灵矽 MCP 侧的判断一致。
-- Render/Casting 按用户解析：平台默认服务（managed）或用户自己的公网服务（custom）。
-- 本期不处理局域网穿透、连接器与计费；Render/Casting 假定已作为公网服务暴露。
+- Render/Casting 绑定按用户解析：平台默认服务（managed）或用户自己的公网服务（custom）。控制面已不再在 `start-app` 中调用 Casting，投屏由现场语音设备完成，这里保留的 Casting 绑定只服务于调试路径。
+- 本期不处理局域网穿透、连接器与计费；Render 假定已作为公网服务暴露，Casting 由同一局域网的语音设备直接访问。
 
 数据库从单账号 schema v2 平滑升级到 v3：已有账号保留并默认为 `role=user`；配置的引导账号由 `EnsureAdmin` 提升为管理员，已有设备、应用与凭据保持不变。
 
@@ -155,6 +155,8 @@ sequenceDiagram
 | --- | --- |
 | `managed`（默认） | 使用管理员配置的平台默认 Render/Casting；读取绑定本身返回 `managed.available`，真正访问屏幕或启动应用时若平台未配置则返回 `SERVICE_NOT_CONFIGURED` |
 | `custom` | 用户填写两个公网地址：Render URL 与 Casting URL；可分别设置访问令牌（当前只透传，服务端不校验） |
+
+投屏的产品路径不经过控制面：`start-app` 只返回 `stream_url`，屏幕由现场设备的 `self.cast.*` 工具发现和投放，见 [现场侧投屏](../home-casting.md)。因此 Casting 绑定与 `custom` 地址只服务于调试与过渡路径，需要时仍由用户自己在网络层收口。
 
 约束与行为：
 
