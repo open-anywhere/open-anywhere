@@ -7,13 +7,13 @@ Render 的实现位于 `cmd/render`、`internal/render` 和 `pkg/render`。HTTP 
 主机需安装 Node.js 20 或更新版本、Chromium / Google Chrome、带 `libx264` 和 AAC 编码器的 FFmpeg，以及 `lsof`。Render 使用独立的 headless Chromium，不采集用户桌面，不需要 macOS 屏幕录制权限。需要页面声音时，还需准备 Chromium 能输出到的虚拟音频设备和 FFmpeg 能读取的设备输入。
 
 ```sh
-go run ./cmd/render \
-  -addr :8090 \
-  -public-url http://192.168.1.20:8090 \
-  -work-dir /tmp/open-anywhere-render
+cp render.example.yaml render.yaml
+go run ./cmd/render -config render.yaml
 ```
 
-将 `192.168.1.20` 换成控制面和电视可达的主机地址。应用地址默认使用同一主机名；控制面通过不同地址访问应用时，可配置 `-app-host`。`-chrome`、`-node`、`-ffmpeg` 可以指定可执行文件路径。
+`render.yaml` 不提交到仓库。把 `public_url` 换成控制面和电视都能访问的地址；`stream_url` 的主机名来自这里。Gateway 和 Render 在同一台机器、应用业务端口不对外时，把 `app_host` 写成 `127.0.0.1`。`token` 与 Gateway 管理后台「屏幕服务 → Render Token」（或用户自建服务的令牌）写成同一段；留空时 `/v1` 不校验。填上之后，`/v1/apps` 和 `/v1/ports` 必须带 `Authorization: Bearer <token>`。`/healthz` 和 `/streams` 不校验，电视拉流不会带这个头。
+
+命令行 flag 和环境变量覆盖文件里的同名项。token 只来自文件或 `RENDER_TOKEN`，不设命令行参数。`-chrome`、`-node`、`-ffmpeg` 仍可指定可执行文件路径。
 
 启动后确认服务可用：
 
@@ -25,7 +25,7 @@ curl http://192.168.1.20:8090/healthz
 
 Linux 上 Chromium 需要可用的浏览器沙箱。Ubuntu 23.10+ 的 AppArmor 可能限制自行下载的浏览器创建 user namespace；E2E CI 为测试用 Chromium 的确切路径加载专用 AppArmor 配置，保留浏览器沙箱。
 
-API 和媒体流共用 `-addr`，应用按请求中的 `port` 监听。默认视频为 1280×720（16:9）、10 fps，可用 `-width`、`-height`、`-fps` 配置；宽高必须保持 16:9。服务拒绝非法尺寸、比例、帧率或缺少公开地址的配置。默认只输出视频；需要声音时同时设置 `-audio-format` 和 `-audio-input`。
+API 和媒体流共用 `addr`，应用按请求中的 `port` 监听。默认视频为 1280×720（16:9）、10 fps，可在 `render.yaml` 里改 `width`、`height`、`fps`；宽高必须保持 16:9。服务拒绝非法尺寸、比例、帧率或缺少公开地址的配置。默认只输出视频；需要声音时同时设置 `audio_format` 和 `audio_input`。
 
 ## 音频采集
 
@@ -36,24 +36,11 @@ Linux（PulseAudio 或 PipeWire 兼容 PulseAudio）示例：
 ```sh
 pactl load-module module-null-sink sink_name=render
 pactl set-default-sink render
-go run ./cmd/render \
-  -addr :8090 \
-  -public-url http://192.168.1.20:8090 \
-  -work-dir /tmp/open-anywhere-render \
-  -audio-format pulse \
-  -audio-input render.monitor
 ```
 
-macOS 可使用 BlackHole 等 loopback 音频设备。把系统输出切换到该设备后，用 `ffmpeg -f avfoundation -list_devices true -i ""` 找到音频输入编号，再启动：
+在 `render.yaml` 里写成 `audio_format: pulse` 和 `audio_input: render.monitor`，然后 `go run ./cmd/render -config render.yaml`。
 
-```sh
-go run ./cmd/render \
-  -addr :8090 \
-  -public-url http://192.168.1.20:8090 \
-  -work-dir /tmp/open-anywhere-render \
-  -audio-format avfoundation \
-  -audio-input :6
-```
+macOS 可使用 BlackHole 等 loopback 音频设备。把系统输出切换到该设备后，用 `ffmpeg -f avfoundation -list_devices true -i ""` 找到音频输入编号，在 `render.yaml` 里写成 `audio_format: avfoundation` 和 `audio_input: ":6"`。
 
 开启音频时 Chromium 会关闭静音并允许页面自动播放，页面中的 `<audio>`、Web Audio 和游戏音效会进入同一条投屏流。音频设备不可用会导致实例启动失败，不会错误地声明 AAC 或静默降级。一个 Render 进程中的多个实例共享配置的音频输入，若需要隔离应分别运行 Render 进程和音频设备。
 
@@ -73,9 +60,13 @@ python3 -m http.server 8092 --directory e2e/artifacts
 
 本机调用示例：
 
+`render.yaml` 的 `token` 为空时直接调用。配了 token 时，每个 `/v1` 请求都加上 `Authorization: Bearer <token>`。
+
 ```sh
-curl http://localhost:8090/v1/ports/39101
+curl http://localhost:8090/v1/ports/39101 \
+  -H "Authorization: Bearer $RENDER_TOKEN"
 curl http://localhost:8090/v1/apps \
+  -H "Authorization: Bearer $RENDER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"app_id":"app-scoreboard","artifact_url":"http://127.0.0.1:8092/scoreboard.tar.gz","port":39101}'
 ```
@@ -121,21 +112,21 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 ## 局域网与多租户部署
 
 - **局域网或自托管**：Render 与 Gateway 不在同一台机器、或必须走私网地址时，要在 `gateway.yaml` 显式设置 `services.allow_private_targets: true`。默认策略拒绝回环、私网、link-local 与 CGNAT 地址，不改这个开关就绑不上 `192.168.x.x` 这类地址。该开关同时放宽 custom 用户填写的 Render 地址，只适用于自己信任的单租户部署。
-- **不要直接暴露公网**：`POST /v1/apps` 没有鉴权，也没有 Node.js 沙箱隔离，任何能访问它的人都可以启动任意 tar.gz。Render 只应放在受信网络里，或由反向代理与网络策略收口。
+- **公网要配 token**：`render.yaml` 的 `token` 留空时，`POST /v1/apps` 没有鉴权。Render 也没有 Node.js 沙箱隔离，任何能访问它的人都可以启动任意 tar.gz。暴露到公网时必须填上 token，并与 Gateway 里的 Render Token 相同。`/streams` 仍是公开 GET。
 - **共享多租户是开放注册前的阻塞项**：平台默认 Render 被所有 managed 用户共用时，缺少运行时隔离、独立 UID、资源配额与 per-tenant 凭证。在完成隔离之前，不要在托管实例上打开注册；管理后台的注册开关旁也有同样的提示。
-- **token 只透传**：Gateway 会把用户或平台配置的 token 作为 `Authorization: Bearer` 发给 Render，但 Render 当前不解析、不校验这个头。需要访问控制的部署必须在网络层完成。
+- **token 两边相同**：Gateway 把平台或用户配置的 token 作为 `Authorization: Bearer` 发给 Render。Render 在 `token` 非空时校验 `/v1/apps` 和 `/v1/ports`，缺失或错误返回 `401 UNAUTHORIZED`。`/healthz` 和 `/streams` 不校验。token 不写日志，也不接受命令行参数。
 
 ## 日志与停止
 
-服务日志输出到终端。每个实例的临时目录位于 `-work-dir` 下，包含应用进程日志 `app.log` 与编码日志 `encoder.log`。停止实例用 `DELETE /v1/apps/<instance_id>`；停止 Render 进程直接 `Ctrl-C`。
+服务日志输出到终端。每个实例的临时目录位于 `work_dir` 下，包含应用进程日志 `app.log` 与编码日志 `encoder.log`。停止实例用 `DELETE /v1/apps/<instance_id>`；停止 Render 进程直接 `Ctrl-C`。
 
 ## 常见问题
 
-- **局域网无法访问**：确认 `-addr` 使用 `0.0.0.0:8090`、防火墙已放行，并且 `-public-url` 是局域网地址。
+- **局域网无法访问**：确认 `addr` 使用 `0.0.0.0:8090`、防火墙已放行，并且 `public_url` 是局域网地址。
 - **音频启动失败**：重新执行设备列表命令确认编号；音频格式与输入必须成对配置。
 - **电视没有声音**：确认系统输出已切到虚拟音频设备，并检查实例响应中的 `source.audio_codec` 是否为 `aac`。
 - **电视无法播放**：先用 `ffprobe <source.url>` 检查媒体流，再确认电视支持 MPEG-TS、H.264 与 AAC。
-- **地址只有 Render 机器能访到**：`-public-url` 决定 `stream_url` 的主机名，电视拿到后自己去拉，不经过 Gateway。写成 `127.0.0.1`、内网网卡或 Tailscale 地址时，现场的电视就拉不到；设备端 `self.cast.cast` 可能仍返回成功（SOAP 200），但屏幕是黑的，日志里也看不到电视的请求。要写电视所在网络能路由到的地址：同网段用局域网 IP，跨网段用 frp/反代暴露的地址（如 `http://<公网>:6005`）。`-render-url` 是 Gateway 找 Render 用的，和这个不是一回事。
+- **地址只有 Render 机器能访到**：`public_url` 决定 `stream_url` 的主机名，电视拿到后自己去拉，不经过 Gateway。写成 `127.0.0.1`、内网网卡或 Tailscale 地址时，现场的电视就拉不到；设备端 `self.cast.cast` 可能仍返回成功（SOAP 200），但屏幕是黑的，日志里也看不到电视的请求。要写电视所在网络能路由到的地址：同网段用局域网 IP，跨网段用 frp/反代暴露的地址（如 `http://<公网>:6005`）。Gateway 的 Render 地址是控制面找 Render 用的，和这个不是一回事。
 
 ## 实现边界
 
@@ -145,5 +136,5 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 - 进程退出、连续三次健康检查失败或视频输出中断会触发错误与清理；不自动重启应用。状态和实例记录仅在内存中，服务重启不恢复旧实例。
 - 归档拒绝路径穿越、链接和特殊文件，压缩及展开数据各限制 100 MiB，归档条目不超过 4096 个。OpenAPI 校验覆盖版本、业务路径和操作元信息，不是完整的 OpenAPI / JSON Schema 校验器；完整校验与业务自测由构建端承担。
 - 端口列表合并 Render 预留和 `lsof` 可见的 TCP 监听记录；端口检查还进行与应用监听行为一致的绑定探测。系统权限可能限制其他用户进程的可见范围，列表不能代替启动时的绑定结果。
-- 这是运行构建产物的本地服务，不提供用户鉴权和 Node.js 沙箱隔离；多租户场景下产物必须视为不可信输入，开放注册前要先完成隔离（见“局域网与多租户部署”）。应用启动时只继承必要环境变量；应用日志与编码日志在实例工作目录中，清理后删除，生命周期错误写服务日志。
+- 这是运行构建产物的本地服务。`token` 非空时 `/v1` 校验同一段 Bearer，这不是按用户区分的身份，也没有 Node.js 沙箱隔离；多租户场景下产物必须视为不可信输入，开放注册前要先完成隔离（见“局域网与多租户部署”）。应用启动时只继承必要环境变量；应用日志与编码日志在实例工作目录中，清理后删除，生命周期错误写服务日志。
 - `ready` 表示媒体流已经就绪，不代表电视已经开始播放。

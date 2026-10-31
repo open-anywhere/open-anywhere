@@ -133,8 +133,9 @@
 
 ```bash
 cp gateway.example.yaml gateway.yaml
+cp render.example.yaml render.yaml   # 改 public_url；和 Gateway 同机时把 app_host 写成 127.0.0.1
 go build ./... && go test ./... -race
-go run ./cmd/render -addr :8090 -public-url http://192.168.1.20:8090
+go run ./cmd/render -config render.yaml
 go run ./cmd/gateway -config gateway.yaml     # 控制面 + 语音运行时；门户模式需先构建前端并在 /admin 配置
 ```
 

@@ -2,9 +2,11 @@ package render
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -122,5 +124,42 @@ func NewHandler(s *Service) http.Handler {
 			}
 		}
 	})
-	return mux
+	return authorize(s.cfg.Token, mux)
+}
+
+// authorize requires Authorization: Bearer on /v1 when token is set.
+// Media and health routes stay open.
+func authorize(token string, next http.Handler) http.Handler {
+	if token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cleaned := path.Clean(r.URL.Path)
+		if cleaned == "." {
+			cleaned = "/"
+		}
+		r.URL.Path = cleaned
+		r.URL.RawPath = ""
+		if cleaned != "/v1" && !strings.HasPrefix(cleaned, "/v1/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !bearerMatches(token, r.Header.Get("Authorization")) {
+			errorResponse(w, failure(http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid bearer token"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func bearerMatches(secret, header string) bool {
+	const prefix = "Bearer "
+	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return false
+	}
+	got := header[len(prefix):]
+	if len(got) != len(secret) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(secret)) == 1
 }

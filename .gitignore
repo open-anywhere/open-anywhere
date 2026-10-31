@@ -7,6 +7,8 @@ e2e/artifacts/
 e2e/results/
 render-e2e-coverage.out
 gateway.yaml
+gateway.yaml.bak-*
+render.yaml
 open-anywhere.gateway.db
 open-anywhere.gateway.db-*
 artifacts/

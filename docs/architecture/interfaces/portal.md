@@ -62,7 +62,7 @@ Portal 与 Gateway 同进程、同端口、同 SQLite：
 - 注册由平台设置 `registration.open` 控制，默认关闭。
 - 仅当 `registration.open` 尚无值时，配置 `portal.allow_registration: true` 才会把它 seed 为 `true`；此后以数据库为准，管理员可在 `/admin/settings` 修改。
 - 关闭时 `POST /api/portal/register` 返回 `403 REGISTRATION_CLOSED`。
-- 上线顺序：先完成租户隔离（MCP 身份、屏幕、Service 全链路按 owner 校验，Render 运行时隔离）验证，再打开注册。这是硬前置，不是建议：未隔离时新用户可能看到或停掉其他用户的应用，而 Render 当前没有鉴权与沙箱，MCP 也仍是全局 token。
+- 上线顺序：先完成租户隔离（MCP 身份、屏幕、Service 全链路按 owner 校验，Render 运行时隔离）验证，再打开注册。这是硬前置，不是建议：未隔离时新用户可能看到或停掉其他用户的应用。Render 的 `/v1` 可以校验与 Gateway 相同的 Bearer，但那是整台 Render 共用的一段秘密，没有按租户隔离，也没有沙箱；MCP 也仍是全局 token。
 
 ### 3.2 注册流程
 
@@ -157,7 +157,7 @@ Portal 不再有屏幕页，也没有 `GET /api/portal/screens`。屏幕发现�
 约束与行为：
 
 - `custom` 必须填写 Render URL，否则 `409 SERVICE_NOT_CONFIGURED`。
-- 可选令牌保存后只返回 `render_token_configured`，不回显明文；再次保存时省略或传空表示保留，`clear_render_token` 才显式清除。**Render 当前不校验 `Authorization`**：令牌只是由 Gateway 透传，不能用它判断 custom 部署已受保护；用户自建服务必须自己加网络层访问控制。
+- 可选令牌保存后只返回 `render_token_configured`，不回显明文；再次保存时省略或传空表示保留，`clear_render_token` 才显式清除。Render 只有在自己的 `render.yaml` 里配置了同一段 `token` 时才校验 `Authorization`；留空等于没有访问控制。用户自建服务必须把令牌写进那台 Render。
 - 切换到 `managed` 会保留已保存的自定义地址与密文 token，方便切回；显式清除标记仍然生效。
 - 保存前检查该用户是否有运行中或待清理的应用；有则 `409 APPS_RUNNING`，要求先停止应用，避免旧实例失去清理地址。
 - 保存/测试的地址必须通过出站策略：只接受 `http`/`https`，拒绝 userinfo、fragment、非法端口，默认拒绝回环、私网、link-local、组播与 CGNAT 地址。本地调试或受信局域网部署可设置 `services.allow_private_targets=true` 放行；它同时放宽所有用户填写的地址，不要与开放注册同时使用。
@@ -367,7 +367,7 @@ services:
 - 先构建前端：`cd portal && pnpm install && pnpm build`；未构建时 `/` 返回 503。
 - 单文件部署：`make build-gateway-embed`（等价于 `go build -tags portalembed`）。`pnpm build` 会把 `portal/dist` 同步到 `internal/gateway/portal/webdist` 供 `go:embed` 使用，运行时把 `portal.web_embedded` 设为 `true`。未带 tag 的二进制配置该项会启动失败，避免误以为前端已内嵌。
 - 灵矽云必须能访问管理后台里填写的“公网 MCP 地址”；局域网地址不可达。新建 MCP 使用 Streamable HTTP，地址应以 `/mcp` 结尾；`/sse` 是旧版 Legacy SSE 端点，仅已有服务继续使用。
-- Render 不得直接暴露在公网：它没有鉴权与运行时隔离。托管部署把它放在受信网络或反向代理之后，并在完成租户隔离前保持注册关闭。
+- Render 暴露到公网时，在 `render.yaml` 填上与 Gateway 相同的 `token`。这只挡住未持有秘密的控制接口调用，没有按租户隔离，也没有运行时沙箱。`/streams` 保持公开。完成租户隔离前保持注册关闭。
 - 浏览器麦克风要求 HTTPS 或 `localhost`。
 - 单进程、单 SQLite；一个数据库只对应一个 Gateway。
 - 备份时必须同时保留数据库、`artifacts/`、`portal-data/devices/` 与 `secret.key`（或 `GATEWAY_SECRET_KEY`）；四者缺一不可，步骤见[部署与备份](../../operations/deploy.md)。WAL 模式下数据库用 SQLite `.backup`，不能只拷贝主文件；备份不是原子快照，恢复后按 deploy.md 对账。

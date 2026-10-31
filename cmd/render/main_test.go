@@ -11,6 +11,8 @@ import (
 )
 
 func TestRunValidation(t *testing.T) {
+	t.Setenv("RENDER_PUBLIC_URL", "")
+	t.Setenv("RENDER_CONFIG", "")
 	for _, args := range [][]string{
 		{}, {"-no-such-flag"}, {"positional"}, {"-addr", "invalid-address", "-public-url", "http://localhost:8090"},
 		{"-addr", "127.0.0.1:0", "-public-url", "invalid-url"},

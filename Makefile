@@ -87,7 +87,7 @@ build-gateway-embed: portal-build ## 编译内嵌前端产物的 Gateway（单�
 run: ## 启动 Gateway（默认读取 gateway.yaml）
 	$(GO) run ./cmd/gateway $(ARGS)
 
-run-render: ## 启动 Render，例：make run-render ARGS="-addr :8090 -public-url http://192.168.1.20:8090"
+run-render: ## 启动 Render，例：make run-render ARGS="-config render.yaml"
 	$(GO) run ./cmd/render $(ARGS)
 
 portal-dev: ## 启动 Portal 前端开发服务器
