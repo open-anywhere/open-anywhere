@@ -10,7 +10,7 @@
 | 接入 | OTA 上报，WebSocket 连接灵矽云 | 相同 |
 | 激活与绑定 | 激活码绑定到智能体 | 相同；另可在 Web 页面完成 |
 | 音频 | 板载麦克风和扬声器，Opus | 浏览器的麦克风和播放器，由浏览器编解码 Opus，程序只转发 |
-| 设备端 MCP | 固件注册设备工具 | 程序上报两个仅作用于网页播放器的音量工具，用于验证链路 |
+| 设备端 MCP | 固件注册设备工具（含 `self.cast.*`） | 程序默认上报两个仅作用于网页播放器的音量工具；加 `-casting-url` 时另上报三个 `self.cast.*` 调试工具 |
 | 本地控制 | 由硬件自身决定 | Web 控制台和 HTTP / SSE / WebSocket 接口 |
 
 “与灵矽的连接”到“状态、断开与重连”几节描述的是设备协议层，对两种形态都成立，切换到真实硬件时设计目标是行为不变，具体以灵矽的设备协议文档为准。模拟硬件自带的 Web 控制台及其 HTTP / SSE 接口只用于调试和演示，不是系统之间的契约，也不属于真实硬件，接口说明见 [实现与使用](../../internal/voiceentry/README.md)，不写在本文。
@@ -23,7 +23,7 @@
 | 收发文字、主动播报和 Opus 音频，转发灵矽的识别与播报事件 | 声纹识别、ASR、TTS（都在灵矽云） |
 | 回应灵矽对设备端 MCP 的 `initialize`、`tools/list`、`tools/call` | 架构文档第 6 章的应用管理 MCP（由控制面提供） |
 | 模拟硬件另外提供本地 Web 控制台，供调试和演示 | 公网访问 |
-| 设备注册、断开与重连 | 投屏、Stage、DLNA 会话 |
+| 设备注册、断开与重连 | 生产投屏（真机固件负责）、Stage、DLNA 会话；模拟硬件只在 `-casting-url` 时提供调试用 `self.cast.*` |
 
 架构文档第 6 章的 MCP 是控制面提供给灵矽云的云端工具；本文的设备端 MCP 由现场语音入口提供，两者互不替代。
 
@@ -77,13 +77,13 @@ sequenceDiagram
 
 ### 投屏工具（`-casting-url`）
 
-模拟硬件可以额外上报三个 `self.cast.*` 工具，用来把云端应用投到现场的电视上。它**只连本机的 casting 服务，不连云端**：应用由控制面构建、启动并返回 `stream_url`，设备只负责找屏和投放。小智云聊 S3 MAX 固件是生产路径：工具名和话术相同，但 SSDP 发现与 DLNA 控制都在固件里，不需要本地 casting 服务，见 [小智云聊 S3 MAX 接入投屏](../operations/yunliao-s3-max-firmware-mcp.md)。模拟硬件开启方式：
+模拟硬件可以额外上报三个 `self.cast.*` 工具，用来把云端应用投到现场的电视上。它**只连本机的 casting 服务，不连云端**：应用由控制面构建、启动并返回 `stream_url`，设备只负责找屏和投放。工具描述明确 `url` 只用于投屏，不要把链接念给用户。小智云聊 S3 MAX 固件是生产路径：工具名和话术相同，但 SSDP 发现与 DLNA 控制都在固件里，不需要本地 casting 服务，见 [小智云聊 S3 MAX 接入投屏](../operations/yunliao-s3-max-firmware-mcp.md)。模拟硬件开启方式：
 
 ```bash
 go run ./cmd/voiceentry -serve -casting-url http://192.168.1.20:8091
 ```
 
-- 三个工具直接对应 casting 的 HTTP 接口：`self.cast.list_screens` → `GET /v1/targets`；`self.cast.cast(url, target_id)` → `POST /v1/projection-sessions`，固定 `mpegts / h264 / aac` 并自动选中支持该格式的 Endpoint；`self.cast.stop(session_id 可选)` → `DELETE /v1/projection-sessions/{id}`。
+- 三个工具直接对应 casting 的 HTTP 接口：`self.cast.list_screens` → `GET /v1/targets`；`self.cast.cast(url, target_id)` → `POST /v1/projection-sessions`，固定 `mpegts / h264 / aac` 并自动选中支持该格式的 Endpoint；`self.cast.stop(session_id 可选)` → `DELETE /v1/projection-sessions/{id}`。真机固件不经过这些 HTTP 接口，直接发 DLNA SOAP。
 - 不带任何身份头、token 或灵矽会话信息。casting 没有鉴权，只应部署在同一台可信的局域网机器上，不要暴露到公网。
 - `cast` 原样使用控制面返回的 `stream_url`，不拼接、不改写；`target_id` 来自 `list_screens`。
 - 失败翻译成可直接播报的中文：被占用（409 `target_busy`）、离线（409 `target_offline`）、格式不支持（422）、电视不响应（502）。`stop` 不传 `session_id` 时停止本进程最近一次投放的内容，会话已经不在了也视为成功。

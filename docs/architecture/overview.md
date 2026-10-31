@@ -19,7 +19,7 @@ Open Anywhere 让用户通过语音描述需求，由云端编码 Agent 生成�
 
 1. **MCP**：灵矽云与控制面之间。灵矽只看见 MCP Tool，不直接接触 AgentAPI 或 Render。应用管理 Tool 见[应用管理 MCP](interfaces/app-management-mcp.md)。
 2. **OpenAPI + launch.json + HTTP**：控制面、Render 与应用之间。应用只暴露 HTTP，不感知 MCP。产物结构、启动约定和构建提示见[应用包设计](interfaces/app-artifact.md)。
-3. **SSDP + DLNA/UPnP**：现场语音设备与电视之间。Render 提供媒体流地址，设备自己发现电视、自己把地址写进 `SetAVTransportURI` 并 `Play`；控制面不接触电视，见 [现场侧投屏](home-casting.md)。仓库里的 [Casting 服务](../operations/casting.md) 是同一行为的 Go 实现，只用于桌面调试与模拟硬件。
+3. **SSDP + DLNA/UPnP**：现场语音设备与电视之间。Render 提供媒体流地址，设备自己发现电视、自己把地址写进 `SetAVTransportURI` 并 `Play`；控制面不接触电视，见 [现场侧投屏](home-casting.md)。仓库里的 [Casting 服务](../operations/casting.md) 是同一行为的 Go 实现，只用于桌面调试、模拟硬件，以及控制面 `get-screens`/Portal 屏幕页的兼容视图；真机生产链路不依赖它。
 
 Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之上的独立 HTTP 面，不属于上述三条平面契约，见[多租户用户 Portal 设计](interfaces/portal.md)。
 
@@ -27,7 +27,7 @@ Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之�
 
 现场语音入口与灵矽云之间使用灵矽自己的设备协议（WebSocket），不是 Open Anywhere 定义的契约，见 [现场语音入口](voice-entry.md)。
 
-核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏是会话级通道，应用是通道里的内容；租户按 owner 隔离；现场只出站，云端不主动连接现场。** 当前切换应用会重建投屏会话，复用会话是后续目标。
+核心原则：**MCP 面稳定，应用能力动态；构建慢而异步，控制快而同步；投屏由现场设备发起，应用是屏幕上的内容；租户按 owner 隔离；现场只出站，云端不主动连接现场。** 控制面只把 `stream_url` 交给灵矽，不选择屏幕、不建立生产投屏会话；同一块屏重复投递会覆盖当前 URI，换屏时新屏接受后再停止旧屏。
 
 ## 2. 目标与非目标
 
@@ -38,11 +38,11 @@ Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之�
 - 构建是长任务，可以异步执行、按需查询状态和已用时间，不阻塞语音对话。
 - 同一设备与智能体可并行创建多个应用；每个应用在控制面绑定独立的 AgentAPI 构建会话，并可通过 `update-app` 在同一会话上修订产物（见 [multi-app-sessions.md](interfaces/multi-app-sessions.md)）。
 - 应用生成后可以在 Render 上稳定启动，并通过 OpenAPI 被控制面调用。
-- 应用画面通过 DLNA（MPEG-TS）投到屏幕上；当前切换应用会先停旧会话再建新会话，在会话内换源是后续目标。
+- 应用画面由现场设备通过 DLNA（MPEG-TS）投到屏幕上；同一块屏重复投递会覆盖 URI，换屏时新屏接受流后停止旧屏。
 - Agent 产出的应用必须经过模板和检查脚本的硬约束，保证“Render 能跑、控制面能调”。
 - 控制面重启后从本地 SQLite 恢复应用和构建状态，未完成的构建继续监听，产物下载地址保持有效。持久化模型、恢复顺序与表结构见[控制面数据库设计](database.md)。
 - **多租户**：管理员引导账号配置平台；普通用户自助注册后自动获得一台虚拟 Linx 智能体；用户之间在应用、屏幕、语音与下游服务上完全隔离。
-- **服务绑定**：每个用户的 Render 端点按 owner 解析，租户之间不复用下游服务。Render 由平台托管；屏幕发现与 DLNA 控制在设备固件里完成，现场不部署服务、不开放端口。
+- **服务绑定**：每个用户的 Render 端点按 owner 解析，租户之间不复用下游服务。Render 由平台托管；屏幕发现与 DLNA 控制在设备固件里完成，现场不部署服务、不开放端口。绑定里的 Casting 地址只服务控制面屏幕视图、旧版路径与调试，不在生产投屏链路里。
 
 ### 2.2 非目标
 
@@ -76,7 +76,7 @@ Portal 的浏览器接口（`/api/portal/*`、`/api/admin/*`）是控制面之�
 | 激活码 | 设备在 OTA 上报后获得的 6 位码，用来把设备绑定到智能体 |
 | Portal | 与 Gateway 同进程的浏览器控制台，分用户端 `/portal` 与管理端 `/admin` |
 | 虚拟智能体 | 注册时为每个用户自动创建的 Linx 智能体，对应一台 `kind=virtual` 的虚拟设备 |
-| 服务绑定 | 用户选择的 Render 端点：`managed` 使用平台默认服务，`custom` 指向自建的公网地址，要求使用方自带鉴权 |
+| 服务绑定 | 用户选择的 Render 端点（以及仅用于兼容屏幕视图/调试的 Casting 地址）：`managed` 使用平台默认服务，`custom` 指向自建的公网地址，要求使用方自带鉴权 |
 | 设备端投屏 | 固件里的 `self.cast.*` 工具：后台 SSDP 发现电视，投屏时直接发 DLNA SOAP |
 | 平台设置 | 管理员维护的 AgentAPI、Linx、默认 Render 与注册开关，保存在 `platform_settings` |
 | OpenAPI | 应用能力的 HTTP 契约，控制面据此校验和转发请求 |
@@ -105,10 +105,10 @@ flowchart LR
 | --- | --- | --- |
 | 现场语音入口 | 保持与灵矽云的设备会话、收发语音与文字、回应设备端 MCP、设备注册与重连；通过 `self.cast.*` 自己发现局域网里的屏幕并把云端流地址投上去；真实形态是灵矽硬件（固件内置 SSDP + DLNA），当前也可由模拟硬件代替（模拟硬件另提供本地 Web 控制台） | 声纹、ASR、TTS，构建与运行应用 |
 | 灵矽云 | ASR、TTS、意图识别、选择并调用 MCP Tool | 构建应用、运行应用、发现屏幕、投屏 |
-| 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验；Portal 注册/登录、管理 API、平台设置、按 owner 解析 Render | 写代码、运行应用、理解应用的业务语义、查看用户屏幕内容、触碰投屏服务 |
+| 控制面 | MCP Server、工具路由、任务编排、应用注册表、OpenAPI 校验与 HTTP 转发、artifact 下载与二次校验；Portal 注册/登录、管理 API、平台设置、按 owner 解析 Render | 写代码、运行应用、理解应用的业务语义、查看用户屏幕内容、选择或控制电视（`get-screens` 只读控制面 Casting 的兼容视图） |
 | AgentAPI | 运行编码 Agent、在沙箱中写代码和自测、持久化 artifact | 承载应用运行时、直接面对灵矽 |
 | Render | 解压 artifact、按 `launch.json` 启动、健康检查、进程保活、接收控制面 HTTP 转发、Stage 与媒体流 | 理解应用业务、决定应用能力、主动连接屏幕 |
-| Go Casting（非生产） | 桌面调试与模拟硬件用的局域网投屏服务：发现设备、维护 Target 与 Endpoint、按协议控制播放与会话生命周期 | 出现在真机生产链路、生成内容、理解应用业务 |
+| Go Casting（非生产） | 桌面调试、模拟硬件与控制面兼容屏幕视图用的局域网投屏服务：发现设备、维护 Target 与 Endpoint、按协议控制播放与会话生命周期 | 出现在真机生产链路、生成内容、理解应用业务 |
 | 应用 | 提供 UI 和 `/api/*` HTTP 接口、维护自己的状态 | 感知 MCP、直接面对灵矽 |
 | Portal | 注册、登录、角色与归属；用户查看智能体/应用/屏幕/服务/活动；管理员管理用户、智能体、全局应用与平台设置 | 代替灵矽做语音意图、直接操作屏幕内容 |
 
@@ -116,7 +116,7 @@ flowchart LR
 
 投屏在设备固件里完成：后台任务每 60 秒发一次 SSDP 搜索（`MediaRenderer:1`），解析 `description.xml` 并缓存电视名、UDN 与 AVTransport 的 `controlURL`；`self.cast.cast` 直接向电视发 `SetAVTransportURI` + `Play`。设备不监听端口，链路纯出站；SSDP 是链路本地组播，因此设备与电视必须同广播域。媒体流由 Render 提供，地址必须对电视可达，屏幕自己向云端拉流。现场与云端的边界、家庭与公司的部署差异见 [现场侧投屏](home-casting.md)。
 
-当前只支持 DLNA 的 MPEG-TS 实时流，AirPlay 是后续扩展。设备只维持最近一次投屏会话：同一块屏重复 `cast` 直接覆盖 URI，换到另一块屏时在新屏接受流后停止旧屏。工具、错误提示与日志见[固件投屏工具](../operations/yunliao-s3-max-firmware-mcp.md)，Go 实现（仅调试）见 [Casting 服务](../operations/casting.md)。
+当前只支持 DLNA 的 MPEG-TS 实时流，AirPlay 是后续扩展。设备只记住最近一次投放目标：同一块屏重复 `cast` 直接覆盖 URI，换到另一块屏时在新屏接受流后停止旧屏。工具、错误提示与日志见[固件投屏工具](../operations/yunliao-s3-max-firmware-mcp.md)，Go 实现（仅调试/兼容视图）见 [Casting 服务](../operations/casting.md)。
 
 ## 6. 应用管理 MCP
 

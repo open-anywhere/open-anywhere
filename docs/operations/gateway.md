@@ -1,11 +1,11 @@
 # 启动 Gateway
 
-Gateway 是控制面：对灵矽提供 MCP 工具，向 AgentAPI 提交构建任务，把应用操作转发给 Render，并协调 Casting 建立投屏会话。语音入口、云端的编码 Agent 和屏幕之间发生的事情都经过这里。
+Gateway 是控制面：对灵矽提供 MCP 工具，向 AgentAPI 提交构建任务，把应用操作转发给 Render，并把 `stream_url` 返回给灵矽。投屏由现场设备自己完成，控制面不建立投屏会话；语音入口、云端的编码 Agent 和 Render 之间发生的事情经过这里。
 
 ## 前置条件
 
 - Go，版本以 `go.mod` 为准
-- 已经启动 Casting 和 Render，见[启动 Casting](casting.md)与[启动 Render](render.md)
+- 已经启动 Render，见[启动 Render](render.md)。只有模拟硬件、桌面调试或控制面 `get-screens` 兼容视图需要 Casting，见[启动 Casting](casting.md)
 - AgentAPI 的构建智能体与云端环境。`agent_id`、`environment_id` 在发布阶段创建一次，创建方法见[控制面与 AgentAPI 接口设计](../architecture/interfaces/gateway-agentapi.md)
 - 如果启用用户门户，还需要 Node.js、pnpm，以及灵矽云可访问的公网地址
 
@@ -45,7 +45,7 @@ artifacts:
 
 - Gateway 的内置默认值是 `:8090`，与 Render 的示例端口相同。两者必须分开：`gateway.example.yaml` 已把 `addr` 设为 `:8091`，`render.base_url` 指向 Render 的 `:8090`。用 `0.0.0.0:8091` 可让局域网访问，只在本机测试用 `127.0.0.1:8091`。
 - `artifacts.base_url` 是 Render 下载应用包时使用的地址，必须指向 Gateway 自己（示例 `:8091`），并且从 Render 主机可以访问。写 `127.0.0.1` 会导致 Render 拉不到产物。
-- `render.base_url` 和 `casting.base_url` 从 Gateway 进程访问，必须填渲染主机和投屏服务实际监听的地址。
+- `render.base_url` 从 Gateway 进程访问，必须填 Render 主机实际监听的地址。`casting.base_url` 只用于 `get-screens`/Portal 屏幕页的兼容视图与旧版路径；独立模式启动参数仍要求它，真机生产投屏不访问它。
 
 ## 启动
 
@@ -106,9 +106,9 @@ curl http://192.168.1.20:8091/healthz
 
 灵矽云需要能直接访问这个地址。局域网地址只适合本机联调，正式接入需要把 Gateway 暴露到公网，并在灵矽平台上把 MCP 地址配置为 `https://<域名>/mcp`。如果灵矽云经隧道或反向代理访问 Gateway（请求从本机回环地址进来），MCP 入口只放行配置过的 Host，否则返回 `403 invalid Host header`。门户模式下管理后台里的公网 MCP 地址会自动放行，通常不用再配；独立模式或代理改写了 Host 时，把 `public_host` 设为对外使用的 `host:port`，修改后需要重启。直接暴露在公网网卡上时可以留空。
 
-## 屏幕映射（可选）
+## 屏幕映射（可选，兼容视图）
 
-Casting 发现到的电视可以直接作为屏幕使用。如果想给屏幕起一个稳定的业务标识，配置 `screens` 指向一个 JSON 文件：
+控制面 `get-screens` 的兼容视图可以读取 Casting 发现到的电视。如果想给屏幕起一个稳定的业务标识，配置 `screens` 指向一个 JSON 文件：
 
 ```json
 [
@@ -116,7 +116,7 @@ Casting 发现到的电视可以直接作为屏幕使用。如果想给屏幕起
 ]
 ```
 
-`target_id` 来自 Casting 的 `/v1/targets`。配置后 `get-screens` 会返回这些别名，灵矽用 `screen_id` 指定启动屏幕；留空时只使用投屏服务的发现结果。
+`target_id` 来自 Casting 的 `/v1/targets`。配置后 `get-screens` 会返回这些别名；它们只用于控制面屏幕视图，不参与 `start-app`。现场投屏用设备端 `self.cast.list_screens`，屏幕名以电视实际广播的 `friendlyName` 为准。
 
 ## 启用用户门户（可选）
 
@@ -158,20 +158,20 @@ portal:
 
 ## 日志与停止
 
-服务日志直接输出到终端。按 `Ctrl-C` 会关闭 MCP 会话并在 5 秒内排空 HTTP 连接，不会停止 Render 上的应用实例和 Casting 会话。
+服务日志直接输出到终端。按 `Ctrl-C` 会关闭 MCP 会话并在 5 秒内排空 HTTP 连接，不会停止 Render 上的应用实例、电视上的投屏或兼容 Casting 会话。
 
 ## 常见问题
 
 | 现象 | 排查方向 |
 | --- | --- |
-| 启动报 `-xxx is required` | 独立模式下 AgentAPI、Render、Casting 配置必填；门户模式下只有管理员账号必填 |
+| 启动报 `-xxx is required` | 独立模式下 AgentAPI、Render、Casting 配置必填（Casting 只用于兼容屏幕视图）；门户模式下只有管理员账号必填 |
 | 启动报凭证无法解密 | 数据库里的密钥与当前主密钥不匹配，恢复原来的 `portal-data/secret.key` 或 `GATEWAY_SECRET_KEY` |
 | Render 启动应用失败 | 用 Render 主机访问 `artifacts.base_url` 下的下载地址，确认 Render 能拉到产物 |
 | MCP 返回 401 | 请求没有带 `Bearer` token，或 token 与当前 MCP Token 不一致（门户模式在 `/admin/settings` 里重新生成会让旧 token 立即失效） |
-| 应用能构建但投屏失败 | 确认 `casting.base_url` 可达、电视在线，并检查 Render 的 `-public-url` 是否是电视能访问的地址 |
+| 应用能构建但投屏失败 | 确认现场设备与电视同广播域、设备端 `self.cast.list_screens` 能看到电视，并检查 Render 的 `-public-url` 是否是电视能访问的地址；`casting.base_url` 只影响 `get-screens` 兼容视图 |
 | 门户登录后无法保存平台配置 | 检查主密钥是否可用；查看服务日志中的解密错误 |
 
-- **端口冲突**：Gateway、Render、Casting 必须使用不同端口，启动前确认 `addr`、`render.base_url`、`casting.base_url` 没有互相占用。
+- **端口冲突**：Gateway、Render 以及（如果运行）Casting 必须使用不同端口，启动前确认 `addr`、`render.base_url`、`casting.base_url` 没有互相占用。
 - **灵矽调用不了 MCP**：`/mcp` 必须是灵矽云能访问的 HTTPS 地址；`/sse` 只用于已经创建好的旧 MCP，新接入不要用。
 - **构建一直停在 `building`**：检查 `agentapi.base_url`、API Key、`agent_id`、`environment_id` 是否正确，以及 AgentAPI 侧智能体版本是否可用。
 - **更换部署地址后应用下载失败**：修改 `artifacts.base_url` 后重启 Gateway 即可，下载地址会按新配置重写，不需要重建应用。

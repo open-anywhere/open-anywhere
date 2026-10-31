@@ -10,8 +10,8 @@ Portal 与 Gateway 同进程、同端口、同 SQLite：
 
 - 管理员与普通用户使用同一个登录入口，按角色进入 `/admin` 或 `/portal`。
 - 注册时自动创建一台虚拟智能体；之后用户可以再添加虚拟设备（各自创建一个智能体），也可以用激活码把硬件设备绑定到已有智能体，最多 10 台。应用归属仍是 `(MAC, AgentID)`，与灵矽 MCP 侧的判断一致。
-- Render/Casting 绑定按用户解析：平台默认服务（managed）或用户自己的公网服务（custom）。控制面已不再在 `start-app` 中调用 Casting，投屏由现场语音设备完成，这里保留的 Casting 绑定只服务于调试路径。
-- 本期不处理局域网穿透、连接器与计费；Render 假定已作为公网服务暴露，Casting 由同一局域网的语音设备直接访问。
+- Render/Casting 绑定按用户解析：平台默认服务（managed）或用户自己的公网服务（custom）。控制面已不再在 `start-app` 中调用 Casting，生产投屏由现场语音设备完成，这里保留的 Casting 绑定只服务于控制面屏幕视图、旧版路径与调试。
+- 本期不处理局域网穿透、连接器与计费；Render 假定已作为公网服务暴露。生产投屏由现场设备固件直接完成，不需要 Casting；Casting 地址只用于控制面屏幕视图与调试。
 
 数据库从单账号 schema v2 平滑升级到 v3：已有账号保留并默认为 `role=user`；配置的引导账号由 `EnsureAdmin` 提升为管理员，已有设备、应用与凭据保持不变。
 
@@ -141,7 +141,7 @@ sequenceDiagram
 
 ### 4.3 屏幕
 
-- 屏幕来自当前用户绑定的 Casting 服务；`managed` 时使用平台默认 Casting，并可把部署配置的 `screens` catalog 作为屏幕别名；`custom` 时直接使用 Casting 发现的 target ID。
+- 屏幕来自当前用户绑定的 Casting 服务，这是控制面的兼容视图；`managed` 时使用平台默认 Casting，并可把部署配置的 `screens` catalog 作为屏幕别名；`custom` 时直接使用 Casting 发现的 target ID。生产投屏以现场设备的 `self.cast.list_screens` 为准，这里可能看不到真机已经投上的屏幕。
 - 返回 `screen_id`、`name`、`online`、`status`、`current_app`（可选），不返回 `target_id`、`active_session_id`、`projection_session_id`、`endpoint_id` 或 `instance_id`。
 - `status` 取 `free`、`showing_app`、`external`、`unavailable`；只有自己的应用会填 `current_app`，其他租户占用显示为 `external`。
 - “停止投屏”只停止当前用户自己的应用并释放屏幕；没有自有应用时返回 `404 SCREEN_APP_NOT_FOUND`。
@@ -153,10 +153,10 @@ sequenceDiagram
 
 | 模式 | 行为 |
 | --- | --- |
-| `managed`（默认） | 使用管理员配置的平台默认 Render/Casting；读取绑定本身返回 `managed.available`，真正访问屏幕或启动应用时若平台未配置则返回 `SERVICE_NOT_CONFIGURED` |
-| `custom` | 用户填写两个公网地址：Render URL 与 Casting URL；可分别设置访问令牌（当前只透传，服务端不校验） |
+| `managed`（默认） | 使用管理员配置的平台默认 Render/Casting；`start-app` 只用 Render，Casting 只用于屏幕兼容视图/调试。读取绑定本身返回 `managed.available`，真正访问屏幕或启动应用时若平台未配置则返回 `SERVICE_NOT_CONFIGURED` |
+| `custom` | 用户填写两个公网地址：Render URL 与 Casting URL；可分别设置访问令牌（当前只透传，服务端不校验）。Casting 地址只用于兼容视图/调试 |
 
-投屏的产品路径不经过控制面：`start-app` 只返回 `stream_url`，屏幕由现场设备的 `self.cast.*` 工具发现和投放，见 [现场侧投屏](../home-casting.md)。因此 Casting 绑定与 `custom` 地址只服务于调试与过渡路径，需要时仍由用户自己在网络层收口。
+投屏的产品路径不经过控制面：`start-app` 只返回 `stream_url`，屏幕由现场设备的 `self.cast.*` 工具发现和投放，见 [现场侧投屏](../home-casting.md)。因此 Casting 绑定与 `custom` 地址只服务于控制面屏幕视图、旧版路径与调试，需要时仍由用户自己在网络层收口。
 
 约束与行为：
 
@@ -230,7 +230,7 @@ sequenceDiagram
 | `GET` | `/api/portal/services` | 当前服务绑定；秘密只返回 `configured` |
 | `PUT` | `/api/portal/services` | 保存 managed/custom、地址与可选 token |
 | `POST` | `/api/portal/services/test` | 测试当前或待保存绑定；返回 Render/Casting 状态与屏幕数 |
-| `GET` | `/api/portal/screens` | 当前用户 Casting 的屏幕 |
+| `GET` | `/api/portal/screens` | 当前用户 Casting 兼容视图的屏幕（生产投屏以现场设备为准） |
 | `POST` | `/api/portal/screens/{screen_id}/stop` | 停止自己的应用并释放屏幕 |
 | `GET` | `/api/portal/apps` | 当前用户应用 |
 | `GET` | `/api/portal/apps/{id}` | 应用详情与操作 |

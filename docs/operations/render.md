@@ -91,7 +91,7 @@ curl http://localhost:39101/api/reset \
   -H 'Content-Type: application/json' -d '{}'
 ```
 
-响应中的 `source` 可以直接交给 Casting。也可以用 `ffplay '<source.url>'` 查看媒体流。停止时调用 `DELETE /v1/apps/<instance_id>`；不要用 `app_id` 替代路径里的运行实例 ID。
+响应中的 `stream_url`/`source` 可以交给现场设备的 `self.cast.cast`；调试时也可以交给 Go Casting 服务。也可以用 `ffplay '<source.url>'` 查看媒体流。停止时调用 `DELETE /v1/apps/<instance_id>`；不要用 `app_id` 替代路径里的运行实例 ID。
 
 ## E2E 检查
 
@@ -135,7 +135,7 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 - **音频启动失败**：重新执行设备列表命令确认编号；音频格式与输入必须成对配置。
 - **电视没有声音**：确认系统输出已切到虚拟音频设备，并检查实例响应中的 `source.audio_codec` 是否为 `aac`。
 - **电视无法播放**：先用 `ffprobe <source.url>` 检查媒体流，再确认电视支持 MPEG-TS、H.264 与 AAC。
-- **地址只有 Render 机器能访到**：`-public-url` 决定 `stream_url` 的主机名，电视拿到后自己去拉，不经过 Gateway。写成 `127.0.0.1`、内网网卡或 Tailscale 地址时，现场的电视就拉不到（会话会立刻 stopped，日志里看不到电视的请求）。要写电视所在网络能路由到的地址：同网段用局域网 IP，跨网段用 frp/反代暴露的地址（如 `http://<公网>:6005`）。`-render-url` 是 Gateway 找 Render 用的，和这个不是一回事。
+- **地址只有 Render 机器能访到**：`-public-url` 决定 `stream_url` 的主机名，电视拿到后自己去拉，不经过 Gateway。写成 `127.0.0.1`、内网网卡或 Tailscale 地址时，现场的电视就拉不到；设备端 `self.cast.cast` 可能仍返回成功（SOAP 200），但屏幕是黑的，日志里也看不到电视的请求。要写电视所在网络能路由到的地址：同网段用局域网 IP，跨网段用 frp/反代暴露的地址（如 `http://<公网>:6005`）。`-render-url` 是 Gateway 找 Render 用的，和这个不是一回事。
 
 ## 实现边界
 

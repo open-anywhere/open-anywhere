@@ -1,14 +1,14 @@
 # 应用管理 MCP
 
-> 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)；多租户 Portal 的角色、注册与服务绑定见 [user-portal.md](portal.md)。
+> 多应用并发构建、`app_id`↔session 绑定与 `update-app` 见 [multi-app-sessions.md](multi-app-sessions.md)；多租户 Portal 的角色、注册与服务绑定见 [多租户 Portal](portal.md)。
 
 ## 1. 范围
 
-本文定义灵矽云（Linx）与控制面（gateway）之间的应用管理 MCP 契约：灵矽通过控制面发现屏幕，并管理应用从构建到运行的生命周期。
+本文定义灵矽云（Linx）与控制面（gateway）之间的应用管理 MCP 契约：灵矽通过控制面管理应用从构建到运行的生命周期，并由现场设备发现屏幕、完成投屏；控制面的 `get-screens` 只提供兼容视图。
 
 - 灵矽只看见 MCP Tool，不直接接触 AgentAPI、Render 或投屏服务。
 - 应用运行后的能力调用仍走 OpenAPI / HTTP 契约，不在本文展开。
-- 控制面与 Render 的接口见[控制面与 Render 接口设计](gateway-render.md)，应用产物见[应用包设计](app-artifact.md)，系统整体架构与投屏服务的 Target/Endpoint 见[architecture.md](../overview.md)。
+- 控制面与 Render 的接口见[控制面与 Render 接口设计](gateway-render.md)，应用产物见[应用包设计](app-artifact.md)，系统整体架构与现场投屏见[架构总览](../overview.md)与[现场侧投屏](../home-casting.md)。
 
 ### 1.1 角色与调用方向
 
@@ -18,7 +18,7 @@
 | 控制面（gateway） | MCP Server、工具路由、应用注册表、构建与启动编排、按 owner 解析 Render | 灵矽 |
 | AgentAPI | 异步构建应用 artifact | 控制面 |
 | Render | 启动应用、提供应用 HTTP 与媒体流 | 控制面 |
-| 设备端 MCP + Casting | 发现现场屏幕，把 `stream_url` 投到电视上 | 灵矽（设备侧），不经控制面 |
+| 设备端 MCP（固件 SSDP + DLNA） | 发现现场屏幕，把 `stream_url` 投到电视上 | 灵矽（设备侧），不经控制面 |
 | Portal | 管理员引导账号、用户注册、为每个用户创建虚拟智能体并绑定服务 | 浏览器 |
 
 灵矽是本文所述控制面 MCP 的唯一调用方。`app_id` 在 `create-app` 时分配，`get-app-status`、`start-app` 和 `stop-app` 都用它定位应用。AgentAPI 的 session id、Render 的 `instance_id` 和应用端口只在控制面内部使用，不通过 MCP 返回；唯一离开控制面的地址是 `start-app` 返回的 `stream_url`。
@@ -70,7 +70,7 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 | Tool | 作用 | 输入 | 输出 |
 | --- | --- | --- | --- |
-| `get-screens` | 查询控制面 Casting 发现到的屏幕（仅供参考，不参与启动流程） | 无 | `screens` 数组，见第 5 章 |
+| `get-screens` | 查询控制面 Casting 的屏幕兼容视图（仅供参考；现场屏幕以设备 `self.cast.list_screens` 为准） | 无 | `screens` 数组，见第 5 章 |
 | `create-app` | 创建应用并启动 AgentAPI 构建 | `prompt`、可选 `player_names` | `app_id`, `state: building` |
 | `update-app` | 在已有应用的绑定会话上提交修订并重建产物 | `app_id`, `prompt` | `app_id`, `state: building` |
 | `get-app-status` | 查询应用状态 | `app_id` | 随状态变化，见第 4 章 |
@@ -326,9 +326,9 @@ Portal 启用时，MCP 请求必须携带三个头：
 {}
 ```
 
-控制面返回调用者自己的服务绑定范围内的屏幕，数据来自控制面这一侧绑定的 Casting。屏幕按 owner 作用域：`managed` 用户使用平台默认 Casting（部署配置的 `screens` catalog 可作为别名），`custom` 用户使用自己的 Casting；另一个用户即使使用相同的 `screen_id`，也是另一块屏幕。
+控制面返回调用者自己的服务绑定范围内的屏幕，数据来自控制面这一侧绑定的 Casting。这是控制面的兼容视图，不是设备实际看到的屏幕；真机投屏以设备端 `self.cast.list_screens` 为准。屏幕按 owner 作用域：`managed` 用户使用平台默认 Casting（部署配置的 `screens` catalog 可作为别名），`custom` 用户使用自己的 Casting；另一个用户即使使用相同的 `screen_id`，也是另一块屏幕。
 
-**这个工具只提供信息，不再驱动启动流程。** 投屏发生在现场：应用由 `start-app` 在云端跑起来并返回 `stream_url`，由设备端的投屏工具找屏幕、建立会话。所以 `get-screens` 的结果不保证与现场能看到的电视一致，灵矽不应据此决定是否启动应用，也不应把它当作 `start-app` 的前置条件。
+**这个工具只提供信息，不再驱动启动流程。** 投屏发生在现场：应用由 `start-app` 在云端跑起来并返回 `stream_url`，由设备端的投屏工具找屏幕、直接发 DLNA 指令。所以 `get-screens` 的结果不保证与现场能看到的电视一致，灵矽不应据此决定是否启动应用，也不应把它当作 `start-app` 的前置条件。
 
 ```json
 {
@@ -366,7 +366,7 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 - `status` 描述这块屏幕在控制面 Casting 视图里的现状，取值：
   - `free`：控制面没有在这块屏幕上看到活动会话。
-  - `showing_app`：控制面能归属到自己应用的投屏会话正在展示，`current_app` 给出是哪一个。
+  - `showing_app`：控制面能归属到自己应用的旧版/调试投屏会话正在展示，`current_app` 给出是哪一个；真机由设备直接投屏时，这里可能看不到。
   - `external`：屏幕被无法归属的投屏会话占用（含共享 Casting 上其他租户的会话）。Casting 只知道自己管理的会话，电视被其他来源直接投屏时可能无法检测。
   - `unavailable`：控制面探测不到这块屏幕（离线、不可达或没有支持的协议）。
 - `current_app` 只在 `showing_app` 时非 `null`，且只可能是当前 owner 自己的应用。
@@ -398,7 +398,7 @@ Portal 启用时，MCP 请求必须携带三个头：
 }
 ```
 
-它不接触任何投屏服务，不接受 `screen_id`，也没有 `force`。`running` 的应用可以不绑定屏幕；`stream_url`（mpegts，H.264/AAC）是设备端投屏的输入，由设备自己的投屏工具投到现场发现的电视上。拿不到 `stream_url` 时不算启动成功：Render 已就绪但流地址尚未生成，返回 `STREAM_START_FAILED`，应用进入 `error`。
+它不建立投屏会话，不接受 `screen_id`，也没有 `force`。`running` 的应用可以不绑定屏幕；`stream_url`（mpegts，H.264/AAC）是设备端投屏的输入，由设备自己的投屏工具投到现场发现的电视上。拿不到 `stream_url` 时不算启动成功：Render 已就绪但流地址尚未生成，返回 `STREAM_START_FAILED`，应用进入 `error`。
 
 应用端口、Render 的 `instance_id` 只在控制面内部使用，不通过 MCP 返回给灵矽；应用访问由控制面按 `app_id` 路由，灵矽不需要知道端口。`stream_url` 是唯一需要离开控制面的地址。
 
@@ -406,7 +406,7 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 启动流程有时限，由控制面配置超时。连接过程中请求等待最终结果，不返回 `running + connecting`；超时或失败时进入 `error`，工具返回 `isError: true`。同一应用的并发启动请求不得重复创建进程。输入校验不通过时拒绝操作，不改变已有应用状态。
 
-失败时进入 `error`，具体错误码见第 9 章。控制面只跟踪应用进程和媒体流；运行中一旦确认进程退出或流不可用，状态进入 `error`。屏幕上的画面不在控制面视野内：`stop-app` 释放云端运行时，现场屏幕上的画面需要用设备端的投屏工具另外停止。
+失败时进入 `error`，具体错误码见第 9 章。控制面只跟踪应用进程和媒体流；运行中一旦确认进程退出或流不可用，状态进入 `error`。屏幕上的画面不在控制面视野内：`stop-app` 释放云端运行时；新路径不会写投屏会话，现场屏幕上的画面需要用设备端的投屏工具另外停止。若旧记录仍有 `ProjectionSessionID`，`stop-app` 会先做兼容清理。
 
 启动请求超时或响应丢失时，结果未知。控制面会在本次工具调用内连续核对最多三次：查到本应用资源就清理，确认没有资源就结束；三次都无法完成核对时返回 `CLEANUP_PENDING`，稍后重试即可，不要重新 `create-app`。控制面仍会在后台继续核对，恢复可达且确认没有资源后立即结束，不再按固定时间等待；应用保持在可重试的 `error`。Render 不可达时保留待清理标记，直到能完成核对。
 
@@ -494,14 +494,14 @@ sequenceDiagram
   C-->>L: state=running, stream_url
 
   L->>D: self.cast.list_screens()
-  D-->>L: targets（target_id / name）
+  D-->>L: 电视名与状态（工具返回文本）
   L->>D: self.cast.cast(stream_url, target_id)
-  D->>T: 建立投屏会话，电视拉流播放
-  D-->>L: session_id
+  D->>T: SOAP SetAVTransportURI + Play（电视拉流）
+  D-->>L: 已投到电视
   L-->>U: TTS：游戏已投到电视
 ```
 
-控制面完全不知道画面投到了哪台电视；`start-app` 返回 `stream_url` 之后，投屏由设备端的工具完成，详见[设备端投屏](../../operations/casting.md)。
+控制面完全不知道画面投到了哪台电视；`start-app` 返回 `stream_url` 之后，投屏由设备端的工具完成，详见[固件投屏工具](../../operations/yunliao-s3-max-firmware-mcp.md)。控制面的 `get-screens` 只是兼容视图，不作为现场屏幕的权威列表。
 
 构建完成后，控制面通过已有的 MCP SSE 连接发送通知：
 

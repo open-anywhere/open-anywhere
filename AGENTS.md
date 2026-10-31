@@ -32,7 +32,7 @@ Everything in this table can be verified by reading the named files; none of it 
 | Asynchronous build through AgentAPI | `internal/gateway/build/builder.go` | `builder_test.go`, `builder_extra_test.go`; build duration is recorded (`builder.go:513`); a failed update keeps the previous artifact |
 | Artifact and OpenAPI validation | `internal/gateway/artifact/validate.go`, `internal/gateway/openapi/spec.go` | package tests; Render validates the artifact again before running |
 | Render runtime and stage capture | `cmd/render`, `internal/render` | `e2e/render_test.go` drives real Node, Chromium and FFmpeg |
-| DLNA casting | `cmd/casting`, `internal/casting/service.go`, `internal/casting/dlna` | `service_test.go`, `http_test.go`, `casting_adversarial_test.go` |
+| DLNA casting (Go debug/compat; production casting lives in the device firmware) | `cmd/casting`, `internal/casting/service.go`, `internal/casting/dlna` | `service_test.go`, `http_test.go`, `casting_adversarial_test.go` |
 | Voice entry | `cmd/voiceentry` | `docs/architecture/voice-entry.md`; the live gateway E2E is opt-in (`e2e/gateway_live_test.go`) |
 | Multi-tenant portal with identity isolation | `internal/gateway/portal/` (`auth.go`, `admin.go`, `http.go`) | Go tests in the package; the React frontend (`portal/src`) has no unit tests |
 | Multi-app sessions | `internal/gateway/service/service.go` | package tests; see the switching limitation below |
@@ -84,7 +84,7 @@ Roadmap, not shipped: mobile join and controller, template instantiation and the
 
 Roadmap items must not be described as implemented anywhere in this repository.
 
-Multi-app sessions are implemented, but switching apps stops the old app and creates a new Casting session (`internal/gateway/service/service.go`; `docs/architecture/overview.md` records the gap). The invariant that switching must not re-establish casting is not met; do not describe switching as seamless or zero-downtime.
+Multi-app sessions are implemented, but switching apps stops the old app and requires the device to cast the new stream (`self.cast.cast`); the control plane does not create a Casting session. The invariant that switching must not re-establish casting is not met; do not describe switching as seamless or zero-downtime.
 
 ## Evidence Rules for Commercial Claims
 
@@ -95,12 +95,11 @@ Multi-app sessions are implemented, but switching apps stops the old app and cre
 - Commercial price claims must use section 5.3 of the business plan. Annual cards are 10 months of quota released over 12 months at roughly 8.8–9.6 months of the matching monthly price; do not describe them as monthly quota × 12 or as unlimited generation.
 - A validation claim must name the sample size, participant composition, and date. A team test is never "market validation".
 
-## Known Documentation and Implementation Drift
+## Documentation Sync and Known Limits
 
-These are known as of 2026-10-26. Treat code and this file as current; the listed documents are being corrected.
+These are known as of 2026-10-31.
 
-- `docs/product/research.md` still marks multi-app sessions as unimplemented. Multi-app sessions are implemented, with the switching limitation described above.
-- `internal/gateway/portal/agent-prompt.txt` predates `update-app` and multi-app support, while `docs/agent-system-prompts/open-anywhere-host.txt` already documents them. Regenerate the embedded prompt from the docs copy and add a test that the two match before shipping.
+- `internal/gateway/portal/agent-prompt.txt` is a byte-for-byte copy of `docs/agent-system-prompts/open-anywhere-host.txt`; edit the docs copy first and copy it over. `TestEmbeddedPromptMatchesDocs` enforces the match.
 - `speaker_probe` is disabled by default and the compatibility probe returns `verified:false`. Do not claim voiceprint or speaker identity is shipped.
 
 ## Architecture
@@ -111,13 +110,13 @@ Display, input, and compute are deliberately isolated. Each plane can be replace
 | --- | --- | --- | --- |
 | Input | On-site voice entry (Linx hardware or the local simulator) and Linx cloud | Device session and audio relay; ASR, TTS, intent recognition; calling MCP tools; casting the cloud stream to a screen over the local network | Build or run apps |
 | Compute | Control plane, AgentAPI, Render | MCP routing and orchestration, app registry, asynchronous builds in a sandbox, app runtime, stage capture | Understand the app's business semantics; speak the device protocol |
-| Display | Casting service and the target TV, projector, or other display | Device discovery, DLNA session lifecycle, playing a media stream | Know which app produced the stream |
+| Display | Device firmware (SSDP + DLNA) and the target TV, projector, or other display; the Go Casting service is a debug/compat implementation | Device discovery, DLNA control, playing a media stream; the control plane only exposes a compat screen view | Know which app produced the stream |
 
 The planes meet through three narrow contracts, plus a browser-facing Portal API that sits on the control plane.
 
 1. **MCP** between Linx and the control plane. Linx sees a stable set of tools and never talks to AgentAPI or Render directly.
 2. **OpenAPI + `launch.json` + HTTP** between the control plane, Render, and apps. Apps expose HTTP and know nothing about MCP; the control plane validates and forwards requests.
-3. **Casting HTTP API** between the on-site voice device and the LAN casting service. The control plane starts the app and returns a `stream_url`; the device hands that address to Casting, which owns protocol control and playback. The control plane never calls Casting.
+3. **SSDP + DLNA/UPnP** between the on-site voice device and the TV. The control plane starts the app and returns a `stream_url`; the device discovers the TV and sends `SetAVTransportURI` / `Play`. The Go Casting HTTP API is debug/compat only; the control plane does not call it for `start-app`.
 4. **Portal HTTP API** between the browser and the control plane. Session cookie, same-origin JSON writes; user routes under `/api/portal/*`, admin routes under `/api/admin/*`.
 
 Invariants to preserve when changing code:
@@ -125,16 +124,16 @@ Invariants to preserve when changing code:
 - The MCP surface stays stable while app capabilities remain dynamic. Do not register a tool per app or per OpenAPI operation.
 - Builds are slow and asynchronous; control is fast and synchronous. Never make a voice turn wait for a build.
 - **Cloud-initiated casting is frozen.** The control-plane path that started an app on a `screen_id` remains only as a debug harness with no product surface; the product path is device-initiated: `start-app` returns a `stream_url` and the device's `self.cast.*` tools cast it. Do not add `screen_id` or `force` back to the MCP tools.
-- Casting is a session-level channel and an app is content inside it. The current implementation stops the old session and creates a new one when switching apps; switching the source inside one session is the target, not current behavior. Do not document session reuse as if it already works.
+- Casting is device-initiated: the device discovers the TV and sends `SetAVTransportURI` / `Play`. Re-casting to the same screen overwrites the URI; switching screens stops the old screen after the new one accepts the stream. The control plane does not hold a production projection session; `get-screens` is only a compat view.
 - The screen is a display, not a runtime. Keep app logic out of the display plane and display logic out of apps.
 - Generated artifacts are untrusted input. Validate structure, launch contract, and OpenAPI before running; Render validates again.
-- State belongs to its owner: control-plane state in SQLite, app state in the app, casting state in the session.
+- State belongs to its owner: control-plane state in SQLite, app state in the app, casting state in the device firmware and the TV; the control plane keeps only a compat Casting view.
 
 When working in this repository:
 
 - Keep the control plane a router and orchestrator, not an app runtime.
-- Put generation and build rules in the app-builder skill and AgentAPI, runtime behavior in Render, protocol and session behavior in Casting, and device behavior in the voice entry.
-- Read the design documents before changing a contract: [`docs/architecture/overview.md`](docs/architecture/overview.md), [`docs/architecture/interfaces/app-artifact.md`](docs/architecture/interfaces/app-artifact.md), [`docs/operations/casting.md`](docs/operations/casting.md), [`docs/operations/render.md`](docs/operations/render.md), and [`docs/architecture/voice-entry.md`](docs/architecture/voice-entry.md).
+- Put generation and build rules in the app-builder skill and AgentAPI, runtime behavior in Render, protocol behavior in the firmware casting module (and the Go Casting debug service), and device behavior in the voice entry.
+- Read the design documents before changing a contract: [`docs/architecture/overview.md`](docs/architecture/overview.md), [`docs/architecture/interfaces/app-artifact.md`](docs/architecture/interfaces/app-artifact.md), [`docs/architecture/home-casting.md`](docs/architecture/home-casting.md), [`docs/operations/yunliao-s3-max-firmware-mcp.md`](docs/operations/yunliao-s3-max-firmware-mcp.md), [`docs/operations/casting.md`](docs/operations/casting.md), [`docs/operations/render.md`](docs/operations/render.md), and [`docs/architecture/voice-entry.md`](docs/architecture/voice-entry.md).
 
 ## Scope of These Instructions
 

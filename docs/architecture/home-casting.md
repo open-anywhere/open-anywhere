@@ -27,15 +27,15 @@ sequenceDiagram
   L->>D: tools/call self.cast.list_screens
   D-->>L: 客厅电视（空闲）（来自设备缓存）
   L->>D: tools/call self.cast.cast(url, target_id)
-  D->>T: SSDP 发现（后台周期）+ SOAP SetAVTransportURI + Play
+  D->>T: SOAP SetAVTransportURI + Play（SSDP 发现已在后台完成）
   T->>R: 拉流（电视直连云端）
 ```
 
 关键分工：
 
-- **控制面只负责应用。** `start-app` 启动 Render 并返回 `stream_url`，它不接触任何投屏设备，也不接受 `screen_id`。
+- **控制面只负责应用。** `start-app` 启动 Render 并返回 `stream_url`，它不接触任何投屏设备，也不接受 `screen_id`，不建立投屏会话。控制面的 `get-screens` 只是一份兼容视图，现场屏幕以 `self.cast.list_screens` 为准。
 - **设备负责屏幕。** 固件注册 `self.cast.list_screens` / `self.cast.cast` / `self.cast.stop`，自己发现电视、自己发 SOAP。
-- **没有中间服务。** 旧方案里的「现场 Casting 进程 + `CONFIG_CASTING_URL`」已从生产链路移除；仓库里的 Go Casting 只用于桌面调试和模拟硬件。
+- **没有中间服务。** 旧方案里的「现场 Casting 进程 + `CONFIG_CASTING_URL`」已从生产链路移除；仓库里的 Go Casting 只用于桌面调试、模拟硬件和控制面兼容屏幕视图。
 
 ## 2. 触发：设备 MCP 随语音连接自带
 
@@ -116,6 +116,6 @@ SSDP 是链路本地组播，只有与电视同广播域的设备才看得见。
 
 ## 8. 待定
 
-1. **多屏与多设备。** 现在一台设备驱动一块屏的会话；一台设备服务多块屏、多设备共用一块屏的占用协调都还没有定义。
+1. **多屏与多设备。** 现在一台设备只记住最近一次投放目标；一台设备服务多块屏、多设备共用一块屏的占用协调都还没有定义。
 2. **构建完成的时机。** 灵犀必须先拿到 `stream_url` 才能调用 `self.cast.cast`；构建是异步的，谁来等、怎么播报进度，取决于灵犀侧的工具编排。
-3. **投屏会话内切换应用。** 当前换应用要重新 `cast`：同一块屏会直接覆盖 URI，电视短暂黑屏；换到另一块屏时，设备等新屏接受流之后再停止旧屏。
+3. **切换应用。** 当前换应用要重新 `cast`：同一块屏会直接覆盖 URI，电视短暂黑屏；换到另一块屏时，设备等新屏接受流之后再停止旧屏。

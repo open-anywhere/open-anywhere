@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | 控制面 Gateway | `cmd/gateway`、`internal/gateway` | 对灵矽暴露 MCP，编排构建，转发应用请求 | 邓军辉 |
 | 应用运行时 Render | `cmd/render`、`internal/render` | 启动应用、采集画面、输出媒体流 | 张之阳 |
-| 投屏服务 Casting（非生产） | `cmd/casting`、`internal/casting` | 发现现场设备、维护投屏会话；仅供模拟硬件与桌面调试使用，真机生产链路由固件内置 SSDP + DLNA 完成 | 张之阳 |
+| 投屏服务 Casting（非生产） | `cmd/casting`、`internal/casting` | 发现现场设备、维护投屏会话；真机生产链路不依赖它，仅供模拟硬件、桌面调试与控制面 `get-screens` 兼容视图使用 | 张之阳 |
 | 现场语音入口 | `cmd/voiceentry`、`internal/voiceentry` | 以设备身份接入灵矽，收发语音 | 韩鲁鹏 |
 | Portal | `portal/`、`internal/gateway/portal` | 多租户控制台与自助开通 | 邓军辉 |
 | AgentAPI 适配 | `pkg/agentapi`、`internal/gateway/build` | 把构建抽象成会话，不暴露沙箱细节 | 邓军辉 |
@@ -35,7 +35,7 @@
 
 - MCP 工具面固定，不随应用数量增长；新应用只改变 `get-app-operations` 的返回值。
 - 一次语音回合不等待构建；构建是异步任务。
-- 跨 owner 的资源不可见：Portal HTTP API 统一返回 404；MCP 工具返回 `APP_NOT_FOUND` / `TARGET_BUSY`，不泄露资源是否存在。
+- 跨 owner 的资源不可见：Portal HTTP API 统一返回 404；MCP 工具返回 `APP_NOT_FOUND` / `APP_BUILDING`，不泄露资源是否存在。
 
 **内部子模块**
 
@@ -43,14 +43,14 @@
 | --- | --- | --- |
 | `httpapi` | OpenAPI 操作执行与转发 | 操作调用与响应映射 |
 | `mcp` | MCP Server 与工具路由 | Tool 定义与调用 |
-| `service` | 编排、归属校验、屏幕占用 | 面向 MCP 的用例方法 |
+| `service` | 编排、归属校验、运行实例与兼容屏幕视图 | 面向 MCP 的用例方法 |
 | `build` | 构建会话生命周期 | `Create` / `Update` / `Status` |
 | `artifact` | 产物下载与二次校验 | artifact 读取 |
 | `openapi` | 解析、校验 OpenAPI，转发 HTTP | `SendRequest` |
 | `app` | 应用注册表 | 应用 CRUD |
-| `screen` | 屏幕发现与占用 | 屏幕状态迁移 |
+| `screen` | 控制面兼容的屏幕视图与旧版占用（生产投屏由设备完成） | 屏幕状态迁移 |
 | `render` | Render HTTP 客户端 | 启动/停止/状态 |
-| `endpoints` | 按 owner 解析 Render | `Resolve` / `ValidateOwner` |
+| `endpoints` | 按 owner 解析 Render 与兼容 Casting 端点 | `Resolve` / `ValidateOwner` |
 | `portal` | 注册、登录、角色、开通 | `/api/*` handler |
 | `settings` | 平台设置与密钥 | 读写设置、加解密 |
 | `secret` | 主密钥加载与 AES-256-GCM 密文封装 | 加解密、AAD 绑定 |
@@ -83,10 +83,10 @@
 
 **不变量**
 
-- 会话是会话级通道，应用是通道里的内容。**当前切换应用会先停止旧会话再创建新会话**；在会话内更换 source 是后续目标，不要把它当成已实现能力。
+- 会话是会话级通道，应用是通道里的内容。**调用方切换内容时通常先停止旧会话再创建新会话**；本服务没有会话内更换 source 的接口。真机固件不走这里，它直接发 `SetAVTransportURI` 覆盖 URI。
 - 只负责协议控制与生命周期，不负责媒体内容。
 - 设备失联时释放占用，避免目标被永久占住。
-- 部署在客户现场、与目标屏同广播域；只由现场的语音设备经局域网 HTTP 调用，不监听公网。
+- 部署在调试现场、与目标屏同广播域；只由模拟硬件或桌面调试客户端经局域网 HTTP 调用，真机固件不访问它。不监听公网。
 
 ## 5. 现场语音入口
 
@@ -123,7 +123,7 @@
 | 现场语音入口（模拟硬件） | Casting | HTTP（同一局域网，仅调试） |
 | Portal | 控制面 | 同进程 HTTP API |
 
-禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。控制面不调用 Casting：它只负责启动应用并返回 `stream_url`，投屏控制由现场的语音设备发起（真机固件自己发 SOAP），媒体流由电视直接拉取。
+禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。控制面不在 `start-app` / `stop-app` 中调用 Casting：它只负责启动应用并返回 `stream_url`，投屏控制由现场的语音设备发起（真机固件自己发 SOAP），媒体流由电视直接拉取。`get-screens`、Portal 屏幕页和旧版单租户启动路径仍会读取控制面 Casting，作为兼容视图，不属于生产投屏链路。
 
 ## 8. 全局不变量
 
@@ -131,10 +131,10 @@
 
 1. **MCP 面稳定，应用能力动态。** 不为每个应用注册工具。
 2. **构建慢而异步，控制快而同步。** 语音回合永不等待构建。
-3. **投屏是会话，应用是内容。** 会话承载应用；当前换应用会重建会话，复用会话是后续目标。
+3. **投屏由现场设备发起，应用是屏幕上的内容。** 同一块屏重复 `cast` 覆盖 URI；换屏时新屏接受流后停止旧屏。控制面新路径不持有投屏会话。
 4. **屏幕是显示器，不是运行时。** 应用逻辑不进显示面。
 5. **产物是不可信输入。** 结构、启动契约、OpenAPI 都要校验，Render 再校验一次。
-6. **状态属于它的所有者。** 控制面状态在 SQLite，应用状态在应用，投屏状态在会话。
+6. **状态属于它的所有者。** 控制面状态在 SQLite，应用状态在应用，投屏状态在设备固件与电视；控制面只保留兼容的 Casting 视图。
 
 ---
 
