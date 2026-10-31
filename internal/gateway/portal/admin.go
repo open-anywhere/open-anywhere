@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/hostiface"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/linx"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/settings"
@@ -579,7 +580,7 @@ func (a *API) adminGetSettings(w http.ResponseWriter, r *http.Request, _ store.P
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"settings": masked})
+	writeJSON(w, http.StatusOK, a.settingsResponse(masked))
 }
 
 func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor store.PortalUser) {
@@ -592,13 +593,23 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 		writeError(w, err)
 		return
 	}
-	if patch.Services != nil && a.apps != nil {
-		snapshot, err := a.settings.Snapshot(r.Context())
-		if err != nil {
-			writeError(w, err)
-			return
+	snapshot, err := a.settings.Snapshot(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if patch.Services != nil {
+		if patch.Services.CastingInterface != nil {
+			selection := hostiface.Normalize(*patch.Services.CastingInterface)
+			if selection != hostiface.Off && selection != hostiface.Auto {
+				if _, _, err := hostiface.Resolve(selection); err != nil {
+					writeError(w, apiError(http.StatusBadRequest, "INVALID_CASTING_INTERFACE",
+						"投屏网卡无效或不存在："+selection))
+					return
+				}
+			}
 		}
-		if settings.ServicesChanged(snapshot, patch.Services) {
+		if a.apps != nil && settings.ServicesChanged(snapshot, patch.Services) {
 			active, err := a.managedActiveResources(r.Context())
 			if err != nil {
 				writeError(w, err)
@@ -611,6 +622,7 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 			}
 		}
 	}
+	castingChanged := settings.CastingInterfaceChanged(snapshot, patch.Services)
 	if err := a.settings.Update(r.Context(), patch, actor.ID); err != nil {
 		switch {
 		case errors.Is(err, settings.ErrInvalidURL):
@@ -622,13 +634,21 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 		}
 		return
 	}
+	if castingChanged {
+		if err := a.applyCastingInterface(r.Context()); err != nil {
+			a.logf("admin: apply casting interface: %v", err)
+			writeError(w, apiError(http.StatusInternalServerError, "CASTING_APPLY_FAILED",
+				"投屏网卡已保存，但应用到虚拟设备失败，请稍后重试或重启 Gateway"))
+			return
+		}
+	}
 	masked, err := a.settings.Masked(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	a.logf("admin: %s updated platform settings", actor.ID)
-	response := map[string]any{"settings": masked}
+	response := a.settingsResponse(masked)
 	// A rotated token must also reach the MCP instance Linx already holds,
 	// otherwise Linx keeps calling the gateway with the old one.
 	if patch.Linx != nil && patch.Linx.RotateMCPToken && a.provision != nil {
@@ -641,6 +661,69 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// settingsResponse adds the live casting NIC list and resolved status beside
+// the stored platform settings.
+func (a *API) settingsResponse(masked settings.Masked) map[string]any {
+	interfaces, err := hostiface.List()
+	if err != nil {
+		a.logf("admin: list casting interfaces: %v", err)
+		interfaces = nil
+	}
+	_, status, err := hostiface.Resolve(masked.Services.CastingInterface)
+	if err != nil {
+		status = hostiface.Status{
+			Selection: hostiface.Normalize(masked.Services.CastingInterface),
+			Message:   err.Error(),
+		}
+	}
+	return map[string]any{
+		"settings":            masked,
+		"casting":             status,
+		"casting_interfaces":  interfaces,
+	}
+}
+
+// applyCastingInterface resolves the saved NIC and restarts virtual devices so
+// Linx picks up the updated self.cast.* tool list.
+func (a *API) applyCastingInterface(ctx context.Context) error {
+	if a.voice == nil || a.settings == nil {
+		return nil
+	}
+	snapshot, err := a.settings.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	ip, status, err := hostiface.Resolve(snapshot.Services.CastingInterface)
+	if err != nil {
+		return err
+	}
+	a.voice.SetOnSiteCasting(ip)
+	if status.Active {
+		a.logf("casting: using %s (%s)", status.Name, status.IPv4)
+	} else {
+		a.logf("casting: disabled (%s)", status.Message)
+	}
+	if a.provision == nil || a.db == nil {
+		return nil
+	}
+	devices, err := a.db.PortalDevicesByState(ctx, store.PortalDeviceRegistered)
+	if err != nil {
+		return err
+	}
+	for _, device := range devices {
+		if device.Kind != store.PortalDeviceVirtual {
+			continue
+		}
+		if state := a.voice.Status(device.ID); state.State == "offline" {
+			continue
+		}
+		if err := a.voice.Restart(a.provision.withCredential(device)); err != nil {
+			a.logf("admin: restart voice %s after casting change: %v", device.ID, err)
+		}
+	}
+	return nil
 }
 
 func (a *API) adminTestSettings(w http.ResponseWriter, r *http.Request, actor store.PortalUser) {

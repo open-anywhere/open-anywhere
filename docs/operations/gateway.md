@@ -42,7 +42,7 @@ artifacts:
 
 - Gateway 的内置默认值是 `:8090`，与 Render 的示例端口相同。两者必须分开：`gateway.example.yaml` 已把 `addr` 设为 `:8091`，`render.base_url` 指向 Render 的 `:8090`。用 `0.0.0.0:8091` 可让局域网访问，只在本机测试用 `127.0.0.1:8091`。
 - `artifacts.base_url` 是 Render 下载应用包时使用的地址，必须指向 Gateway 自己（示例 `:8091`），并且从 Render 主机可以访问。写 `127.0.0.1` 会导致 Render 拉不到产物。
-- `render.base_url` 从 Gateway 进程访问，必须填 Render 主机实际监听的地址。Gateway 不再有 Casting 地址；虚拟设备要投屏时用 `-casting-interface` 指定发 SSDP 的网卡。
+- `render.base_url` 从 Gateway 进程访问，必须填 Render 主机实际监听的地址。Gateway 不再有独立 Casting 服务；虚拟设备投屏用 `casting.interface`（或门户 `/admin/settings`）选择发 SSDP 的网卡：`auto` / `off` / 网卡名。
 
 ## 启动
 

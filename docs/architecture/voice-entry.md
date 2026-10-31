@@ -10,7 +10,7 @@
 | 接入 | OTA 上报，WebSocket 连接灵矽云 | 相同 |
 | 激活与绑定 | 激活码绑定到智能体 | 相同；另可在 Web 页面完成 |
 | 音频 | 板载麦克风和扬声器，Opus | 浏览器的麦克风和播放器，由浏览器编解码 Opus，程序只转发 |
-| 设备端 MCP | 固件注册设备工具（含 `self.cast.*`） | 程序默认上报两个仅作用于网页播放器的音量工具；Gateway 配置 `-casting-interface` 时另上报三个 `self.cast.*` 工具 |
+| 设备端 MCP | 固件注册设备工具（含 `self.cast.*`） | 程序默认上报两个仅作用于网页播放器的音量工具；投屏网卡为 `auto` 且本机恰好一张局域网网卡、或管理员指定网卡时，另上报三个 `self.cast.*` 工具 |
 | 本地控制 | 由硬件自身决定 | Portal 的对话页（文字与音频）和 HTTP / SSE / WebSocket 接口 |
 
 “与灵矽的连接”到“状态、断开与重连”几节描述的是设备协议层，对两种形态都成立，切换到真实硬件时设计目标是行为不变，具体以灵矽的设备协议文档为准。模拟硬件的运行时由 Gateway 进程托管，Portal 的对话页是唯一的界面；它的 HTTP / SSE 接口只用于 Portal，不属于真实硬件。实现说明见 [实现与使用](../../internal/voiceentry/README.md)。
@@ -23,7 +23,7 @@
 | 收发文字、主动播报和 Opus 音频，转发灵矽的识别与播报事件 | 声纹识别、ASR、TTS（都在灵矽云） |
 | 回应灵矽对设备端 MCP 的 `initialize`、`tools/list`、`tools/call` | 架构文档第 6 章的应用管理 MCP（由控制面提供） |
 | 在 Portal 对话页里收发文字与语音 | 公网直接访问语音接口 |
-| 设备注册、断开与重连 | 生产投屏（真机固件负责）、Stage、DLNA 会话；模拟硬件只在 Gateway 配置 `-casting-interface` 时提供 `self.cast.*` |
+| 设备注册、断开与重连 | 生产投屏（真机固件负责）、Stage、DLNA 会话；模拟硬件的 `self.cast.*` 由投屏网卡设置控制（见下） |
 
 架构文档第 6 章的 MCP 是控制面提供给灵矽云的云端工具；本文的设备端 MCP 由现场语音入口提供，两者互不替代。
 
@@ -75,12 +75,23 @@ sequenceDiagram
 - 调用未知工具时返回标准 JSON-RPC 错误（`-32601`）。
 - 云端自己完成的工具调用（例如查天气）不经过设备，现场语音入口只能看到最终的 `stt`、`tts`、`llm`，看不到调用过程。
 
-### 投屏工具（Gateway `-casting-interface`）
+### 投屏工具（虚拟设备网卡）
 
-虚拟设备可以额外上报三个 `self.cast.*` 工具，用来把云端应用投到现场的电视上。它**在设备所在局域网里直接做 SSDP 发现和 DLNA 控制，不连云端，也不依赖单独的 casting 服务**：应用由控制面构建、启动并返回 `stream_url`，设备只负责找屏和投放。工具描述明确 `url` 只用于投屏，不要把链接念给用户。小智云聊 S3 MAX 固件是生产路径：工具名和话术相同，逻辑都在固件里，见 [小智云聊 S3 MAX 接入投屏](../operations/yunliao-s3-max-firmware-mcp.md)。Gateway 启动时指定网卡即可为所有虚拟设备开启：
+虚拟设备可以额外上报三个 `self.cast.*` 工具，用来把云端应用投到现场的电视上。它**在设备所在局域网里直接做 SSDP 发现和 DLNA 控制，不连云端，也不依赖单独的 casting 服务**：应用由控制面构建、启动并返回 `stream_url`，设备只负责找屏和投放。工具描述明确 `url` 只用于投屏，不要把链接念给用户。小智云聊 S3 MAX 固件是生产路径：工具名和话术相同，逻辑都在固件里，见 [小智云聊 S3 MAX 接入投屏](../operations/yunliao-s3-max-firmware-mcp.md)。
 
-```bash
-go run ./cmd/gateway -config gateway.yaml -casting-interface en0
+网卡选择（所有虚拟设备共用）：
+
+| 值 | 行为 |
+| --- | --- |
+| `auto`（默认） | 本机恰好一张非回环 IPv4 网卡时启用；多网卡则保持关闭并打日志 |
+| `off` | 强制不注册 `self.cast.*` |
+| 网卡名 | 使用该网卡发 SSDP（如 `en0`、`Ethernet`、`WLAN`） |
+
+门户模式在 `/admin/settings` 的「虚拟设备投屏网卡」里选择；保存后会重连已在线的虚拟设备，灵矽才会看到更新后的工具列表。`gateway.yaml` 的 `casting.interface`、`-casting-interface`、`CASTING_INTERFACE` 只在空库首次启动时写入管理设置。
+
+```yaml
+casting:
+  interface: auto
 ```
 
 - `list_screens` 发 M-SEARCH 收集应答；`cast(url, target_id)` 先发 `SetAVTransportURI`（含 DIDL-Lite 元数据）再发 `Play`；`stop(session_id 可选)` 发 `Stop`，UPnP 701 视为已经停止。固定使用 `mpegts / h264 / aac`。

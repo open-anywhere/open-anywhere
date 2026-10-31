@@ -153,7 +153,7 @@ export function AdminOverviewPage() {
                   },
                   {
                     title: '默认屏幕服务',
-                    description: '填写平台托管用户使用的 Render 与 Casting 地址。',
+                    description: '填写平台托管用户使用的 Render 地址；虚拟设备投屏网卡可在设置里选择。',
                     status: data.platform.services ? 'finish' : 'wait',
                   },
                   {

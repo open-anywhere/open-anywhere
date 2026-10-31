@@ -34,9 +34,11 @@ type Config struct {
 	EnvironmentID string
 
 	RenderURL string
-	// CastingInterface enables on-site casting for virtual devices: their
-	// self.cast.* tools send SSDP and DLNA from this interface. Empty keeps
-	// the tools off.
+	// CastingInterface selects the host NIC virtual devices use for SSDP/DLNA.
+	// Empty/"auto" enables casting when exactly one LAN IPv4 NIC is present;
+	// "off" disables it; any other value must name an interface. In portal
+	// mode this only seeds platform settings once — afterwards the admin page
+	// is the source of truth.
 	CastingInterface string
 
 	ArtifactsDir    string
@@ -211,7 +213,7 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	flags.IntVar(&cfg.AgentVersion, "agent-version", envInt(getenv, "AGENTAPI_AGENT_VERSION", base.AgentVersion), "build agent version (0 = latest)")
 	flags.StringVar(&cfg.EnvironmentID, "environment-id", env(getenv, "AGENTAPI_ENVIRONMENT_ID", base.EnvironmentID), "build environment ID")
 	flags.StringVar(&cfg.RenderURL, "render-url", env(getenv, "RENDER_BASE_URL", base.RenderURL), "Render base URL")
-	flags.StringVar(&cfg.CastingInterface, "casting-interface", env(getenv, "CASTING_INTERFACE", base.CastingInterface), "interface virtual devices use to discover and control screens (empty disables self.cast.*)")
+	flags.StringVar(&cfg.CastingInterface, "casting-interface", env(getenv, "CASTING_INTERFACE", base.CastingInterface), "casting NIC for virtual devices: auto (default), off, or an interface name")
 	flags.StringVar(&cfg.ArtifactsDir, "artifacts-dir", env(getenv, "ARTIFACTS_DIR", base.ArtifactsDir), "artifact storage directory")
 	flags.StringVar(&cfg.ArtifactBaseURL, "artifact-base-url", env(getenv, "ARTIFACT_BASE_URL", base.ArtifactBaseURL), "public base URL Render uses to download artifacts")
 	flags.StringVar(&cfg.DBPath, "db", env(getenv, "GATEWAY_DB", base.DBPath), "SQLite database file")

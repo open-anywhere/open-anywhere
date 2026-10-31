@@ -24,6 +24,7 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/build"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/config"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/endpoints"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/hostiface"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/mcp"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/netguard"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/portal"
@@ -217,7 +218,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 	mux.HandleFunc("GET /healthz", healthHandler(database))
 
 	if cfg.PortalEnabled {
-		castingIP, err := optionalInterfaceIPv4(cfg.CastingInterface)
+		castingIP, err := resolvePortalCastingIP(ctx, platform)
 		if err != nil {
 			return fmt.Errorf("casting-interface: %w", err)
 		}
@@ -295,6 +296,7 @@ func seedPlatformSettings(ctx context.Context, provider *settings.Provider, cfg 
 		{Key: settings.KeyLinxOTAURL, Value: cfg.LinxOTAURL},
 		{Key: settings.KeyLinxAPIKey, Value: cfg.LinxAPIKey},
 		{Key: settings.KeyDefaultRenderURL, Value: cfg.RenderURL},
+		{Key: settings.KeyCastingInterface, Value: hostiface.Normalize(cfg.CastingInterface)},
 		// Agent template and MCP address are managed in the admin page; these
 		// legacy gateway.yaml values only seed a database that has none yet.
 		{Key: settings.KeyLinxPublicMCPURL, Value: cfg.LinxPublicMCPURL},
@@ -395,28 +397,28 @@ func mcpTokenSource(cfg config.Config, platform *settings.Provider) func(context
 	return func(context.Context) (string, error) { return cfg.MCPToken, nil }
 }
 
-// optionalInterfaceIPv4 resolves the interface virtual devices use for on-site
-// casting. An empty name disables casting instead of guessing an address.
-func optionalInterfaceIPv4(name string) (net.IP, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, nil
-	}
-	nic, err := net.InterfaceByName(name)
-	if err != nil {
-		return nil, err
-	}
-	addresses, err := nic.Addrs()
-	if err != nil {
-		return nil, err
-	}
-	for _, address := range addresses {
-		if network, ok := address.(*net.IPNet); ok {
-			if ip := network.IP.To4(); ip != nil {
-				return ip, nil
-			}
+// resolvePortalCastingIP picks the SSDP bind address for virtual devices from
+// platform settings (seeded once from flag / env / yaml). "auto" only enables
+// casting when exactly one LAN NIC is present.
+func resolvePortalCastingIP(ctx context.Context, platform *settings.Provider) (net.IP, error) {
+	selection := hostiface.Auto
+	if platform != nil {
+		snapshot, err := platform.Snapshot(ctx)
+		if err != nil {
+			return nil, err
 		}
+		selection = snapshot.Services.CastingInterface
 	}
-	return nil, fmt.Errorf("interface %s has no IPv4 address", name)
+	ip, status, err := hostiface.Resolve(selection)
+	if err != nil {
+		return nil, err
+	}
+	if status.Active {
+		log.Printf("casting: using %s (%s)", status.Name, status.IPv4)
+	} else if status.Message != "" {
+		log.Printf("casting: %s", status.Message)
+	}
+	return ip, nil
 }
 
 // awaitShutdown waits for cancellation or a serve failure and drains cleanly.

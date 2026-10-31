@@ -709,7 +709,7 @@ func TestAdminSettingsReadUpdateAndFailures(t *testing.T) {
 	var initial struct {
 		Settings struct {
 			Registration struct {
-				Open bool `json:"Open"`
+				Open bool `json:"open"`
 			} `json:"registration"`
 		} `json:"settings"`
 	}
@@ -736,16 +736,37 @@ func TestAdminSettingsReadUpdateAndFailures(t *testing.T) {
 
 	body := `{"agentapi":{"base_url":"https://agent.example.com","agent_id":"ag_1","environment_id":"env_1","api_key":{"value":"agent-secret"}},` +
 		`"linx":{"api_base":"https://linx.example.com","api_key":{"value":"linx-secret"}},` +
-		`"services":{"render_url":"https://render.example.com","casting_url":"https://casting.example.com"},` +
+		`"services":{"render_url":"https://render.example.com","casting_interface":"off"},` +
 		`"registration":{"open":true}}`
 	response, payload = env.do(t, http.MethodPut, "/api/admin/settings", body, map[string]string{"Origin": env.server.URL})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("update: %d %s", response.StatusCode, payload)
 	}
+	var castingView struct {
+		Casting struct {
+			Selection string `json:"selection"`
+			Active    bool   `json:"active"`
+		} `json:"casting"`
+		Interfaces []struct {
+			Name string `json:"name"`
+			IPv4 string `json:"ipv4"`
+		} `json:"casting_interfaces"`
+		Settings struct {
+			Services struct {
+				CastingInterface string `json:"casting_interface"`
+			} `json:"services"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(payload, &castingView); err != nil {
+		t.Fatalf("casting view %s: %v", payload, err)
+	}
+	if castingView.Settings.Services.CastingInterface != "off" || castingView.Casting.Selection != "off" || castingView.Casting.Active {
+		t.Fatalf("casting not applied: %+v body=%s", castingView, payload)
+	}
 	var masked struct {
 		Settings struct {
 			Registration struct {
-				Open bool `json:"Open"`
+				Open bool `json:"open"`
 			} `json:"registration"`
 			Ready struct {
 				AgentAPI bool `json:"agentapi"`
@@ -759,6 +780,11 @@ func TestAdminSettingsReadUpdateAndFailures(t *testing.T) {
 	}
 	if !masked.Settings.Registration.Open || !masked.Settings.Ready.AgentAPI || !masked.Settings.Ready.Linx || !masked.Settings.Ready.Services {
 		t.Fatalf("masked=%+v body=%s", masked, payload)
+	}
+	response, payload = env.do(t, http.MethodPut, "/api/admin/settings",
+		`{"services":{"casting_interface":"missing-nic-xyz"}}`, map[string]string{"Origin": env.server.URL})
+	if response.StatusCode != http.StatusBadRequest || errorCode(t, payload) != "INVALID_CASTING_INTERFACE" {
+		t.Fatalf("missing nic: %d %s", response.StatusCode, payload)
 	}
 	response, payload = env.do(t, http.MethodGet, "/api/admin/settings", "", nil)
 	if response.StatusCode != http.StatusOK {

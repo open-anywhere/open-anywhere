@@ -236,6 +236,7 @@ export function makePlatformSettings(overrides: Partial<PlatformSettings> = {}):
     services: {
       render_url: 'https://render.example.com',
       render_token: { configured: false },
+      casting_interface: 'auto',
     },
     registration: { open: false },
     ready: { agentapi: true, linx: true, mcp: true, services: true },

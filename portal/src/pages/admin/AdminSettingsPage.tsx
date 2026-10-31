@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Select,
   Space,
   Spin,
   Switch,
@@ -50,6 +51,7 @@ interface SettingsFormValues {
   render_url?: string
   render_token?: string
   clear_render_token?: boolean
+  casting_interface?: string
   registration_open?: boolean
 }
 
@@ -154,6 +156,10 @@ function toPatch(values: SettingsFormValues, baseline: PlatformSettings): Platfo
     services.render_token = renderToken
     servicesChanged = true
   }
+  if (trimmed(values.casting_interface) !== baseline.services.casting_interface) {
+    services.casting_interface = trimmed(values.casting_interface) || 'auto'
+    servicesChanged = true
+  }
   if (servicesChanged) patch.services = services
 
   if (Boolean(values.registration_open) !== baseline.registration.open) {
@@ -195,6 +201,8 @@ export function AdminSettingsPage() {
   const { message } = AntApp.useApp()
   const settings = useQuery(adminSettingsQueryOptions)
   const settingsData = settings.data?.settings
+  const castingStatus = settings.data?.casting
+  const castingInterfaces = settings.data?.casting_interfaces ?? []
 
   useEffect(() => {
     if (!settingsData) return
@@ -219,6 +227,7 @@ export function AdminSettingsPage() {
       render_url: settingsData.services.render_url,
       render_token: '',
       clear_render_token: false,
+      casting_interface: settingsData.services.casting_interface || 'auto',
       registration_open: settingsData.registration.open,
     })
   }, [settingsData, form])
@@ -620,6 +629,64 @@ export function AdminSettingsPage() {
                       <Form.Item name="clear_render_token" valuePropName="checked">
                         <Checkbox>清除已保存的 Render Token</Checkbox>
                       </Form.Item>
+                    ) : null}
+                  </section>
+                  <section className="surface settings-section">
+                    <div className="section-header">
+                      <div>
+                        <h2>虚拟设备投屏网卡</h2>
+                        <p>
+                          嵌入的语音入口在本机发 SSDP / DLNA。单网卡可自动启用；多网卡请指定与电视同网段的那一张。保存后会重连已在线的虚拟设备。
+                        </p>
+                      </div>
+                      {castingStatus?.active ? (
+                        <Tag color="green">已启用</Tag>
+                      ) : (
+                        <Tag>未启用</Tag>
+                      )}
+                    </div>
+                    <Form.Item
+                      label="投屏网卡"
+                      name="casting_interface"
+                      extra="真机固件不受此项影响，仍使用设备自己的 self.cast.*。"
+                    >
+                      <Select
+                        options={(() => {
+                          const options = [
+                            {
+                              value: 'auto',
+                              label: '自动（仅检测到一张局域网网卡时启用）',
+                            },
+                            { value: 'off', label: '关闭（不注册 self.cast.*）' },
+                            ...castingInterfaces.map((item) => ({
+                              value: item.name,
+                              label: `${item.name}（${item.ipv4}）`,
+                            })),
+                          ]
+                          const current = settingsData.services.casting_interface
+                          if (
+                            current &&
+                            current !== 'auto' &&
+                            current !== 'off' &&
+                            !options.some((item) => item.value === current)
+                          ) {
+                            options.push({
+                              value: current,
+                              label: `${current}（当前不可用）`,
+                            })
+                          }
+                          return options
+                        })()}
+                      />
+                    </Form.Item>
+                    {castingStatus?.active ? (
+                      <Alert
+                        type="success"
+                        showIcon
+                        message={`当前使用 ${castingStatus.name}（${castingStatus.ipv4}）`}
+                      />
+                    ) : castingStatus?.message ? (
+                      <Alert type="info" showIcon message={castingStatus.message} />
                     ) : null}
                   </section>
                   </>

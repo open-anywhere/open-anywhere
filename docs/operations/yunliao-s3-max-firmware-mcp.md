@@ -110,5 +110,5 @@ python scripts/build.py yunliao-s3 --name yunliao-s3 --language zh-CN
 
 ## 与模拟硬件的关系
 
-- `internal/voiceentry/casting`（Gateway 的 `-casting-interface` 开关）在进程内直接发 SSDP 与 DLNA，不再有独立的 Casting 服务。
+- `internal/voiceentry/casting`（Gateway / 门户的投屏网卡设置，`auto` / `off` / 网卡名）在进程内直接发 SSDP 与 DLNA，不再有独立的 Casting 服务。
 - 固件与模拟硬件共用同一套 DLNA 行为：固件在 ESP32 上实现，模拟硬件在 `internal/casting/dlna` 里实现；两者都不经过控制面。

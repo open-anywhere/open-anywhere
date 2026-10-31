@@ -246,6 +246,9 @@ func TestServicesChanged(t *testing.T) {
 		{name: "clear an absent token", patch: &ServicesPatch{
 			RenderToken: &SecretValue{Clear: true},
 		}, want: false},
+		{name: "casting nic alone does not count", patch: &ServicesPatch{
+			CastingInterface: ptr("off"),
+		}, want: false},
 	}
 	withoutRenderToken := current
 	withoutRenderToken.Services.RenderToken = ""
@@ -259,6 +262,41 @@ func TestServicesChanged(t *testing.T) {
 				t.Fatalf("ServicesChanged() = %v, want %v", got, testCase.want)
 			}
 		})
+	}
+}
+
+func TestCastingInterfaceSetting(t *testing.T) {
+	provider, _ := newProvider(t)
+	ctx := context.Background()
+	snapshot, err := provider.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Services.CastingInterface != "auto" {
+		t.Fatalf("default casting = %q", snapshot.Services.CastingInterface)
+	}
+	if CastingInterfaceChanged(snapshot, &ServicesPatch{CastingInterface: ptr("auto")}) {
+		t.Fatal("same auto reported as changed")
+	}
+	if !CastingInterfaceChanged(snapshot, &ServicesPatch{CastingInterface: ptr("off")}) {
+		t.Fatal("off should count as changed")
+	}
+	if err := provider.Update(ctx, Patch{Services: &ServicesPatch{CastingInterface: ptr(" Ethernet ")}}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = provider.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Services.CastingInterface != "Ethernet" {
+		t.Fatalf("stored casting = %q", snapshot.Services.CastingInterface)
+	}
+	masked, err := provider.Masked(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if masked.Services.CastingInterface != "Ethernet" {
+		t.Fatalf("masked casting = %q", masked.Services.CastingInterface)
 	}
 }
 

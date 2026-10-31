@@ -12,10 +12,11 @@
 
 在 Portal 的设备页创建并注册一台虚拟设备，Gateway 会为它启动运行时；打开「对话」页即可说话或打字。连接状态、重连与断开都在同一个页面。
 
-投屏工具默认关闭。需要让虚拟设备发现局域网电视时，启动 Gateway 时指定网卡：
+投屏网卡默认 `auto`：本机恰好一张局域网 IPv4 网卡时自动注册 `self.cast.*`，多网卡则保持关闭。也可在门户 `/admin/settings` 里选网卡，或写入配置：
 
-```bash
-go run ./cmd/gateway -config gateway.yaml -casting-interface en0
+```yaml
+casting:
+  interface: Ethernet   # auto | off | 网卡名
 ```
 
 运行时会在进程内直接发 SSDP、控制 DLNA，不需要单独的 casting 服务。

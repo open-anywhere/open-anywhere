@@ -281,9 +281,23 @@ export interface PlatformSettings {
   services: {
     render_url: string
     render_token: SecretState
+    casting_interface: string
   }
   registration: { open: boolean }
   ready: { agentapi: boolean; linx: boolean; mcp: boolean; services: boolean }
+}
+
+export interface CastingInterface {
+  name: string
+  ipv4: string
+}
+
+export interface CastingStatus {
+  selection: string
+  active: boolean
+  name?: string
+  ipv4?: string
+  message?: string
 }
 
 export interface SecretPatch {
@@ -314,8 +328,16 @@ export interface PlatformSettingsPatch {
   services?: {
     render_url?: string
     render_token?: SecretPatch
+    casting_interface?: string
   }
   registration?: { open?: boolean }
+}
+
+export interface SettingsPayload {
+  settings: PlatformSettings
+  casting?: CastingStatus
+  casting_interfaces?: CastingInterface[]
+  warning?: string
 }
 
 export interface SettingsTestResult {
@@ -535,9 +557,9 @@ export const adminApi = {
     const suffix = search.toString()
     return adminRequest<{ apps: AdminApp[]; limit: number }>(`/apps${suffix ? `?${suffix}` : ''}`)
   },
-  settings: () => adminRequest<{ settings: PlatformSettings }>('/settings'),
+  settings: () => adminRequest<SettingsPayload>('/settings'),
   updateSettings: (patch: PlatformSettingsPatch) =>
-    adminRequest<{ settings: PlatformSettings; warning?: string }>('/settings', {
+    adminRequest<SettingsPayload>('/settings', {
       method: 'PUT',
       body: JSON.stringify(patch),
     }),

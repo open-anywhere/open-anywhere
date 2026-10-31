@@ -46,6 +46,24 @@ func WithOnSiteCasting(localIP net.IP) VoiceOption {
 	return func(m *VoiceManager) { m.casting = localIP }
 }
 
+// SetOnSiteCasting updates the LAN address used by future (and restarted)
+// virtual devices. A nil IP turns the self.cast.* tools off.
+func (m *VoiceManager) SetOnSiteCasting(localIP net.IP) {
+	m.mu.Lock()
+	m.casting = localIP
+	m.mu.Unlock()
+}
+
+// CastingIP returns the address currently used for on-site casting, or nil.
+func (m *VoiceManager) CastingIP() net.IP {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.casting == nil {
+		return nil
+	}
+	return append(net.IP(nil), m.casting...)
+}
+
 type voiceRuntime struct {
 	app    *voiceentry.App
 	cancel context.CancelFunc
