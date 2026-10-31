@@ -247,12 +247,12 @@ POST /voice/{device_id}/abort
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/api/admin/overview` | 用户/智能体/应用计数与平台配置状态 |
+| `GET` | `/api/admin/overview` | 用户、设备、应用计数与平台配置状态。概览展示设备数（按 MAC），不展示智能体数；智能体列表仍按 `linx_agent_id` 归并 |
 | `GET` | `/api/admin/users?query=&status=&limit=&offset=` | 用户列表 |
 | `GET` | `/api/admin/users/{id}` | 用户、智能体与应用摘要 |
 | `POST` | `/api/admin/users/{id}/status` | `{status: active|disabled}` |
-| `GET` | `/api/admin/agents?state=&query=` | 全部智能体/设备 |
-| `POST` | `/api/admin/agents/{id}/retry` | 重试开通或重启语音 |
+| `GET` | `/api/admin/agents?state=&query=` | 按灵矽智能体归并。同一 `linx_agent_id` 的虚拟设备和硬件在一行里，`devices` 列出每台设备；还没有智能体 ID 的开通中设备按用户并成一行。`state` 按这一行的虚拟设备筛选，`query` 匹配用户名、用户 ID、MAC、设备名或智能体 ID |
+| `POST` | `/api/admin/agents/{id}/retry` | 重试开通或重启语音。`id` 是门户设备 ID，作用在那台虚拟设备上 |
 | `GET` | `/api/admin/apps?state=&query=&limit=` | 全局应用 |
 | `GET` | `/api/admin/settings` | 平台设置（秘密脱敏） |
 | `PUT` | `/api/admin/settings` | 保存平台设置；默认服务变更受 `APPS_RUNNING` 保护 |

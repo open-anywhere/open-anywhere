@@ -22,8 +22,9 @@ describe('AdminOverviewPage', () => {
     const grid = document.querySelector('.stat-grid') as HTMLElement
     expect(within(grid).getByText('12')).toBeInTheDocument()
     expect(within(grid).getByText('10 个启用 · 2 个停用')).toBeInTheDocument()
-    expect(within(grid).getByText('10')).toBeInTheDocument()
-    expect(within(grid).getByText('8 个已注册 · 1 个开通中')).toBeInTheDocument()
+    expect(within(grid).queryByText('智能体')).toBeNull()
+    expect(within(grid).getByText('15')).toBeInTheDocument()
+    expect(within(grid).getByText('12 台已注册 · 2 台开通中')).toBeInTheDocument()
     expect(within(grid).getByText('7')).toBeInTheDocument()
     expect(within(grid).getByText('2 个运行中 · 1 个构建中')).toBeInTheDocument()
     expect(within(grid).getByText('关闭')).toBeInTheDocument()

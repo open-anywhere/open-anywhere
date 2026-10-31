@@ -43,6 +43,7 @@ describe('AdminUsersPage', () => {
     expect(within(row).getByText('启用')).toBeInTheDocument()
     expect(within(row).getByText('小灵')).toBeInTheDocument()
     expect(within(row).getByText('registered')).toBeInTheDocument()
+    expect(within(row).getByText('1 台设备')).toBeInTheDocument()
     expect(within(row).getByText('3')).toBeInTheDocument()
     expect(within(row).getByRole('button', { name: /详\s*情/ }).closest('a')).toHaveAttribute(
       'href',

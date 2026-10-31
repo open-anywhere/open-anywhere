@@ -38,7 +38,46 @@ describe('AdminAgentsPage', () => {
       'href',
       '/admin/users/u_1',
     )
-    expect(screen.getByText('1 个智能体')).toBeInTheDocument()
+    expect(screen.getByText('1 个智能体 · 1 台设备')).toBeInTheDocument()
+  })
+
+  it('keeps several devices under one agent', async () => {
+    mockApi(
+      routes({
+        'GET /api/admin/agents': agentsPage([
+          makeAdminAgent({
+            device_count: 2,
+            devices: [
+              {
+                id: 'dev_virtual',
+                kind: 'virtual',
+                mac: '02:12:DC:27:32:D6',
+                state: 'registered',
+                step: 'done',
+                created_at: '2026-10-26T03:25:24Z',
+                updated_at: '2026-10-26T03:25:24Z',
+              },
+              {
+                id: 'dev_hw',
+                kind: 'physical',
+                name: '小智',
+                mac: 'E8:F6:0A:8B:F4:E4',
+                state: 'registered',
+                step: 'done',
+                created_at: '2026-10-31T07:29:10Z',
+                updated_at: '2026-10-31T07:29:10Z',
+              },
+            ],
+          }),
+        ]),
+      }),
+    )
+    await openAgents()
+
+    expect(screen.getByText('1 个智能体 · 2 台设备')).toBeInTheDocument()
+    expect(screen.getByText('小智')).toBeInTheDocument()
+    expect(screen.getByText('E8:F6:0A:8B:F4:E4')).toBeInTheDocument()
+    expect(screen.getAllByText('agent_1')).toHaveLength(1)
   })
 
   it('shows an agent that never finished provisioning', async () => {
@@ -103,7 +142,13 @@ describe('AdminAgentsPage', () => {
 
   it('retries provisioning', async () => {
     const user = userEvent.setup()
-    const http = mockApi(routes())
+    const http = mockApi(
+      routes({
+        'GET /api/admin/agents': agentsPage([
+          makeAdminAgent({ state: 'error', step: 'ota', error: 'OTA 超时' }),
+        ]),
+      }),
+    )
     await openAgents()
 
     await user.click(screen.getByRole('button', { name: '重试开通' }))
@@ -118,6 +163,9 @@ describe('AdminAgentsPage', () => {
     const user = userEvent.setup()
     mockApi(
       routes({
+        'GET /api/admin/agents': agentsPage([
+          makeAdminAgent({ state: 'error', step: 'ota', error: 'OTA 超时' }),
+        ]),
         'POST /api/admin/agents/agent_device_1/retry': fail(502, 'UPSTREAM', '灵矽暂时不可用'),
       }),
     )

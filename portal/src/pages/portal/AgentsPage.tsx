@@ -3,11 +3,11 @@ import { Alert, App as AntApp, Button, Space, Tag } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { ApiError, api, type CreateDeviceInput, type Device } from '../../api'
+import { ApiError, api, type CreateDeviceInput } from '../../api'
 import { appsQueryOptions, meQueryOptions } from '../../api/queries'
 import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { usePageTitle } from '../../hooks/usePageTitle'
-import { deviceForApp } from '../../lib/device'
+import { deviceForApp, groupDevices } from '../../lib/device'
 import { AgentSettingsModal } from './components/AgentSettingsModal'
 import { AppRow } from './components/AppRow'
 import { DevicePanel } from './components/DevicePanel'
@@ -53,13 +53,7 @@ export function AgentsPage() {
   const { disconnect, reconnect } = useDeviceConnection()
 
   const devices = me.data?.devices ?? []
-  // Hardware joins an agent a virtual device created, so the account's agents
-  // are the distinct agent IDs. A device that has no agent yet stands alone.
-  const groups = new Map<string, Device[]>()
-  for (const device of devices) {
-    const key = device.agent_id || device.id
-    groups.set(key, [...(groups.get(key) ?? []), device])
-  }
+  const groups = groupDevices(devices)
   const apps = useQuery(appsQueryOptions)
   const appList = apps.data?.apps ?? []
 
@@ -92,7 +86,7 @@ export function AgentsPage() {
       ) : null}
 
       {devices.length ? (
-        [...groups.values()].map((members) => {
+        groups.map((members) => {
           // The browser device speaks for the agent; hardware only shares it.
           const device = members.find((member) => member.kind === 'virtual') ?? members[0]
           const ownedApps = appList.filter((app) => deviceForApp(members, app) !== undefined)

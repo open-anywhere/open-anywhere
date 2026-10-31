@@ -12,12 +12,20 @@ import {
 import type { TableProps } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from '@tanstack/react-router'
-import { ApiError, adminApi, type AdminAgent, type AdminApp, type UserStatus } from '../../api'
+import { ApiError, adminApi, type AdminAgent, type AdminApp, type AdminDevice, type UserStatus } from '../../api'
 import { adminUserQueryOptions } from '../../api/queries'
 import { AppStateTag, DeviceStateTag } from '../../components/Tags'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { formatDate, stepLabels } from '../../lib/format'
 import { PageHeader } from '../portal/components/PageHeader'
+
+function deviceLabel(device: AdminDevice) {
+  return device.name || (device.kind === 'virtual' ? '虚拟设备' : '硬件')
+}
+
+function retryableDevice(agent: AdminAgent) {
+  return agent.devices.find((device) => device.kind === 'virtual' && device.state !== 'registered')
+}
 
 export function AdminUserDetailPage() {
   usePageTitle('用户详情')
@@ -72,9 +80,18 @@ export function AdminUserDetailPage() {
       ),
     },
     {
-      title: 'MAC',
-      dataIndex: 'mac',
-      render: (value: string) => <code className="inline-code">{value}</code>,
+      title: '设备',
+      dataIndex: 'device_count',
+      render: (_value, agent) => (
+        <Space size={4} wrap>
+          <span>{agent.device_count} 台</span>
+          {agent.devices.map((device) => (
+            <Tag key={device.id}>
+              {deviceLabel(device)} <code className="inline-code">{device.mac}</code>
+            </Tag>
+          ))}
+        </Space>
+      ),
     },
     {
       title: '状态',
@@ -107,15 +124,21 @@ export function AdminUserDetailPage() {
       title: '操作',
       key: 'actions',
       width: 110,
-      render: (_value, agent) => (
-        <Button
-          size="small"
-          loading={retryAgent.isPending && retryAgent.variables === agent.id}
-          onClick={() => retryAgent.mutate(agent.id)}
-        >
-          重试开通
-        </Button>
-      ),
+      render: (_value, agent) => {
+        const device = retryableDevice(agent)
+        if (!device) {
+          return '—'
+        }
+        return (
+          <Button
+            size="small"
+            loading={retryAgent.isPending && retryAgent.variables === device.id}
+            onClick={() => retryAgent.mutate(device.id)}
+          >
+            重试开通
+          </Button>
+        )
+      },
     },
   ]
 

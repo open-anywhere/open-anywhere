@@ -91,6 +91,12 @@ describe('AdminUserDetailPage', () => {
     const user = userEvent.setup()
     mockApi(
       routes({
+        'GET /api/admin/users/u_1': ok({
+          user: makeAdminUser({
+            agents: [makeAdminAgent({ state: 'error', step: 'bind', error: '灵矽返回 500' })],
+          }),
+          apps: [],
+        }),
         'POST /api/admin/agents/agent_device_1/retry': fail(502, 'UPSTREAM', '灵矽暂时不可用'),
       }),
     )

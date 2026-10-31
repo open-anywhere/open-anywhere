@@ -2,9 +2,9 @@ import {
   AppstoreOutlined,
   AudioOutlined,
   CloudServerOutlined,
+  MobileOutlined,
   PlusOutlined,
   ReloadOutlined,
-  RobotOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import { Alert, App as AntApp, Button, Skeleton, Space, Tag } from 'antd'
@@ -67,7 +67,7 @@ export function OverviewPage() {
   const devices = me.data?.devices ?? []
   const appList = apps.data?.apps ?? []
   const device = primaryDevice(devices)
-  const registered = devices.filter((item) => item.state === 'registered').length
+  const readyDevices = devices.filter((item) => item.state === 'registered').length
   const provisioning = devices.filter((item) => item.state === 'provisioning').length
   const building = appList.filter((app) => app.state === 'building').length
   const running = appList.filter((app) => app.state === 'running').length
@@ -133,10 +133,10 @@ export function OverviewPage() {
 
       <div className="stat-grid">
         <StatTile
-          icon={<RobotOutlined />}
-          label="智能体"
+          icon={<MobileOutlined />}
+          label="设备"
           value={devices.length}
-          note={devices.length ? `${registered} 个已准备好` : '尚未创建'}
+          note={devices.length ? `${readyDevices} 台已准备好` : '还没有设备'}
           tone="primary"
         />
         <StatTile
@@ -193,9 +193,7 @@ export function OverviewPage() {
           />
         </section>
 
-      </div>
-
-      <section className="surface">
+        <section className="surface">
         <div className="section-header">
           <div>
             <h2>最近的应用</h2>
@@ -257,6 +255,7 @@ export function OverviewPage() {
           />
         )}
       </section>
+      </div>
     </div>
   )
 }

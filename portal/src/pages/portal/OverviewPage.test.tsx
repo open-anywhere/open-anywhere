@@ -21,13 +21,39 @@ describe('OverviewPage', () => {
 
     expect(await screen.findByText('你好，ada')).toBeInTheDocument()
     const stats = within(document.querySelector('.stat-grid') as HTMLElement)
-    expect(stats.getByText('智能体')).toBeInTheDocument()
-    expect(await screen.findByText('1 个已准备好')).toBeInTheDocument()
+    expect(stats.getByText('设备')).toBeInTheDocument()
+    expect(stats.queryByText('智能体')).toBeNull()
+    expect(await screen.findByText('1 台已准备好')).toBeInTheDocument()
     expect(await screen.findByText('1 个正在播放 · 0 个生成中')).toBeInTheDocument()
     expect(screen.getByText('没有进行中的任务')).toBeInTheDocument()
 
     expect(screen.getAllByText('电影知识竞赛').length).toBeGreaterThan(0)
     expect(screen.getByText('已就绪')).toBeInTheDocument()
+  })
+
+  it('counts every device, including several on the same agent', async () => {
+    mockApi(
+      routes({
+        'GET /api/portal/me': ok({
+          user: makeUser(),
+          devices: [
+            makeDevice(),
+            makeDevice({
+              id: 'dev_2',
+              kind: 'physical',
+              name: '小智',
+              mac: 'E8:F6:0A:8B:F4:E4',
+              agent_id: 'agent_1',
+            }),
+          ],
+        }),
+      }),
+    )
+    await renderApp('/portal')
+
+    const stats = within(document.querySelector('.stat-grid') as HTMLElement)
+    expect(await stats.findByText('2 台已准备好')).toBeInTheDocument()
+    expect(stats.getByText('设备')).toBeInTheDocument()
   })
 
   it('warns when the render service is not ready and links to the settings', async () => {

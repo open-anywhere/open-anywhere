@@ -196,14 +196,11 @@ export interface ServiceTestResult {
   render: ServiceCheck
 }
 
-export interface AdminAgent {
+export interface AdminDevice {
   id: string
-  user_id: string
-  username?: string
   kind: 'virtual' | 'physical'
+  name?: string
   mac: string
-  agent_id?: string
-  agent_name?: string
   state: DeviceState
   step?: string
   error?: string
@@ -211,6 +208,22 @@ export interface AdminAgent {
   created_at: string
   updated_at: string
   registered_at?: string
+}
+
+export interface AdminAgent {
+  id: string
+  user_id: string
+  username?: string
+  agent_id?: string
+  agent_name?: string
+  state: DeviceState
+  step?: string
+  error?: string
+  error_code?: string
+  device_count: number
+  devices: AdminDevice[]
+  created_at: string
+  updated_at: string
 }
 
 export interface AdminUser {
@@ -243,6 +256,7 @@ export interface AdminApp {
 export interface AdminOverview {
   users: { total: number; active: number; disabled: number; admins: number }
   agents: { total: number; registered: number; provisioning: number; error: number; disabled: number }
+  devices: { total: number; registered: number; provisioning: number; error: number; disabled: number }
   apps: { total: number; running: number; building: number; error: number; idle: number }
   platform: {
     agentapi: boolean
