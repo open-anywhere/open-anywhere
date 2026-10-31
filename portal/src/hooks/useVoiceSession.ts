@@ -527,6 +527,15 @@ export function useVoiceSession(deviceId: string) {
     }
   }, [deviceId, flushPlayback, refreshStatus])
 
+  const say = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim()
+      if (!trimmed) return
+      await voice.say(deviceId, trimmed)
+    },
+    [deviceId],
+  )
+
   return {
     status,
     statusError,
@@ -540,6 +549,7 @@ export function useVoiceSession(deviceId: string) {
     supported: supportsVoiceCodecs(),
     start,
     stop,
+    say,
     clearEntries,
     pause,
     resume,

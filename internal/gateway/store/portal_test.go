@@ -176,18 +176,13 @@ func TestServiceBindingSecretsOnlyReturnsRowsWithTokens(t *testing.T) {
 	bindings := []PortalServiceBinding{
 		{
 			UserID: "usr_1", Mode: ServiceModeCustom,
-			RenderURL: "https://render.example", CastingURL: "https://casting.example",
+			RenderURL: "https://render.example",
 			RenderTokenEnc: "enc:v1:render", CreatedAt: now, UpdatedAt: now,
 		},
 		{
 			UserID: "usr_2", Mode: ServiceModeCustom,
-			RenderURL: "https://render.example", CastingURL: "https://casting.example",
+			RenderURL: "https://render.example",
 			CreatedAt: now, UpdatedAt: now,
-		},
-		{
-			UserID: "usr_3", Mode: ServiceModeCustom,
-			RenderURL: "https://render.example", CastingURL: "https://casting.example",
-			CastingTokenEnc: "enc:v1:casting", CreatedAt: now, UpdatedAt: now,
 		},
 	}
 	for _, binding := range bindings {
@@ -199,24 +194,14 @@ func TestServiceBindingSecretsOnlyReturnsRowsWithTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ServiceBindingSecrets: %v", err)
 	}
-	if len(secrets) != 2 {
+	if len(secrets) != 1 {
 		t.Fatalf("secrets=%+v", secrets)
 	}
-	byUser := make(map[string]PortalServiceBinding, len(secrets))
-	for _, binding := range secrets {
-		byUser[binding.UserID] = binding
-	}
-	if binding, ok := byUser["usr_1"]; !ok || binding.RenderTokenEnc != "enc:v1:render" || binding.CastingTokenEnc != "" {
-		t.Fatalf("usr_1 binding=%+v present=%v", binding, ok)
-	}
-	if binding, ok := byUser["usr_3"]; !ok || binding.CastingTokenEnc != "enc:v1:casting" || binding.RenderTokenEnc != "" {
-		t.Fatalf("usr_3 binding=%+v present=%v", binding, ok)
-	}
-	if _, ok := byUser["usr_2"]; ok {
-		t.Fatal("a binding without tokens was returned")
+	if secrets[0].UserID != "usr_1" || secrets[0].RenderTokenEnc != "enc:v1:render" {
+		t.Fatalf("binding=%+v", secrets[0])
 	}
 	for _, binding := range secrets {
-		if binding.RenderURL != "" || binding.CastingURL != "" || binding.Mode != "" {
+		if binding.RenderURL != "" || binding.Mode != "" {
 			t.Fatalf("addresses leaked from ServiceBindingSecrets: %+v", binding)
 		}
 	}

@@ -10,10 +10,10 @@
 | 接入 | OTA 上报，WebSocket 连接灵矽云 | 相同 |
 | 激活与绑定 | 激活码绑定到智能体 | 相同；另可在 Web 页面完成 |
 | 音频 | 板载麦克风和扬声器，Opus | 浏览器的麦克风和播放器，由浏览器编解码 Opus，程序只转发 |
-| 设备端 MCP | 固件注册设备工具 | 程序上报两个仅作用于网页播放器的音量工具，用于验证链路 |
-| 本地控制 | 由硬件自身决定 | Web 控制台和 HTTP / SSE / WebSocket 接口 |
+| 设备端 MCP | 固件注册设备工具（含 `self.cast.*`） | 程序默认上报两个仅作用于网页播放器的音量工具；Gateway 配置 `-casting-interface` 时另上报三个 `self.cast.*` 工具 |
+| 本地控制 | 由硬件自身决定 | Portal 的对话页（文字与音频）和 HTTP / SSE / WebSocket 接口 |
 
-“与灵矽的连接”到“状态、断开与重连”几节描述的是设备协议层，对两种形态都成立，切换到真实硬件时设计目标是行为不变，具体以灵矽的设备协议文档为准。模拟硬件自带的 Web 控制台及其 HTTP / SSE 接口只用于调试和演示，不是系统之间的契约，也不属于真实硬件，接口说明见 [实现与使用](../../internal/voiceentry/README.md)，不写在本文。
+“与灵矽的连接”到“状态、断开与重连”几节描述的是设备协议层，对两种形态都成立，切换到真实硬件时设计目标是行为不变，具体以灵矽的设备协议文档为准。模拟硬件的运行时由 Gateway 进程托管，Portal 的对话页是唯一的界面；它的 HTTP / SSE 接口只用于 Portal，不属于真实硬件。实现说明见 [实现与使用](../../internal/voiceentry/README.md)。
 
 ## 定位与边界
 
@@ -22,8 +22,8 @@
 | 以虚拟设备身份建立并保持与灵矽云的 WebSocket 会话 | 构建、运行应用，理解应用业务 |
 | 收发文字、主动播报和 Opus 音频，转发灵矽的识别与播报事件 | 声纹识别、ASR、TTS（都在灵矽云） |
 | 回应灵矽对设备端 MCP 的 `initialize`、`tools/list`、`tools/call` | 架构文档第 6 章的应用管理 MCP（由控制面提供） |
-| 模拟硬件另外提供本地 Web 控制台，供调试和演示 | 公网访问 |
-| 设备注册、断开与重连 | 投屏、Stage、DLNA 会话 |
+| 在 Portal 对话页里收发文字与语音 | 公网直接访问语音接口 |
+| 设备注册、断开与重连 | 生产投屏（真机固件负责）、Stage、DLNA 会话；模拟硬件只在 Gateway 配置 `-casting-interface` 时提供 `self.cast.*` |
 
 架构文档第 6 章的 MCP 是控制面提供给灵矽云的云端工具；本文的设备端 MCP 由现场语音入口提供，两者互不替代。
 
@@ -62,7 +62,7 @@ sequenceDiagram
 
 灵矽把设备当作 MCP Server：会话建立后先发 `initialize`，再发 `tools/list`，之后按需发 `tools/call`。`initialize` 的 `capabilities.vision` 里带有平台下发的视觉服务地址和 token，语音入口不会把 token 展示出来。
 
-模拟硬件当前上报两个仅作用于网页播放器的工具，用来验证 `tools/list` 与 `tools/call` 整条链路：
+模拟硬件默认上报两个仅作用于网页播放器的工具，用来验证 `tools/list` 与 `tools/call` 整条链路：
 
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
@@ -75,17 +75,31 @@ sequenceDiagram
 - 调用未知工具时返回标准 JSON-RPC 错误（`-32601`）。
 - 云端自己完成的工具调用（例如查天气）不经过设备，现场语音入口只能看到最终的 `stt`、`tts`、`llm`，看不到调用过程。
 
+### 投屏工具（Gateway `-casting-interface`）
+
+虚拟设备可以额外上报三个 `self.cast.*` 工具，用来把云端应用投到现场的电视上。它**在设备所在局域网里直接做 SSDP 发现和 DLNA 控制，不连云端，也不依赖单独的 casting 服务**：应用由控制面构建、启动并返回 `stream_url`，设备只负责找屏和投放。工具描述明确 `url` 只用于投屏，不要把链接念给用户。小智云聊 S3 MAX 固件是生产路径：工具名和话术相同，逻辑都在固件里，见 [小智云聊 S3 MAX 接入投屏](../operations/yunliao-s3-max-firmware-mcp.md)。Gateway 启动时指定网卡即可为所有虚拟设备开启：
+
+```bash
+go run ./cmd/gateway -config gateway.yaml -casting-interface en0
+```
+
+- `list_screens` 发 M-SEARCH 收集应答；`cast(url, target_id)` 先发 `SetAVTransportURI`（含 DIDL-Lite 元数据）再发 `Play`；`stop(session_id 可选)` 发 `Stop`，UPnP 701 视为已经停止。固定使用 `mpegts / h264 / aac`。
+- 不带任何身份头、token 或灵矽会话信息；只在可信局域网里使用，不要暴露到公网。
+- `cast` 原样使用控制面返回的 `stream_url`，不拼接、不改写；`target_id` 来自 `list_screens`。
+- 失败翻译成可直接播报的中文：被占用（409 `target_busy`）、离线（409 `target_offline`）、格式不支持（422）、电视不响应（502）。`stop` 不传 `session_id` 时停止本进程最近一次投放的内容，会话已经不在了也视为成功。
+- 构建、启动和应用业务请求全部由灵矽直接调用控制面 MCP；设备不再代理，也不轮询构建状态。
+
 ## 设备注册
 
 激活流程对两种形态相同：设备向 OTA 上报身份，得到激活码，绑定到智能体后取得连接凭证。下面是模拟硬件的具体做法。
 
-模拟硬件把凭证保存在 `.device.json`（`mac`、`clientId`、`token`、`wsUrl`），文件权限 0600，已在 `.gitignore`。没有这个文件时，常驻模式仍能启动，在 Web 控制台注册：
+模拟硬件把凭证保存在 `.device.json`（`mac`、`clientId`、`token`、`wsUrl`），文件权限 0600，已在 `.gitignore`。设备由 Portal 的设备页创建，Gateway 的 Provisioner 完成注册：
 
 1. 生成设备身份（本地管理的单播 MAC 和 UUID v4），向 OTA 上报，得到激活码。真实硬件使用固件持有的身份。
-2. 把激活码绑定到智能体：在灵矽控制台手动绑定；或在页面填 Agent ID 和 API Key，由模拟硬件调用绑定接口。API Key 只用于这一次请求，不保存，错误信息里也不会带出。
-3. 绑定后再次上报，平台返回 `websocket.token`，设备保存凭证并自动连接（模拟硬件写入凭证文件）。
+2. 把激活码绑定到智能体：在灵矽控制台手动绑定；或在 Portal 里填 Agent ID 和 API Key，由 Gateway 调用绑定接口。API Key 只用于这一次请求，不保存，错误信息里也不会带出。
+3. 绑定后再次上报，平台返回 `websocket.token`，Gateway 写入凭证文件并启动设备运行时。
 
-同一次注册内，身份与激活码保持不变，可以重复点击检查。
+同一次注册内，身份与激活码保持不变，可以重复检查。
 
 ## 状态、断开与重连
 
@@ -98,5 +112,5 @@ sequenceDiagram
 
 ## 安全
 
-- 模拟硬件的控制接口没有鉴权，只应监听回环地址，不要暴露到公网或不可信网络。
+- 语音接口由 Portal 会话保护，只通过 Gateway 暴露；不要另外监听端口，也不要暴露到公网或不可信网络。
 - 设备凭证和 API Key 不进入日志和页面；展示灵矽原始消息时会遮蔽其中的 `token`（`initialize` 里带有平台下发的视觉服务 token）。

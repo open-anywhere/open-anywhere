@@ -13,12 +13,11 @@ func TestEveryToolPropagatesServiceErrors(t *testing.T) {
 	session, _, ctx := connectLogged(t, fake)
 
 	calls := []sdk.CallToolParams{
-		{Name: "get-screens", Arguments: map[string]any{}},
 		{Name: "create-app", Arguments: map[string]any{"prompt": "build it"}},
 		{Name: "update-app", Arguments: map[string]any{"app_id": "app_1", "prompt": "改主题"}},
 		{Name: "get-app-status", Arguments: map[string]any{"app_id": "app_1"}},
 		{Name: "get-app-operations", Arguments: map[string]any{"app_id": "app_1"}},
-		{Name: "start-app", Arguments: map[string]any{"app_id": "app_1", "screen_id": "tv_1"}},
+		{Name: "start-app", Arguments: map[string]any{"app_id": "app_1"}},
 		{Name: "stop-app", Arguments: map[string]any{"app_id": "app_1"}},
 		{Name: "send-request", Arguments: map[string]any{"app_id": "app_1", "operation_id": "op_1"}},
 	}
@@ -45,7 +44,7 @@ func TestToolSchemasRejectMalformedArguments(t *testing.T) {
 		{Name: "create-app", Arguments: map[string]any{}},
 		{Name: "update-app", Arguments: map[string]any{"app_id": "app_1"}},
 		{Name: "get-app-status", Arguments: map[string]any{"app_id": 5}},
-		{Name: "start-app", Arguments: map[string]any{"app_id": "app_1"}},
+		{Name: "start-app", Arguments: map[string]any{"app_id": 5}},
 		{Name: "send-request", Arguments: map[string]any{"app_id": "app_1", "operation_id": 5}},
 	}
 	for _, call := range cases {

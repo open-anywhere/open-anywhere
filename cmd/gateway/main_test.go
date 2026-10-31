@@ -20,7 +20,6 @@ func testConfig(t *testing.T) config.Config {
 		AgentVersion:    1,
 		EnvironmentID:   "env",
 		RenderURL:       "http://127.0.0.1:1",
-		CastingURL:      "http://127.0.0.1:1",
 		ArtifactsDir:    t.TempDir(),
 		ArtifactBaseURL: "http://127.0.0.1:8090",
 		DBPath:          filepath.Join(t.TempDir(), "gateway.db"),
@@ -42,13 +41,6 @@ func TestServeStopsOnCancel(t *testing.T) {
 }
 
 func TestServeErrors(t *testing.T) {
-	t.Run("screens", func(t *testing.T) {
-		cfg := testConfig(t)
-		cfg.ScreensPath = filepath.Join(t.TempDir(), "missing.json")
-		if err := serve(context.Background(), cfg); err == nil {
-			t.Fatal("missing screens should fail")
-		}
-	})
 	t.Run("database", func(t *testing.T) {
 		cfg := testConfig(t)
 		file := filepath.Join(t.TempDir(), "file")
@@ -100,7 +92,6 @@ func TestRunErrors(t *testing.T) {
 		"-agent-id", cfg.AgentID,
 		"-environment-id", cfg.EnvironmentID,
 		"-render-url", cfg.RenderURL,
-		"-casting-url", cfg.CastingURL,
 		"-artifact-base-url", cfg.ArtifactBaseURL,
 		"-artifacts-dir", cfg.ArtifactsDir,
 		"-db", cfg.DBPath,

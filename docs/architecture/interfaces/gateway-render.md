@@ -2,22 +2,22 @@
 
 > 运行方法与实现边界见 [Render 运行说明](../../operations/render.md)。
 
-Render 接收控制面分配的应用 ID、应用包下载地址和运行端口，下载并启动 Node.js 应用，用 Chromium 持续渲染页面，再将画面编码为可通过 HTTP 拉取的实时媒体流。控制面将该流交给独立的 Casting 服务播放。
+Render 接收控制面分配的应用 ID、应用包下载地址和运行端口，下载并启动 Node.js 应用，用 Chromium 持续渲染页面，再将画面编码为可通过 HTTP 拉取的实时媒体流。控制面把 `source.url` 作为 `stream_url` 返回给灵矽，由现场设备自己的投屏工具交给电视播放；Render 与控制面都不选择屏幕，也不建立生产投屏会话。
 
-应用包结构、`launch.json` 和构建要求见[应用包设计](app-artifact.md)；投屏控制接口见 [Casting 服务](../../operations/casting.md)。本文定义 Render 的职责、接口及运行生命周期。
+应用包结构、`launch.json` 和构建要求见[应用包设计](app-artifact.md)；现场投屏链路见[现场侧投屏](../home-casting.md)，协议实现位于 `internal/casting/dlna`。本文定义 Render 的职责、接口及运行生命周期。
 
 ## 1. 职责与边界
 
 | 组件 | 职责 |
 | --- | --- |
-| 控制面 | 选择 Render、确定应用端口、维护应用与实例映射，调用 Casting 将流投放到指定屏幕 |
+| 控制面 | 选择 Render、确定应用端口、维护应用与实例映射，把 `source` 转成 `stream_url` 返回给灵矽；不选择屏幕、不控制电视 |
 | Render | 下载和校验应用包、管理应用进程、健康检查、Chromium 页面、捕获编码及媒体流服务 |
 | 应用 | 提供 `/` 页面、`/health` 和 OpenAPI 描述的业务操作，维护业务状态 |
-| Casting | 发现屏幕、建立和停止投屏会话，让屏幕拉取 Render 提供的媒体流 |
+| 现场设备 MCP | 固件工具 `self.cast.*`：后台 SSDP 发现电视，把 `stream_url` 通过 DLNA `SetAVTransportURI` / `Play` / `Stop` 交给电视 |
 
 一期仅支持 Node.js。Render 不安装应用依赖、不编译 JSX、不执行构建任务，也不处理声纹、业务意图或游戏规则。Node.js、Chromium 和捕获编码所需组件由运行环境预先提供。
 
-Render 启动请求不包含 `screen_id`、`target_id` 或投屏协议。Render 准备好媒体流后，由控制面选择屏幕并调用 Casting。
+Render 启动请求不包含 `screen_id`、`target_id` 或投屏协议。Render 准备好媒体流后，控制面把 `stream_url` 返回给灵矽；由现场设备的 `self.cast.cast` 选择屏幕并投放；控制面没有投屏客户端。
 
 ```mermaid
 flowchart LR
@@ -28,8 +28,9 @@ flowchart LR
   B --> F[捕获 / 编码]
   F --> S[HTTP 实时媒体流]
   R -->|返回 source| C
-  C -->|目标屏幕 + source| P[Casting]
-  P -->|播放控制| T[电视]
+  C -->|running + stream_url| L[灵矽云]
+  L -->|tools/call self.cast.cast| D[现场设备 MCP]
+  D -->|SSDP 发现 + SOAP| T[电视]
   T -->|HTTP 拉流| S
 ```
 
@@ -66,22 +67,22 @@ launch.json
 
 工作目录是归档根目录。Render 读取启动契约并注入 `HOST`、`PORT`，不把 `app_id` 或部署端口写入包。`openapi.yaml` 描述 `/api/*` 业务操作，控制面据此发起 HTTP 调用；Render 校验产物格式，不理解业务语义。完整字段和应用要求见[应用包设计](app-artifact.md)。
 
-### 1.2 按用户绑定 Render/Casting
+### 1.2 按用户绑定 Render
 
-Render 与 Casting 的接口本身不区分租户；控制面在多租户 Portal 中按应用 owner 解析要调用的服务：
+Render 的接口本身不区分租户；控制面在多租户 Portal 中按应用 owner 解析要调用的服务：
 
 | 模式 | 地址来源 | token |
 | --- | --- | --- |
-| `managed`（默认） | 管理员在 `/admin/settings` 配置的平台默认 Render/Casting；尚未在后台设置时由 `gateway.yaml` seed | 平台默认 token，可选；密文保存 |
-| `custom` | 用户在自己的 Portal 服务页填写的两个公网地址 | 用户自己的 token，可选；密文保存，保存后不回显 |
+| `managed`（默认） | 管理员在 `/admin/settings` 配置的平台默认 Render；尚未在后台设置时由 `gateway.yaml` seed | 平台默认 token，可选；密文保存 |
+| `custom` | 用户在自己的 Portal 服务页填写的 Render 公网地址 | 用户自己的 token，可选；密文保存，保存后不回显 |
 
 约定：
 
-- 一个用户最多一行 `portal_service_bindings`；`custom` 必须同时有 Render URL 与 Casting URL，否则 `SERVICE_NOT_CONFIGURED`。
-- 控制面把 token 作为 `Authorization: Bearer <token>` 附加到 Render/Casting 请求；没有 token 时不发该头。token 只参与客户端缓存键的哈希，不写日志、不进入 API 响应。**Render 与 Casting 当前不解析也不校验这个头**：token 只是透传，配置它不会自动获得访问控制，`custom` 部署必须由网络层（防火墙、反向代理、mTLS）保护。
+- 一个用户最多一行 `portal_service_bindings`；`custom` 必须填写 Render URL，否则 `SERVICE_NOT_CONFIGURED`。
+- 控制面把 token 作为 `Authorization: Bearer <token>` 附加到 Render 请求；没有 token 时不发该头。token 只参与客户端缓存键的哈希，不写日志、不进入 API 响应。**Render 当前不解析也不校验这个头**：token 只是透传，配置它不会自动获得访问控制，`custom` 部署必须由网络层（防火墙、反向代理、mTLS）保护。
 - 客户端池按 `(URL, token)` 缓存 `render.Client` / `casting.Client`，上限 128；地址或 token 变化后旧客户端自然不再命中。
-- 平台默认地址与用户地址都在保存/测试时校验；`render.Client` 与 `casting.Client` 的 `Health(ctx)` 分别探测 `/healthz`（Render）与 Casting 健康接口，Portal 的服务测试复用同一套客户端。
-- 保存用户绑定前，如果该用户有运行中或待清理的应用，返回 `APPS_RUNNING`，要求先停止；管理员修改平台默认 Render/Casting（含 token）时，如果控制面上仍有任何用户存在活动资源，同样返回 `APPS_RUNNING`。
+- 平台默认地址与用户地址都在保存/测试时校验；`render.Client` 的 `Health(ctx)` 探测 `/healthz`，Portal 的服务测试复用同一套客户端。
+- 保存用户绑定前，如果该用户有运行中或待清理的应用，返回 `APPS_RUNNING`，要求先停止；管理员修改平台默认 Render（含 token）时，如果控制面上仍有任何用户存在活动资源，同样返回 `APPS_RUNNING`。
 - 管理员修改默认地址后，新启动的应用立即使用新值；已经在运行的应用不被迁移，因此必须先停止再修改。
 
 **URL 与内网限制。** 所有用户/管理员填写的地址都经过 netguard：
@@ -163,8 +164,8 @@ Content-Type: application/json
 - `app_base_url` 是控制面可访问的应用 HTTP 地址，用于调用 `/api/*`；远程控制面不能使用 Render 自己的 `127.0.0.1`。部署环境必须提供可达地址及网络路径。
 - `source.url` 是电视可访问的实时媒体地址，不是 UI URL，也不是应用包下载地址。
 - 应用端口与媒体服务端口独立。示例中的 `8765` 是 Render 自身的媒体服务配置，不属于创建应用请求的参数。
-- `source` 可直接作为 Casting 创建投屏会话的 `source`。示例为纯视频，`audio_codec` 为空字符串；仅在实际包含 AAC 音轨时声明 `aac`。
-- Render 的 `ready` 表示应用、页面和媒体输出已就绪，不表示电视已播放。控制面仍须等 Casting 确认 `playing`，才能对灵矽返回整体应用 `running`。
+- `source.url` 就是控制面返回给灵矽的 `stream_url`，直接作为设备投屏工具的参数。示例为纯视频，`audio_codec` 为空字符串；仅在实际包含 AAC 音轨时声明 `aac`。
+- Render 的 `ready` 表示应用、页面和媒体输出已就绪，不表示电视已播放。控制面在 Render 就绪并拿到 `source` 后即返回 `running` 和 `stream_url`；是否投到屏幕由现场设备工具的结果决定。
 
 ### 2.4 端口查询
 
@@ -277,7 +278,7 @@ GET /v1/ports
 }
 ```
 
-Render 持续监测应用进程、应用健康、浏览器和媒体输出。确认失效后标记 `error`，撤下可用流并清理该实例的资源；一期不自动重启，以免在用户不知情时重置应用内存状态。控制面查询到运行错误后，更新整体应用状态并停止关联的投屏会话。
+Render 持续监测应用进程、应用健康、浏览器和媒体输出。确认失效后标记 `error`，撤下可用流并清理该实例的资源；一期不自动重启，以免在用户不知情时重置应用内存状态。控制面查询到运行错误后更新整体应用状态并停止 Render 实例；新路径没有控制面投屏会话。若旧记录仍有 `ProjectionSessionID`，兼容清理会先停止它。
 
 `DELETE` 等待清理完成后返回 `200`：
 
@@ -294,7 +295,7 @@ Render 持续监测应用进程、应用健康、浏览器和媒体输出。确�
 
 对已知的 `stopped` 实例重复停止返回相同结果；未知实例返回 `404`。一期实例记录保存在内存中，服务重启后不承诺恢复，正常关闭服务时应清理所有子进程和媒体任务。
 
-Render 停止不会自动调用 Casting。控制面正常停止应用时应先停止关联投屏，再停止 Render 实例，避免电视持续拉取已关闭的流。
+Render 停止不会通知电视。新路径下 `stop-app` 只停 Render，现场画面需要设备端 `self.cast.stop`；电视继续拉流会因云端流关闭而失败。旧版路径若仍有 `ProjectionSessionID`，控制面会先停止它再停 Render。
 
 ## 4. 错误约定
 
@@ -329,7 +330,7 @@ Render 停止不会自动调用 Casting。控制面正常停止应用时应先�
 | `INVALID_TARGET_URL` | `400` | 地址不是绝对 HTTP(S)、缺少主机名、带 userinfo/fragment 或端口非法 |
 | `PRIVATE_TARGET_FORBIDDEN` | `400` | 地址解析到回环、私网、link-local、组播、CGNAT 等受限地址 |
 | `TARGET_UNREACHABLE` | `502` | 地址无法解析或无法连接 |
-| `SERVICE_NOT_CONFIGURED` | `409` | `managed` 缺平台默认服务，或 `custom` 缺 Render/Casting 地址 |
+| `SERVICE_NOT_CONFIGURED` | `409` | `managed` 缺平台默认 Render，或 `custom` 缺 Render 地址 |
 | `APPS_RUNNING` | `409` | 有运行中/待清理资源时修改绑定或平台默认服务 |
 | `OWNER_NOT_FOUND` | `404` / `403` | 用户侧服务绑定请求无法识别账号（`404`）；MCP 身份校验失败映射为 `403` |
 
@@ -355,7 +356,7 @@ Chromium 负责运行页面，捕获编码组件负责把画面转换为 MPEG-TS
 4. 同端口并发启动只有一个实例能占用；端口已被其他程序占用时，不把其他程序误认成新应用。
 5. 应用退出、浏览器退出或编码中断后，实例进入 `error`；控制面能够据此处理整体应用失败。
 6. 停止后相关进程、流连接和端口被释放；重复停止已知实例成功；清理失败可以重试。
-7. 将返回的 `source` 交给现有 Casting 服务，使用真实屏幕验证拉流和播放；Render 的 `ready` 与 Casting 的 `playing` 分别检查。
+7. 将返回的 `stream_url` 交给现场设备的 `self.cast.cast`，使用真实屏幕验证拉流和播放；Render 的 `ready` 与电视实际播放分别检查。
 8. 端口查询和列表能够区分空闲、应用预留、Render 自身服务及其他程序占用；清理完成后应用预留从列表消失，检查失败时返回错误而非误报空闲。
 9. 查询空闲后被其他程序抢先绑定，启动仍返回端口冲突，控制面可另选端口重试。
 10. 启动、状态查询、停止及应用端口占用结果携带同一个 `app_id`；同一应用在相同或不同端口、包地址及 Render 节点上的并发启动，全局最多接受一个。旧实例停止并清理后才允许再次启动，并使用新 `instance_id`。

@@ -672,26 +672,17 @@ func (a *API) adminTestSettings(w http.ResponseWriter, r *http.Request, actor st
 	}
 	linxCheck := a.checkLinx(r.Context(), snapshot.Linx)
 	binding := service.Binding{
-		RenderURL:    snapshot.Services.RenderURL,
-		RenderToken:  snapshot.Services.RenderToken,
-		CastingURL:   snapshot.Services.CastingURL,
-		CastingToken: snapshot.Services.CastingToken,
-		Managed:      true,
+		RenderURL:   snapshot.Services.RenderURL,
+		RenderToken: snapshot.Services.RenderToken,
+		Managed:     true,
 	}
 	render := serviceCheck{Message: "尚未配置默认渲染服务"}
 	if binding.RenderURL != "" {
 		render = a.checkRender(r.Context(), binding)
 	}
-	casting := serviceCheck{Message: "尚未配置默认投屏服务"}
-	screens := 0
-	if binding.CastingURL != "" {
-		casting, screens = a.checkCasting(r.Context(), binding)
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"linx":    linxCheck,
-		"render":  render,
-		"casting": casting,
-		"screens": screens,
+		"linx":   linxCheck,
+		"render": render,
 	})
 }
 

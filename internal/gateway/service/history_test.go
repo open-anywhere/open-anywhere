@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,7 +60,7 @@ func builtApp(t *testing.T, id string, minutes int, state app.State) app.App {
 }
 
 func TestAppsBelongToTheDeviceAndAgentNotTheSession(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	env.registry.Add(builtApp(t, "app_a", 0, app.StateIdle))
 	ctx := context.Background()
 
@@ -96,109 +95,8 @@ func TestAppsBelongToTheDeviceAndAgentNotTheSession(t *testing.T) {
 	}
 }
 
-func TestListAppsSummarizesAndOrdersTheHistory(t *testing.T) {
-	env := newTestEnv(t, nil)
-	env.svc.SetArtifactStore(&fakeArtifacts{missing: map[string]bool{"app_lost": true}})
-	old := builtApp(t, "app_old", 0, app.StateIdle)
-	old.Prompt = strings.Repeat("很长的需求", 30)
-	running := builtApp(t, "app_run", 10, app.StateRunning)
-	running.ScreenID = "tv_1"
-	building := app.App{ID: "app_new", Owner: ownerOld, State: app.StateBuilding, BuildStartedAt: baseTime.Add(30 * time.Minute)}
-	failedBuild := app.App{ID: "app_bad", Owner: ownerOld, State: app.StateError, BuildStartedAt: baseTime.Add(20 * time.Minute), Error: &app.Error{Stage: app.StageBuilding, Code: "BUILD_FAILED", Message: "构建被中断"}}
-	failedStart := builtApp(t, "app_retry", 15, app.StateError)
-	failedStart.Error = &app.Error{Stage: app.StageStarting, Code: "PROJECTION_TIMEOUT", Message: "无法建立投屏"}
-	lost := builtApp(t, "app_lost", 5, app.StateIdle)
-	for _, a := range []app.App{old, running, building, failedBuild, failedStart, lost} {
-		env.registry.Add(a)
-	}
-
-	list, err := env.svc.ListApps(context.Background(), ownerFresh)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var order []string
-	byID := map[string]AppSummary{}
-	for _, item := range list {
-		order = append(order, item.AppID)
-		byID[item.AppID] = item
-	}
-	if want := "app_new app_bad app_retry app_run app_lost app_old"; strings.Join(order, " ") != want {
-		t.Fatalf("order=%v want %s", order, want)
-	}
-
-	check := func(id string, startable bool, reason string) {
-		t.Helper()
-		got := byID[id]
-		if got.Startable != startable || !strings.Contains(got.NotStartableReason, reason) {
-			t.Errorf("%s: startable=%v reason=%q, want %v %q", id, got.Startable, got.NotStartableReason, startable, reason)
-		}
-	}
-	check("app_old", true, "")
-	check("app_retry", true, "")
-	check("app_new", false, "构建")
-	check("app_bad", false, "重新创建")
-	check("app_run", false, "运行")
-	check("app_lost", false, "丢失")
-
-	oldView := byID["app_old"]
-	if oldView.OperationCount != 1 || len(oldView.Operations) != 1 || oldView.Operations[0] != "updateItem" {
-		t.Errorf("operations=%+v", oldView)
-	}
-	if oldView.BuiltAt == nil || oldView.BuildDurationSeconds != 120 || oldView.Name != "name-app_old" {
-		t.Errorf("build info=%+v", oldView)
-	}
-	if n := len([]rune(oldView.Summary)); n != 81 || !strings.HasSuffix(oldView.Summary, "…") {
-		t.Errorf("summary has %d runes: %q", n, oldView.Summary)
-	}
-	if byID["app_run"].ScreenID != "tv_1" || byID["app_retry"].Error == nil || byID["app_retry"].Error.Code != "PROJECTION_TIMEOUT" {
-		t.Errorf("run/retry=%+v / %+v", byID["app_run"], byID["app_retry"])
-	}
-}
-
-func TestStartRetriesABuiltAppWhoseLastStartFailed(t *testing.T) {
-	env := newTestEnv(t, nil)
-	env.svc.SetArtifactStore(&fakeArtifacts{})
-	failed := builtApp(t, "app_1", 0, app.StateError)
-	failed.Error = &app.Error{Stage: app.StageStarting, Code: "PROJECTION_TIMEOUT", Message: "无法建立投屏"}
-	failed.InstanceID, failed.Port, failed.ScreenID, failed.CleanupPending = "inst_stale", 39000, "tv_1", true
-	entry := env.registry.Add(failed)
-
-	view, err := env.svc.StartApp(context.Background(), ownerFresh, "app_1", "tv_1", false)
-	if err != nil || view.State != app.StateRunning {
-		t.Fatalf("view=%+v err=%v", view, err)
-	}
-	if got := env.render.deletedIDs(); len(got) != 1 || got[0] != "inst_stale" {
-		t.Fatalf("the instance left by the failed start was not released: %v", got)
-	}
-	snapshot := entry.Snapshot()
-	if snapshot.Error != nil || snapshot.InstanceID != "inst_1" || snapshot.CleanupPending {
-		t.Fatalf("snapshot=%+v", snapshot)
-	}
-}
-
-func TestStartRefusesWhatCannotBeStarted(t *testing.T) {
-	env := newTestEnv(t, nil)
-	env.svc.SetArtifactStore(&fakeArtifacts{missing: map[string]bool{"app_lost": true}})
-	failedBuild := builtApp(t, "app_bad", 0, app.StateError)
-	failedBuild.Error = &app.Error{Stage: app.StageBuilding, Code: "BUILD_FAILED", Message: "构建被中断"}
-	failedBuild.OpenAPI = nil
-	env.registry.Add(failedBuild)
-	env.registry.Add(builtApp(t, "app_lost", 1, app.StateIdle))
-	ctx := context.Background()
-
-	if _, err := env.svc.StartApp(ctx, ownerFresh, "app_bad", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
-		t.Fatalf("a failed build must stay unstartable, err=%v", err)
-	}
-	if _, err := env.svc.StartApp(ctx, ownerFresh, "app_lost", "tv_1", false); toolCode(t, err) != "ARTIFACT_MISSING" {
-		t.Fatalf("a lost package must be reported, err=%v", err)
-	}
-	if len(env.render.requests()) != 0 {
-		t.Fatal("Render was asked to start something that cannot start")
-	}
-}
-
 func TestOperationsStayVisibleAfterAFailedStartButNotAfterAFailedBuild(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	failedStart := builtApp(t, "app_start", 0, app.StateError)
 	failedStart.Error = &app.Error{Stage: app.StageStarting, Code: "PROJECTION_TIMEOUT"}
 	failedBuild := app.App{ID: "app_build", Owner: ownerOld, State: app.StateError, Error: &app.Error{Stage: app.StageBuilding, Code: "BUILD_FAILED"}}
@@ -221,7 +119,7 @@ func TestOperationsStayVisibleAfterAFailedStartButNotAfterAFailedBuild(t *testin
 }
 
 func TestPruneHistoryKeepsTheNewestTenAndNeverTouchesLiveApps(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	artifacts := &fakeArtifacts{}
 	env.svc.SetArtifactStore(artifacts)
 	// 12 idle apps built at minutes 10..21, plus older apps that must survive or go
@@ -272,7 +170,7 @@ func TestPruneHistoryKeepsTheNewestTenAndNeverTouchesLiveApps(t *testing.T) {
 }
 
 func TestPruneHistorySkipsWhileAStartIsInProgress(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	for i := 0; i < 12; i++ {
 		env.registry.Add(builtApp(t, fmt.Sprintf("app_%02d", i), i, app.StateIdle))
 	}
@@ -285,7 +183,7 @@ func TestPruneHistorySkipsWhileAStartIsInProgress(t *testing.T) {
 }
 
 func TestCreateAppPrunesTheOldestBeyondTen(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	artifacts := &fakeArtifacts{}
 	env.svc.SetArtifactStore(artifacts)
 	for i := 0; i < 10; i++ {
@@ -305,70 +203,13 @@ func TestCreateAppPrunesTheOldestBeyondTen(t *testing.T) {
 	}
 }
 
-// failedStart is an application that built fine and whose start timed out
-// while projecting: the projection outcome is unknown and a Render instance is
-// left behind.
 func failedStart(t *testing.T) app.App {
 	t.Helper()
 	a := builtApp(t, "app_1", 0, app.StateError)
-	a.Error = &app.Error{Stage: app.StageStarting, Code: "PROJECTION_TIMEOUT", Message: "无法建立投屏"}
-	a.InstanceID, a.Port, a.ScreenID, a.TargetID = "inst_stale", 39000, "tv_1", "tv_1"
-	a.PendingProjection, a.CleanupPending = true, true
+	a.Error = &app.Error{Stage: app.StageStarting, Code: "START_FAILED", Message: "无法启动应用"}
+	a.InstanceID, a.Port = "inst_stale", 39000
+	a.CleanupPending = true
 	return a
-}
-
-func TestStartRetriesAfterAProjectionTimeoutWhenTheScreenIsFree(t *testing.T) {
-	env := newTestEnv(t, nil)
-	env.svc.SetArtifactStore(&fakeArtifacts{})
-	env.registry.Add(failedStart(t))
-
-	view, err := env.svc.StartApp(context.Background(), ownerFresh, "app_1", "tv_1", false)
-	if err != nil || view.State != app.StateRunning {
-		t.Fatalf("view=%+v err=%v", view, err)
-	}
-	if got := env.render.deletedIDs(); len(got) != 1 || got[0] != "inst_stale" {
-		t.Fatalf("deleted=%v", got)
-	}
-}
-
-func TestStopAppReleasesAFailedStartAndMakesTheAppStartableAgain(t *testing.T) {
-	env := newTestEnv(t, nil)
-	env.svc.SetArtifactStore(&fakeArtifacts{})
-	entry := env.registry.Add(failedStart(t))
-
-	view, err := env.svc.StopApp(context.Background(), ownerFresh, "app_1")
-	if err != nil || view.State != app.StateIdle || view.Error != nil {
-		t.Fatalf("view=%+v err=%v", view, err)
-	}
-	snapshot := entry.Snapshot()
-	if snapshot.InstanceID != "" || snapshot.CleanupPending || snapshot.PendingProjection || snapshot.ScreenID != "" || snapshot.Error != nil {
-		t.Fatalf("leftovers: %+v", snapshot)
-	}
-	if got := env.render.deletedIDs(); len(got) != 1 || got[0] != "inst_stale" {
-		t.Fatalf("deleted=%v", got)
-	}
-	list, _ := env.svc.ListApps(context.Background(), ownerFresh)
-	if len(list) != 1 || !list[0].Startable {
-		t.Fatalf("list=%+v", list)
-	}
-}
-
-func TestAFailedStartIsKeptWhileAnotherSessionHoldsTheScreen(t *testing.T) {
-	env := newTestEnv(t, nil)
-	env.svc.SetArtifactStore(&fakeArtifacts{})
-	entry := env.registry.Add(failedStart(t))
-	env.casting.target.ActiveSessionID = "someone-elses-session"
-
-	if _, err := env.svc.StartApp(context.Background(), ownerFresh, "app_1", "tv_1", false); toolCode(t, err) != "CLEANUP_PENDING" {
-		t.Fatalf("err=%v", err)
-	}
-	snapshot := entry.Snapshot()
-	if snapshot.State != app.StateError || !snapshot.PendingProjection || snapshot.InstanceID != "inst_stale" {
-		t.Fatalf("the unknown outcome was dropped although a session exists: %+v", snapshot)
-	}
-	if len(env.render.deletedIDs()) != 0 || len(env.casting.stoppedIDs()) != 0 {
-		t.Fatal("something was stopped without proof that it is ours")
-	}
 }
 
 func appForOwner(t *testing.T, owner app.Identity, id string, minutes int) app.App {
@@ -388,7 +229,7 @@ func appForOwner(t *testing.T, owner app.Identity, id string, minutes int) app.A
 }
 
 func TestPruneHistoryGroupsByDeviceAndAgent(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	env.svc.SetArtifactStore(&fakeArtifacts{})
 	ownerA := app.Identity{DeviceID: "device-a", AgentID: "agent-a"}
 	ownerB := app.Identity{DeviceID: "device-b", AgentID: "agent-b"}
@@ -419,7 +260,7 @@ func TestPruneHistoryGroupsByDeviceAndAgent(t *testing.T) {
 }
 
 func TestDeleteAppRemovesAnIdleApplicationAndItsPackage(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	artifacts := &fakeArtifacts{}
 	env.svc.SetArtifactStore(artifacts)
 	env.registry.Add(builtApp(t, "app_idle", 0, app.StateIdle))
@@ -439,7 +280,7 @@ func TestDeleteAppRemovesAnIdleApplicationAndItsPackage(t *testing.T) {
 }
 
 func TestDeleteAppRefusesLiveApplicationsAndForeignOwners(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	env.svc.SetArtifactStore(&fakeArtifacts{})
 	running := builtApp(t, "app_running", 0, app.StateRunning)
 	building := app.App{ID: "app_building", Owner: ownerOld, State: app.StateBuilding, BuildStartedAt: baseTime}
@@ -464,7 +305,7 @@ func TestDeleteAppRefusesLiveApplicationsAndForeignOwners(t *testing.T) {
 }
 
 func TestSummarizeIncludesLifecycleTimestamps(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	value := runningApp(ownerFresh)
 	value.BuildStartedAt = baseTime
 	value.BuildFinishedAt = baseTime.Add(time.Minute)

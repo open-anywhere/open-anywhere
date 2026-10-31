@@ -1,11 +1,11 @@
 # 启动 Gateway
 
-Gateway 是控制面：对灵矽提供 MCP 工具，向 AgentAPI 提交构建任务，把应用操作转发给 Render，并协调 Casting 建立投屏会话。语音入口、云端的编码 Agent 和屏幕之间发生的事情都经过这里。
+Gateway 是控制面：对灵矽提供 MCP 工具，向 AgentAPI 提交构建任务，把应用操作转发给 Render，并把 `stream_url` 返回给灵矽。投屏由现场设备自己完成，控制面不建立投屏会话；语音入口、云端的编码 Agent 和 Render 之间发生的事情经过这里。
 
 ## 前置条件
 
 - Go，版本以 `go.mod` 为准
-- 已经启动 Casting 和 Render，见[启动 Casting](casting.md)与[启动 Render](render.md)
+- 已经启动 Render，见[启动 Render](render.md)。投屏由现场设备完成，Gateway 不需要任何 Casting 服务。
 - AgentAPI 的构建智能体与云端环境。`agent_id`、`environment_id` 在发布阶段创建一次，创建方法见[控制面与 AgentAPI 接口设计](../architecture/interfaces/gateway-agentapi.md)
 - 如果启用用户门户，还需要 Node.js、pnpm，以及灵矽云可访问的公网地址
 
@@ -33,9 +33,6 @@ agentapi:
 render:
   base_url: "http://192.168.1.20:8090"
 
-casting:
-  base_url: "http://127.0.0.1:8080"
-
 artifacts:
   dir: "artifacts"
   base_url: "http://192.168.1.20:8091"
@@ -45,7 +42,7 @@ artifacts:
 
 - Gateway 的内置默认值是 `:8090`，与 Render 的示例端口相同。两者必须分开：`gateway.example.yaml` 已把 `addr` 设为 `:8091`，`render.base_url` 指向 Render 的 `:8090`。用 `0.0.0.0:8091` 可让局域网访问，只在本机测试用 `127.0.0.1:8091`。
 - `artifacts.base_url` 是 Render 下载应用包时使用的地址，必须指向 Gateway 自己（示例 `:8091`），并且从 Render 主机可以访问。写 `127.0.0.1` 会导致 Render 拉不到产物。
-- `render.base_url` 和 `casting.base_url` 从 Gateway 进程访问，必须填渲染主机和投屏服务实际监听的地址。
+- `render.base_url` 从 Gateway 进程访问，必须填 Render 主机实际监听的地址。Gateway 不再有 Casting 地址；虚拟设备要投屏时用 `-casting-interface` 指定发 SSDP 的网卡。
 
 ## 启动
 
@@ -106,18 +103,6 @@ curl http://192.168.1.20:8091/healthz
 
 灵矽云需要能直接访问这个地址。局域网地址只适合本机联调，正式接入需要把 Gateway 暴露到公网，并在灵矽平台上把 MCP 地址配置为 `https://<域名>/mcp`。如果灵矽云经隧道或反向代理访问 Gateway（请求从本机回环地址进来），MCP 入口只放行配置过的 Host，否则返回 `403 invalid Host header`。门户模式下管理后台里的公网 MCP 地址会自动放行，通常不用再配；独立模式或代理改写了 Host 时，把 `public_host` 设为对外使用的 `host:port`，修改后需要重启。直接暴露在公网网卡上时可以留空。
 
-## 屏幕映射（可选）
-
-Casting 发现到的电视可以直接作为屏幕使用。如果想给屏幕起一个稳定的业务标识，配置 `screens` 指向一个 JSON 文件：
-
-```json
-[
-  {"screen_id": "tv-living-room", "name": "客厅电视", "target_id": "<Casting target id>"}
-]
-```
-
-`target_id` 来自 Casting 的 `/v1/targets`。配置后 `get-screens` 会返回这些别名，灵矽用 `screen_id` 指定启动屏幕；留空时只使用投屏服务的发现结果。
-
 ## 启用用户门户（可选）
 
 门户与 Gateway 同进程，多租户、注册登录和管理后台都在其中。前端需要先构建：
@@ -142,10 +127,10 @@ portal:
 门户模式与独立模式的区别：
 
 - 只有 `portal.username` / `portal.password` 变为必填。
-- AgentAPI、Linx（含公网 MCP 地址、智能体模板）、默认 Render/Casting 都在首次启动后由管理员在 `/admin/settings` 配置，页面上每个字段都写明了数据从哪里取，配置文件里不需要再写这些项。
+- AgentAPI、Linx（含公网 MCP 地址、智能体模板）、默认 Render 都在首次启动后由管理员在 `/admin/settings` 配置，页面上每个字段都写明了数据从哪里取，配置文件里不需要再写这些项。
 - MCP Token 首次启动时自动生成并加密保存，在 `/admin/settings` 里可以重新生成，网关会同步到灵矽的 MCP。
 - 旧版 `gateway.yaml` 里已有的这些值只在数据库对应设置为空时写入一次，之后以数据库为准，改配置文件不再生效，可以从文件里删除。
-- 默认拒绝内网地址。本地调试时要把 `services.allow_private_targets` 设为 `true`，才能绑定 `127.0.0.1` 或局域网服务；公网暴露或开放注册时保持 `false`，受信内网单租户部署可设为 `true`，但不要与开放注册同时使用。该开关同时放宽 custom 用户填写的 Render/Casting 地址。
+- 默认拒绝内网地址。本地调试时要把 `services.allow_private_targets` 设为 `true`，才能绑定 `127.0.0.1` 或局域网服务；公网暴露或开放注册时保持 `false`，受信内网单租户部署可设为 `true`，但不要与开放注册同时使用。该开关同时放宽 custom 用户填写的 Render 地址。
 
 启动后打开 <http://192.168.1.20:8091/> 查看 Home，管理员登录后进入 `/admin`，普通用户在 `/register` 注册后使用 `/portal`。浏览器麦克风需要 HTTPS 或 `localhost`，详见[多租户用户 Portal 设计](../architecture/interfaces/portal.md)。
 
@@ -158,20 +143,20 @@ portal:
 
 ## 日志与停止
 
-服务日志直接输出到终端。按 `Ctrl-C` 会关闭 MCP 会话并在 5 秒内排空 HTTP 连接，不会停止 Render 上的应用实例和 Casting 会话。
+服务日志直接输出到终端。按 `Ctrl-C` 会关闭 MCP 会话并在 5 秒内排空 HTTP 连接，不会停止 Render 上的应用实例或电视上正在播放的内容。
 
 ## 常见问题
 
 | 现象 | 排查方向 |
 | --- | --- |
-| 启动报 `-xxx is required` | 独立模式下 AgentAPI、Render、Casting 配置必填；门户模式下只有管理员账号必填 |
+| 启动报 `-xxx is required` | 独立模式下 AgentAPI、Render 配置必填；门户模式下只有管理员账号必填 |
 | 启动报凭证无法解密 | 数据库里的密钥与当前主密钥不匹配，恢复原来的 `portal-data/secret.key` 或 `GATEWAY_SECRET_KEY` |
 | Render 启动应用失败 | 用 Render 主机访问 `artifacts.base_url` 下的下载地址，确认 Render 能拉到产物 |
 | MCP 返回 401 | 请求没有带 `Bearer` token，或 token 与当前 MCP Token 不一致（门户模式在 `/admin/settings` 里重新生成会让旧 token 立即失效） |
-| 应用能构建但投屏失败 | 确认 `casting.base_url` 可达、电视在线，并检查 Render 的 `-public-url` 是否是电视能访问的地址 |
+| 应用能构建但投屏失败 | 确认现场设备与电视同广播域、设备端 `self.cast.list_screens` 能看到电视，并检查 Render 的 `-public-url` 是否是电视能访问的地址 |
 | 门户登录后无法保存平台配置 | 检查主密钥是否可用；查看服务日志中的解密错误 |
 
-- **端口冲突**：Gateway、Render、Casting 必须使用不同端口，启动前确认 `addr`、`render.base_url`、`casting.base_url` 没有互相占用。
+- **端口冲突**：Gateway 与 Render 必须使用不同端口，启动前确认 `addr`、`render.base_url` 没有互相占用。
 - **灵矽调用不了 MCP**：`/mcp` 必须是灵矽云能访问的 HTTPS 地址；`/sse` 只用于已经创建好的旧 MCP，新接入不要用。
 - **构建一直停在 `building`**：检查 `agentapi.base_url`、API Key、`agent_id`、`environment_id` 是否正确，以及 AgentAPI 侧智能体版本是否可用。
 - **更换部署地址后应用下载失败**：修改 `artifacts.base_url` 后重启 Gateway 即可，下载地址会按新配置重写，不需要重建应用。

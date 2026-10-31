@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	core "github.com/open-anywhere/open-anywhere/internal/casting"
 	api "github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
@@ -68,7 +67,7 @@ func parseAdvertisement(data []byte) (advertisement, error) {
 	return advertisement{location: u.String(), ttl: ttl}, nil
 }
 
-func (d *Discoverer) Scan(ctx context.Context) ([]core.Device, error) {
+func (d *Discoverer) Scan(ctx context.Context) ([]Device, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -129,7 +128,7 @@ func (d *Discoverer) Scan(ctx context.Context) ([]core.Device, error) {
 			ads[ad.location] = ad
 		}
 	}
-	devices := make([]core.Device, 0, len(ads))
+	devices := make([]Device, 0, len(ads))
 	var failures []string
 	for _, ad := range ads {
 		device, err := d.describe(ctx, ad)
@@ -171,10 +170,10 @@ func findRenderer(d descriptionDevice) (descriptionDevice, string, bool) {
 	}
 	return descriptionDevice{}, "", false
 }
-func (d *Discoverer) describe(ctx context.Context, ad advertisement) (core.Device, error) {
+func (d *Discoverer) describe(ctx context.Context, ad advertisement) (Device, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ad.location, nil)
 	if err != nil {
-		return core.Device{}, err
+		return Device{}, err
 	}
 	client := d.Client
 	if client == nil {
@@ -182,39 +181,39 @@ func (d *Discoverer) describe(ctx context.Context, ad advertisement) (core.Devic
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return core.Device{}, err
+		return Device{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return core.Device{}, fmt.Errorf("description: HTTP %d", resp.StatusCode)
+		return Device{}, fmt.Errorf("description: HTTP %d", resp.StatusCode)
 	}
 	var root struct {
 		Base   string            `xml:"URLBase"`
 		Device descriptionDevice `xml:"device"`
 	}
 	if err := xml.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&root); err != nil {
-		return core.Device{}, err
+		return Device{}, err
 	}
 	renderer, control, ok := findRenderer(root.Device)
 	if !ok || strings.TrimSpace(renderer.UDN) == "" {
-		return core.Device{}, fmt.Errorf("missing MediaRenderer identity or AVTransport service")
+		return Device{}, fmt.Errorf("missing MediaRenderer identity or AVTransport service")
 	}
 	base, _ := url.Parse(ad.location)
 	if root.Base != "" {
 		base, err = url.Parse(root.Base)
 		if err != nil {
-			return core.Device{}, err
+			return Device{}, err
 		}
 	}
 	ref, err := url.Parse(control)
 	if err != nil {
-		return core.Device{}, err
+		return Device{}, err
 	}
 	resolved := base.ResolveReference(ref)
 	if resolved.Hostname() == "" || (resolved.Scheme != "http" && resolved.Scheme != "https") {
-		return core.Device{}, fmt.Errorf("invalid AVTransport control URL")
+		return Device{}, fmt.Errorf("invalid AVTransport control URL")
 	}
-	return core.Device{
+	return Device{
 		Target:     api.Target{ID: "dlna-" + strings.TrimPrefix(renderer.UDN, "uuid:"), Name: renderer.Name, State: api.TargetOnline, Endpoints: []api.Endpoint{{ID: "dlna-renderer", Protocol: "dlna", Capabilities: api.Capabilities{Formats: []string{"mpegts"}, VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"}, Streaming: true}}}},
 		ControlURL: resolved.String(), ExpiresAt: time.Now().Add(ad.ttl),
 	}, nil

@@ -117,11 +117,9 @@ describe('portal endpoints', () => {
       'GET /api/portal/apps': ok({ apps: [] }),
       'GET /api/portal/apps/a%2Fb': ok({ app: {} }),
       'DELETE /api/portal/apps/a%2Fb': { status: 204 },
-      'POST /api/portal/screens/s%2F1/stop': ok({ screen_id: 's/1', app: {} }),
       'GET /api/portal/services': ok({ mode: 'managed' }),
       'PUT /api/portal/services': ok({ mode: 'custom' }),
       'POST /api/portal/services/test': ok({ render: { ok: true } }),
-      'GET /api/portal/screens': ok({ screens: [] }),
       'GET /api/portal/devices/a%2Fb/mcps': ok({ required: null, available: [] }),
       'PUT /api/portal/devices/a%2Fb/mcps': ok({ ids: [] }),
     })
@@ -140,11 +138,9 @@ describe('portal endpoints', () => {
     await api.listApps()
     await api.getApp('a/b')
     await api.deleteApp('a/b')
-    await api.stopScreen('s/1')
     await api.services()
     await api.updateServices({ mode: 'custom' })
     await api.testServices({ mode: 'managed' })
-    await api.listScreens()
     await api.getDeviceMcps('a/b')
     await api.setDeviceMcps('a/b', ['mcp_1'])
 
@@ -163,11 +159,9 @@ describe('portal endpoints', () => {
       'GET /api/portal/apps',
       'GET /api/portal/apps/a%2Fb',
       'DELETE /api/portal/apps/a%2Fb',
-      'POST /api/portal/screens/s%2F1/stop',
       'GET /api/portal/services',
       'PUT /api/portal/services',
       'POST /api/portal/services/test',
-      'GET /api/portal/screens',
       'GET /api/portal/devices/a%2Fb/mcps',
       'PUT /api/portal/devices/a%2Fb/mcps',
     ])

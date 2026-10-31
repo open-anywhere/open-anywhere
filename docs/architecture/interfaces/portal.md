@@ -4,14 +4,14 @@
 
 ## 1. 定位与范围
 
-Gateway 以厂商托管的在线 Portal（SaaS 形态）运行：管理员先登录管理后台，配置平台级 AgentAPI、Linx 与可选的默认 Render/Casting 服务；普通用户自助注册，系统自动用平台 Linx Key 创建一个智能体（对应一台虚拟 Linx 设备），用户登录后即可查看自己的智能体与应用、绑定服务并直接语音对话。
+Gateway 以厂商托管的在线 Portal（SaaS 形态）运行：管理员先登录管理后台，配置平台级 AgentAPI、Linx 与可选的默认 Render 服务；普通用户自助注册，系统自动用平台 Linx Key 创建一个智能体（对应一台虚拟 Linx 设备），用户登录后即可查看自己的智能体与应用、绑定服务并直接语音对话。
 
 Portal 与 Gateway 同进程、同端口、同 SQLite：
 
 - 管理员与普通用户使用同一个登录入口，按角色进入 `/admin` 或 `/portal`。
 - 注册时自动创建一台虚拟智能体；之后用户可以再添加虚拟设备（各自创建一个智能体），也可以用激活码把硬件设备绑定到已有智能体，最多 10 台。应用归属仍是 `(MAC, AgentID)`，与灵矽 MCP 侧的判断一致。
-- Render/Casting 按用户解析：平台默认服务（managed）或用户自己的公网服务（custom）。
-- 本期不处理局域网穿透、连接器与计费；Render/Casting 假定已作为公网服务暴露。
+- Render 绑定按用户解析：平台默认服务（managed）或用户自己的公网服务（custom）。控制面不在 `start-app` 中调用任何投屏服务，生产投屏由现场语音设备完成。
+- 本期不处理局域网穿透、连接器与计费；Render 假定已作为公网服务暴露。生产投屏由现场设备固件直接完成，控制面不持有屏幕状态。
 
 数据库从单账号 schema v2 平滑升级到 v3：已有账号保留并默认为 `role=user`；配置的引导账号由 `EnsureAdmin` 提升为管理员，已有设备、应用与凭据保持不变。
 
@@ -139,32 +139,30 @@ sequenceDiagram
 - `openapi.yaml` 由已保存的规范重新序列化为 YAML，以 `text/yaml` 返回，支持查看与下载；页面按文本渲染，不注入 HTML。
 - 删除只允许 `idle` / 可清理的 `error`；`building`、`running` 或仍有待清理资源时返回 `APP_BUSY`。启动仍由灵矽语音侧的 `start-app` 完成，Portal 不提供手动投屏。
 
-### 4.3 屏幕
+### 4.3 屏幕（已移除）
 
-- 屏幕来自当前用户绑定的 Casting 服务；`managed` 时使用平台默认 Casting，并可把部署配置的 `screens` catalog 作为屏幕别名；`custom` 时直接使用 Casting 发现的 target ID。
-- 返回 `screen_id`、`name`、`online`、`status`、`current_app`（可选），不返回 `target_id`、`active_session_id`、`projection_session_id`、`endpoint_id` 或 `instance_id`。
-- `status` 取 `free`、`showing_app`、`external`、`unavailable`；只有自己的应用会填 `current_app`，其他租户占用显示为 `external`。
-- “停止投屏”只停止当前用户自己的应用并释放屏幕；没有自有应用时返回 `404 SCREEN_APP_NOT_FOUND`。
-- 屏幕 ID 按用户作用域：两个用户即使使用相同的 `screen_id`，在各自 Casting 上也互不影响。
+Portal 不再有屏幕页，也没有 `GET /api/portal/screens`。屏幕发现与投放由现场设备完成，控制面既不查询也不保存屏幕状态。
 
 ### 4.4 服务绑定
 
-每个用户可以为自己的账号选择 Render 与 Casting：
+每个用户可以为自己的账号选择 Render：
 
 | 模式 | 行为 |
 | --- | --- |
-| `managed`（默认） | 使用管理员配置的平台默认 Render/Casting；读取绑定本身返回 `managed.available`，真正访问屏幕或启动应用时若平台未配置则返回 `SERVICE_NOT_CONFIGURED` |
-| `custom` | 用户填写两个公网地址：Render URL 与 Casting URL；可分别设置访问令牌（当前只透传，服务端不校验） |
+| `managed`（默认） | 使用管理员配置的平台默认 Render。读取绑定本身返回 `managed.available`，启动应用时若平台未配置则返回 `SERVICE_NOT_CONFIGURED` |
+| `custom` | 用户填写 Render 公网地址并可选设置访问令牌（当前只透传，服务端不校验） |
+
+投屏的产品路径不经过控制面：`start-app` 只返回 `stream_url`，屏幕由现场设备的 `self.cast.*` 工具发现和投放，见 [现场侧投屏](../home-casting.md)。
 
 约束与行为：
 
-- `custom` 必须同时有 Render URL 和 Casting URL，否则 `409 SERVICE_NOT_CONFIGURED`。
-- 可选令牌保存后只返回 `render_token_configured` / `casting_token_configured`，不回显明文；再次保存时省略或传空表示保留，`clear_render_token` / `clear_casting_token` 才显式清除。**Render 与 Casting 当前不校验 `Authorization`**：令牌只是由 Gateway 透传，不能用它判断 custom 部署已受保护；用户自建服务必须自己加网络层访问控制。
+- `custom` 必须填写 Render URL，否则 `409 SERVICE_NOT_CONFIGURED`。
+- 可选令牌保存后只返回 `render_token_configured`，不回显明文；再次保存时省略或传空表示保留，`clear_render_token` 才显式清除。**Render 当前不校验 `Authorization`**：令牌只是由 Gateway 透传，不能用它判断 custom 部署已受保护；用户自建服务必须自己加网络层访问控制。
 - 切换到 `managed` 会保留已保存的自定义地址与密文 token，方便切回；显式清除标记仍然生效。
-- 保存前检查该用户是否有运行中或待清理的应用；有则 `409 APPS_RUNNING`，要求先在屏幕页停止，避免旧实例失去清理地址。
+- 保存前检查该用户是否有运行中或待清理的应用；有则 `409 APPS_RUNNING`，要求先停止应用，避免旧实例失去清理地址。
 - 保存/测试的地址必须通过出站策略：只接受 `http`/`https`，拒绝 userinfo、fragment、非法端口，默认拒绝回环、私网、link-local、组播与 CGNAT 地址。本地调试或受信局域网部署可设置 `services.allow_private_targets=true` 放行；它同时放宽所有用户填写的地址，不要与开放注册同时使用。
-- 测试连接按用户限流 10 次/分钟（`429 SERVICE_TEST_RATE_LIMITED`）；省略 token 时使用已保存的密文。返回 Render/Casting 是否可达与屏幕数量，不返回屏幕详情。
-- 平台默认 Render/Casting 地址由管理员配置；管理员修改默认服务前，如果仍有依赖平台托管服务（`managed` 或无绑定记录）的应用处于运行中或待清理状态，返回 `409 APPS_RUNNING`，要求先停止。只使用自有服务的用户不受此限制。
+- 测试连接按用户限流 10 次/分钟（`429 SERVICE_TEST_RATE_LIMITED`）；省略 token 时使用已保存的密文。只返回 Render 是否可达。
+- 平台默认 Render 地址由管理员配置；管理员修改默认服务前，如果仍有依赖平台托管服务（`managed` 或无绑定记录）的应用处于运行中或待清理状态，返回 `409 APPS_RUNNING`，要求先停止。只使用自有服务的用户不受此限制。
 
 ### 4.5 语音与实时字幕
 
@@ -190,7 +188,7 @@ sequenceDiagram
 | 用户详情 | 用户信息、设备/智能体列表、应用摘要；不返回用户的服务绑定地址或 token |
 | 智能体 | 全部设备及开通状态、步骤、错误、所属用户；重试开通 |
 | 全局应用 | 全局应用列表（状态/关键词过滤，默认 100 条、上限 200）；显示所属用户/智能体、状态、构建时间、操作数；只读 |
-| 平台设置 | AgentAPI、Linx、默认 Render/Casting、注册开关；秘密字段只显示是否已配置与更新时间/修改人，不回显值；测试连接 |
+| 平台设置 | AgentAPI、Linx、默认 Render、注册开关；秘密字段只显示是否已配置与更新时间/修改人，不回显值；测试连接 |
 
 管理端边界：
 
@@ -227,9 +225,7 @@ sequenceDiagram
 | `POST` | `/api/portal/devices/{id}/reconnect` | 重建连接，连接正常时也会替换为新连接；设备未注册返回 `DEVICE_NOT_READY` |
 | `GET` | `/api/portal/services` | 当前服务绑定；秘密只返回 `configured` |
 | `PUT` | `/api/portal/services` | 保存 managed/custom、地址与可选 token |
-| `POST` | `/api/portal/services/test` | 测试当前或待保存绑定；返回 Render/Casting 状态与屏幕数 |
-| `GET` | `/api/portal/screens` | 当前用户 Casting 的屏幕 |
-| `POST` | `/api/portal/screens/{screen_id}/stop` | 停止自己的应用并释放屏幕 |
+| `POST` | `/api/portal/services/test` | 测试当前或待保存绑定；返回 Render 状态 |
 | `GET` | `/api/portal/apps` | 当前用户应用 |
 | `GET` | `/api/portal/apps/{id}` | 应用详情与操作 |
 | `GET` | `/api/portal/apps/{id}/openapi.yaml` | OpenAPI 文档，`text/yaml` |
@@ -260,7 +256,7 @@ POST /voice/{device_id}/abort
 | `GET` | `/api/admin/apps?state=&query=&limit=` | 全局应用 |
 | `GET` | `/api/admin/settings` | 平台设置（秘密脱敏） |
 | `PUT` | `/api/admin/settings` | 保存平台设置；默认服务变更受 `APPS_RUNNING` 保护 |
-| `POST` | `/api/admin/settings/test` | 测试 Linx/Render/Casting；限流 20 次/分钟 |
+| `POST` | `/api/admin/settings/test` | 测试 Linx/Render；限流 20 次/分钟 |
 | `GET` | `/api/admin/mcp` | 灵矽账号下全部 MCP 服务，网关自己的排在最前，并标出已开放给用户的 |
 | `PUT` | `/api/admin/mcp/shared` | `{ids}` 选择开放给用户的 MCP 服务；未知服务或网关自己的服务返回 400 |
 | `POST` | `/api/admin/mcp/sync` | 把当前 MCP 地址与 token 同步到灵矽上网关自己的服务 |
@@ -294,7 +290,6 @@ POST /voice/{device_id}/abort
 | `ACTIVATION_CODE_INVALID` / `DEVICE_ALREADY_BOUND` / `DEVICE_EXISTS` | 400 / 409 / 409 | 激活码无效或已使用；灵矽上设备已被绑定；该硬件已添加过 |
 | `LAST_DEVICE` / `DEVICE_HAS_HARDWARE` | 409 | 至少保留一台设备；智能体上仍绑着硬件 |
 | `UNBIND_FAILED` / `PLATFORM_ERROR` / `PLATFORM_UNAVAILABLE` / `PLATFORM_AUTH_FAILED` | 502 | 向灵矽解绑失败；调用灵矽失败、不可用，或平台 API Key 无效 |
-| `SCREEN_DISCOVERY_FAILED` | 503 | Casting 不可用，无法发现屏幕 |
 | `SCREEN_APP_NOT_FOUND` | 404 | 屏幕上没有当前用户的应用 |
 | `APP_BUILDING` / `APP_BUSY` / `APP_IN_ERROR` | 409 | 应用状态不允许删除或停止 |
 | `STOP_FAILED` | 502 | 停止投屏失败 |
@@ -322,7 +317,7 @@ MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MIS
 
 - `portal_users` 新增 `role`（`admin` / `user`）、`status`（`active` / `disabled`）与 `last_login_at`；旧账号默认 `user`，配置引导账号由 `EnsureAdmin` 提升为管理员。
 - v3 的唯一索引（一个用户最多一台虚拟设备、一个 `linx_agent_id` 只能一台设备）在 v4 被替换：设备数量由接口限制（每账号 10 台），唯一性改由 `mac` 全局唯一与 `(linx_agent_id, mac)` 唯一保证，使硬件可以共用用户已有的智能体。
-- `portal_service_bindings`：每用户一行，`mode` 为 `managed` / `custom`，保存两个地址与加密后的 Render/Casting token。
+- `portal_service_bindings`：每用户一行，`mode` 为 `managed` / `custom`，保存 Render 地址与加密后的 token。
 - `platform_settings`：平台级键值（AgentAPI、Linx、默认服务、注册开关），记录 `is_secret`、`updated_at`、`updated_by`。
 - `apps` 表不变，归属仍通过 `portal_devices` 的 `(mac, linx_agent_id)` 反查。
 - 秘密字段使用 AES-256-GCM，密文格式 `enc:v1:<base64(nonce|ciphertext)>`，AAD 绑定上下文：平台设置为 `platform:<key>`，用户 token 为 `binding:<user_id>:<render|casting>`。
@@ -333,7 +328,7 @@ MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MIS
 - **RBAC**：`/api/admin/*` 全部经过 `withAdmin`；用户端接口不接受 `user_id` / `role` 参数；管理员操作只按目标 ID。
 - **归属**：设备、应用、屏幕、语音都按登录用户或 MCP `(DeviceID, AgentID)` 校验；跨用户访问一律 404，不暴露资源是否存在。
 - **MCP 身份**：Portal 模式要求 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id` 三头齐全；`/mcp` 每个请求独立校验，`/sse` 建连时校验，`/mcp/message` 每次 POST 与 SSE 会话精确一致，并查库确认设备存在、已注册、用户 active。MCP Token 在 Portal 模式下由平台生成。
-- **SSRF**：用户填写的 Render/Casting 地址、平台默认地址、连接测试、`SendRequest` 与 `AppBaseURL` 都走同一套 netguard 策略；DNS 与重定向在 dial 时复核，禁用环境代理。`services.allow_private_targets` 只用于本地调试或受信单租户的局域网部署，开启后会同时放宽所有用户填写的地址。
+- **SSRF**：用户填写的 Render 地址、平台默认地址、连接测试、`SendRequest` 与 `AppBaseURL` 都走同一套 netguard 策略；DNS 与重定向在 dial 时复核，禁用环境代理。`services.allow_private_targets` 只用于本地调试或受信单租户的局域网部署，开启后会同时放宽所有用户填写的地址。
 - **密钥脱敏**：平台 API Key、用户服务 token、设备 token、`password_hash`、会话 hash、`credential_path`、`target_id`、`projection_session_id` 不出现在 API 响应、页面或日志中；秘密字段只返回是否已配置（平台设置另带更新时间/修改人），不回显明文。
 - **管理端 DTO 边界**：管理端用户/应用响应与页面不包含屏幕字段、用户服务绑定地址/token、prompt 正文或任何密钥；管理端没有屏幕接口。
 - **请求防护**：沿用同源检查 + JSON Content-Type；SQL 全部参数绑定；登录与注册限流；停用用户立即失效会话并拒绝 MCP。
@@ -344,7 +339,7 @@ MCP 连接级错误码（见 [应用管理 MCP](app-management-mcp.md)）：`MIS
 - 计费、配额、套餐、发票。
 - 邮箱验证、找回密码、修改密码、删除账号。
 - 管理员查看或操作屏幕内容；管理员单独停止/接管用户应用（仅在停用用户时 best-effort 停止）。
-- 局域网发现、穿透、连接器；用户自行部署 Render/Casting 的安装流程。
+- 局域网发现、穿透、连接器；用户自行部署 Render 的安装流程。
 - 文字输入式对话（只做语音 + 实时字幕）。
 - 多管理员邀请、细粒度权限、审计表、多地域/多活。
 - 应用市场、分享、模板；多副本 Gateway。
@@ -365,15 +360,15 @@ portal:
 services:
   allow_private_targets: false   # 仅本地调试设为 true
 
-# MCP Token、Linx、AgentAPI、默认 Render/Casting 都在管理后台 /admin/settings 配置，
+# MCP Token、Linx、AgentAPI、默认 Render 都在管理后台 /admin/settings 配置，
 # 配置文件里不需要再写（旧配置里已有的值只在数据库为空时写入一次）。
 ```
 
 - 先构建前端：`cd portal && pnpm install && pnpm build`；未构建时 `/` 返回 503。
 - 单文件部署：`make build-gateway-embed`（等价于 `go build -tags portalembed`）。`pnpm build` 会把 `portal/dist` 同步到 `internal/gateway/portal/webdist` 供 `go:embed` 使用，运行时把 `portal.web_embedded` 设为 `true`。未带 tag 的二进制配置该项会启动失败，避免误以为前端已内嵌。
 - 灵矽云必须能访问管理后台里填写的“公网 MCP 地址”；局域网地址不可达。新建 MCP 使用 Streamable HTTP，地址应以 `/mcp` 结尾；`/sse` 是旧版 Legacy SSE 端点，仅已有服务继续使用。
-- Render 与 Casting 不得直接暴露在公网：Render 没有鉴权与运行时隔离，Casting 没有用户鉴权。托管部署把它们放在受信网络或反向代理之后，并在完成租户隔离前保持注册关闭。
+- Render 不得直接暴露在公网：它没有鉴权与运行时隔离。托管部署把它放在受信网络或反向代理之后，并在完成租户隔离前保持注册关闭。
 - 浏览器麦克风要求 HTTPS 或 `localhost`。
 - 单进程、单 SQLite；一个数据库只对应一个 Gateway。
 - 备份时必须同时保留数据库、`artifacts/`、`portal-data/devices/` 与 `secret.key`（或 `GATEWAY_SECRET_KEY`）；四者缺一不可，步骤见[部署与备份](../../operations/deploy.md)。WAL 模式下数据库用 SQLite `.backup`，不能只拷贝主文件；备份不是原子快照，恢复后按 deploy.md 对账。
-- 平台 AgentAPI/Linx（公网 MCP 地址、MCP 名称、助手名称、模型）/默认 Render/Casting 都在管理后台配置，字段下方说明了数据来源；MCP Token 首次启动自动生成，可在后台重新生成并同步到灵矽 MCP。`gateway.yaml` 中的对应值只在设置尚无值时 seed 一次，已有设置不会被覆盖，可以从文件里删除。
+- 平台 AgentAPI/Linx（公网 MCP 地址、MCP 名称、助手名称、模型）/默认 Render 都在管理后台配置，字段下方说明了数据来源；MCP Token 首次启动自动生成，可在后台重新生成并同步到灵矽 MCP。`gateway.yaml` 中的对应值只在设置尚无值时 seed 一次，已有设置不会被覆盖，可以从文件里删除。

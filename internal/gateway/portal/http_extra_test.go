@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -214,7 +213,7 @@ func TestHTTPAppListDetailOpenAPIAndDelete(t *testing.T) {
 	spec := portalTestSpec(t)
 	running := app.App{
 		ID: "app_running", Owner: owner, Name: "quiz", State: app.StateRunning,
-		ScreenID: "tv_1", StartedAt: now.Add(-time.Minute), BuildStartedAt: now.Add(-time.Hour),
+		StartedAt: now.Add(-time.Minute), BuildStartedAt: now.Add(-time.Hour),
 		BuildFinishedAt: now.Add(-30 * time.Minute), BuildDuration: 30 * time.Minute, OpenAPI: spec,
 	}
 	building := app.App{
@@ -254,7 +253,7 @@ func TestHTTPAppListDetailOpenAPIAndDelete(t *testing.T) {
 	if err := json.Unmarshal(payload, &detail); err != nil {
 		t.Fatalf("body %s: %v", payload, err)
 	}
-	if detail.App.ScreenID != "tv_1" || detail.App.StartedAt == nil || detail.App.UptimeSeconds < 0 ||
+	if detail.App.StartedAt == nil || detail.App.UptimeSeconds < 0 ||
 		len(detail.App.Operations) != 1 || detail.App.Operations[0].OperationID != "play" || !detail.App.OpenAPIAvailable {
 		t.Fatalf("detail=%+v", detail.App)
 	}
@@ -347,40 +346,6 @@ func TestHTTPRegistrationReportsASettingsFailure(t *testing.T) {
 		`{"username":"late","password":"password123"}`, map[string]string{"Origin": env.server.URL})
 	if response.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s", response.StatusCode, payload)
-	}
-}
-
-func TestHTTPScreenHandlersReportServiceFailures(t *testing.T) {
-	env := newPortalHTTPEnv(t)
-	env.login(t)
-	env.api.screens = &fakeScreens{viewErr: errors.New("casting down")}
-	response, payload := env.do(t, http.MethodGet, "/api/portal/screens", "", nil)
-	if response.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("list status=%d body=%s", response.StatusCode, payload)
-	}
-	env.api.screens = &fakeScreens{stopErr: errors.New("casting down")}
-	response, payload = env.do(t, http.MethodPost, "/api/portal/screens/tv_1/stop", `{}`, map[string]string{"Origin": env.server.URL})
-	if response.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("stop status=%d body=%s", response.StatusCode, payload)
-	}
-	env.api.screens = nil
-	response, payload = env.do(t, http.MethodGet, "/api/portal/screens", "", nil)
-	if response.StatusCode != http.StatusServiceUnavailable || errorCode(t, payload) != "SCREEN_DISCOVERY_FAILED" {
-		t.Fatalf("unavailable status=%d body=%s", response.StatusCode, payload)
-	}
-	response, payload = env.do(t, http.MethodPost, "/api/portal/screens/tv_1/stop", `{}`, map[string]string{"Origin": env.server.URL})
-	if response.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("unavailable stop status=%d body=%s", response.StatusCode, payload)
-	}
-
-	// Ownership lookup failures surface as storage errors.
-	env.api.screens = &fakeScreens{}
-	if err := env.db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	response, payload = env.do(t, http.MethodGet, "/api/portal/screens", "", nil)
-	if response.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("closed list status=%d body=%s", response.StatusCode, payload)
 	}
 }
 

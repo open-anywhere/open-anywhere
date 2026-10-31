@@ -134,9 +134,6 @@ func TestAdminAppsOmitScreenAndPromptFields(t *testing.T) {
 		Prompt:              "隐藏的提示词摘要",
 		Name:                "quiz",
 		State:               app.StateRunning,
-		ScreenID:            "screen_secret",
-		TargetID:            "target_secret",
-		ProjectionSessionID: "projection_secret",
 		BuildStartedAt:      time.Now().UTC(),
 	})
 	env.api.apps = service.NewWithBindings(registry, nil, nil, nil, nil, service.Config{})
@@ -147,8 +144,7 @@ func TestAdminAppsOmitScreenAndPromptFields(t *testing.T) {
 	}
 	text := string(payload)
 	for _, forbidden := range []string{
-		"screen_id", "target_id", "projection_session_id", "summary",
-		"screen_secret", "target_secret", "projection_secret", "隐藏的提示词摘要",
+		"summary", "隐藏的提示词摘要",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("admin apps leak %q: %s", forbidden, payload)

@@ -9,7 +9,7 @@ func TestRegistryOwnershipAndQueries(t *testing.T) {
 	registry := NewRegistry()
 	owner := Identity{DeviceID: "device", SessionID: "session"}
 	record := registry.Add(App{ID: "app_1", Owner: owner, State: StateBuilding})
-	other := registry.Add(App{ID: "app_2", Owner: Identity{DeviceID: "device", SessionID: "other"}, State: StateRunning, ScreenID: "tv"})
+	registry.Add(App{ID: "app_2", Owner: Identity{DeviceID: "device", SessionID: "other"}, State: StateRunning})
 
 	if got, ok := registry.Get("app_1"); !ok || !got.Snapshot().Owner.SameOwner(owner) {
 		t.Fatalf("app_1 owner = %+v", got)
@@ -17,15 +17,11 @@ func TestRegistryOwnershipAndQueries(t *testing.T) {
 	if !record.Snapshot().Owner.SameOwner(Identity{DeviceID: "device", SessionID: "reconnected"}) {
 		t.Fatal("same device with a new Linx session must still own the app")
 	}
-	if running, ok := registry.RunningOnScreen("tv"); !ok || running.ID != "app_2" {
-		t.Fatalf("RunningOnScreen = %+v, %v", running, ok)
-	}
 
 	record.Update(func(a *App) {
 		a.State = StateRunning
-		a.ScreenID = "tv"
 	})
-	if got := record.Snapshot(); got.State != StateRunning || got.ScreenID != "tv" {
+	if got := record.Snapshot(); got.State != StateRunning {
 		t.Fatalf("snapshot = %+v", got)
 	}
 
@@ -33,7 +29,6 @@ func TestRegistryOwnershipAndQueries(t *testing.T) {
 	if _, ok := registry.Get("app_2"); ok {
 		t.Fatal("app_2 should be removed")
 	}
-	_ = other
 }
 
 func TestRegistryAddIsIdempotent(t *testing.T) {

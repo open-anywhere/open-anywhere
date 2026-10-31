@@ -19,20 +19,12 @@ import (
 // Request limits keep a hostile browser from allocating unbounded bodies.
 const maxJSONBody = 1 << 20
 
-// screenService is the owner-aware screen surface the portal needs. It is an
-// interface so HTTP tests can substitute a fake without a casting service.
-type screenService interface {
-	GetScreensFor(ctx context.Context, owners []app.Identity) ([]service.ScreenView, error)
-	StopAppOnScreen(ctx context.Context, owners []app.Identity, screenID string) (service.StatusView, error)
-}
-
 // API serves /api/portal. Every handler below the auth boundary receives the
 // session user; ownership is checked again when a device or app is touched.
 type API struct {
 	auth      *Auth
 	db        *store.DB
 	apps      *service.Service
-	screens   screenService
 	voice     *VoiceManager
 	provision *Provisioner
 	web       http.Handler
@@ -62,9 +54,6 @@ func NewAPI(db *store.DB, auth *Auth, apps *service.Service, voice *VoiceManager
 		web:       NewRootSPA(webDir),
 		now:       func() time.Time { return time.Now().UTC() },
 		logf:      log.Printf,
-	}
-	if apps != nil {
-		api.screens = apps
 	}
 	api.serviceTest = newWindowLimiter(api.now, time.Minute, 10)
 	api.adminTest = newWindowLimiter(api.now, time.Minute, 20)
@@ -117,8 +106,6 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/portal/devices/{id}/retry", a.withUser(a.retryDevice))
 	mux.HandleFunc("POST /api/portal/devices/{id}/disconnect", a.withUser(a.disconnectDevice))
 	mux.HandleFunc("POST /api/portal/devices/{id}/reconnect", a.withUser(a.reconnectDevice))
-	mux.HandleFunc("GET /api/portal/screens", a.withUser(a.listScreens))
-	mux.HandleFunc("POST /api/portal/screens/{screen_id}/stop", a.withUser(a.stopScreen))
 	mux.HandleFunc("GET /api/portal/services", a.withUser(a.getServices))
 	mux.HandleFunc("PUT /api/portal/services", a.withUser(a.updateServices))
 	mux.HandleFunc("POST /api/portal/services/test", a.withUser(a.testServices))
@@ -352,56 +339,6 @@ func (a *API) reconnectDevice(w http.ResponseWriter, r *http.Request, user store
 	writeJSON(w, http.StatusOK, map[string]any{"device": a.deviceView(device)})
 }
 
-func (a *API) listScreens(w http.ResponseWriter, r *http.Request, user store.PortalUser) {
-	if a.screens == nil {
-		writeError(w, apiError(http.StatusServiceUnavailable, "SCREEN_DISCOVERY_FAILED", "屏幕服务不可用"))
-		return
-	}
-	identities, err := a.ownedIdentities(r.Context(), user.ID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	views, err := a.screens.GetScreensFor(r.Context(), ownerIdentities(identities))
-	if err != nil {
-		writeError(w, mapServiceError(err))
-		return
-	}
-	out := make([]ScreenView, 0, len(views))
-	for _, view := range views {
-		out = append(out, ScreenView{
-			ScreenID:   view.ScreenID,
-			Name:       view.Name,
-			Online:     view.Online,
-			Status:     view.Status,
-			CurrentApp: view.CurrentApp,
-		})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"screens": out})
-}
-
-func (a *API) stopScreen(w http.ResponseWriter, r *http.Request, user store.PortalUser) {
-	if a.screens == nil {
-		writeError(w, apiError(http.StatusServiceUnavailable, "SCREEN_DISCOVERY_FAILED", "屏幕服务不可用"))
-		return
-	}
-	identities, err := a.ownedIdentities(r.Context(), user.ID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	screenID := r.PathValue("screen_id")
-	status, err := a.screens.StopAppOnScreen(r.Context(), ownerIdentities(identities), screenID)
-	if err != nil {
-		writeError(w, mapServiceError(err))
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"screen_id": screenID,
-		"app":       map[string]any{"app_id": status.AppID, "state": status.State},
-	})
-}
-
 func (a *API) listApps(w http.ResponseWriter, r *http.Request, user store.PortalUser) {
 	items, err := a.appItems(r.Context(), user)
 	if err != nil {
@@ -435,9 +372,6 @@ func (a *API) getApp(w http.ResponseWriter, r *http.Request, user store.PortalUs
 	}
 	detail := AppDetailView{AppView: item.AppView, Operations: operations}
 	detail.Message = status.Message
-	if status.ScreenID != "" {
-		detail.ScreenID = status.ScreenID
-	}
 	if status.StartedAt != nil {
 		detail.StartedAt = status.StartedAt
 	}
@@ -521,7 +455,7 @@ func (a *API) VoiceHandler() http.Handler {
 		// needs. The debug console, device registration and connection controls
 		// remain available when voiceentry runs standalone.
 		switch tail {
-		case "status", "events", "audio", "playback", "pause", "resume", "abort":
+		case "status", "events", "audio", "playback", "say", "announce", "pause", "resume", "abort":
 		default:
 			http.NotFound(w, r)
 			return

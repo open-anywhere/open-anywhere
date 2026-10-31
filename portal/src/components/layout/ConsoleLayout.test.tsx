@@ -9,7 +9,6 @@ function portalRoutes(overrides: Record<string, unknown> = {}) {
   return {
     'GET /api/portal/me': ok({ user: makeUser(), devices: [makeDevice()] }),
     'GET /api/portal/apps': ok({ apps: [] }),
-    'GET /api/portal/screens': ok({ screens: [] }),
     'GET /api/portal/services': ok(makeServices()),
     ...overrides,
   }
@@ -21,7 +20,7 @@ describe('ConsoleLayout', () => {
     await renderApp('/portal')
 
     const nav = within(screen.getByRole('navigation', { name: '控制台导航' }))
-    for (const label of ['概览', '智能体', '设备', '应用', '屏幕', '屏幕连接', '动态', '设置']) {
+    for (const label of ['概览', '智能体', '设备', '应用', '服务', '动态', '设置']) {
       expect(nav.getByRole('link', { name: label })).toBeInTheDocument()
     }
     expect(nav.getByRole('link', { name: '概览' })).toHaveAttribute('aria-current', 'page')

@@ -3,20 +3,17 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/render"
-	"github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
 func TestGetAppOperations(t *testing.T) {
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	ctx := context.Background()
 	env.registry.Add(app.App{ID: "idle", Owner: owner, State: app.StateIdle, OpenAPI: mustSpec(t)})
 	env.registry.Add(app.App{ID: "empty", Owner: owner, State: app.StateIdle})
@@ -50,7 +47,7 @@ func TestGetAppOperations(t *testing.T) {
 
 func TestRunMonitorUntilCanceled(t *testing.T) {
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	env.svc.cfg.MonitorInterval = time.Millisecond
 	env.registry.Add(runningApp(owner))
 	env.render.getInstance = render.App{InstanceID: "inst_1", State: render.StateError}
@@ -72,20 +69,6 @@ func TestRunMonitorUntilCanceled(t *testing.T) {
 	}
 	if len(env.notifier.notifications()) == 0 {
 		t.Fatal("monitor did not detect the failure")
-	}
-}
-
-func TestNewDefaults(t *testing.T) {
-	svc := New(app.NewRegistry(), &fakeBuilder{}, &fakeRender{}, &fakeCasting{}, nil, &fakeNotifier{}, Config{})
-	cfg := svc.cfg
-	if cfg.StartTimeout != 60*time.Second || cfg.ProjectionTimeout != 30*time.Second || cfg.OperationsTimeout != 15*time.Second || cfg.MonitorInterval != 5*time.Second {
-		t.Fatalf("timeouts = %+v", cfg)
-	}
-	if cfg.PortMin != 39000 || cfg.PortMax != 39999 {
-		t.Fatalf("ports = %+v", cfg)
-	}
-	if svc.http.Timeout != cfg.OperationsTimeout {
-		t.Fatalf("http timeout = %v", svc.http.Timeout)
 	}
 }
 
@@ -115,149 +98,8 @@ func TestScalarParameter(t *testing.T) {
 	}
 }
 
-func TestWaitPlaying(t *testing.T) {
-	ctx := context.Background()
-	tests := map[string]struct {
-		setup func(*fakeCasting, *Service)
-		ctx   context.Context
-		ok    bool
-	}{
-		"playing": {setup: func(f *fakeCasting, _ *Service) { f.states = []casting.SessionState{casting.SessionPlaying} }, ctx: ctx, ok: true},
-		"stopped": {setup: func(f *fakeCasting, _ *Service) { f.states = []casting.SessionState{casting.SessionStopped} }, ctx: ctx},
-		"failed":  {setup: func(f *fakeCasting, _ *Service) { f.states = []casting.SessionState{casting.SessionFailed} }, ctx: ctx},
-		"error":   {setup: func(f *fakeCasting, _ *Service) { f.getErr = errors.New("down") }, ctx: ctx},
-		"timeout": {
-			setup: func(f *fakeCasting, s *Service) {
-				f.states = []casting.SessionState{casting.SessionStarting}
-				s.cfg.ProjectionTimeout = time.Nanosecond
-			},
-			ctx: ctx,
-		},
-		"canceled": {
-			setup: func(f *fakeCasting, s *Service) {
-				f.states = []casting.SessionState{casting.SessionStarting}
-				s.cfg.ProjectionTimeout = time.Hour
-			},
-			ctx: canceledContext(),
-		},
-	}
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			env := newTestEnv(t, nil)
-			test.setup(env.casting, env.svc)
-			err := env.svc.waitPlaying(test.ctx, "ps_1")
-			if (err == nil) != test.ok {
-				t.Fatalf("waitPlaying error = %v", err)
-			}
-		})
-	}
-}
-
 func canceledContext() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	return ctx
-}
-
-func TestInvalidArtifactIsNotRetriedAndCanBeUpdated(t *testing.T) {
-	env := newTestEnv(t, nil)
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	entry := env.registry.Add(idleApp(t, owner))
-	entry.Update(func(value *app.App) {
-		value.SessionID = "sess_1"
-		value.Artifact.Path = "artifacts/app_1.tar.gz"
-		value.Artifact.SHA256 = strings.Repeat("a", 64)
-	})
-	env.render.errs = []error{&render.HTTPError{Status: http.StatusUnprocessableEntity, Code: render.CodeInvalidArtifact, Message: "launch.json is invalid"}}
-
-	ctx := context.Background()
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "ARTIFACT_INVALID" {
-		t.Fatalf("first start = %v", err)
-	}
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
-		t.Fatalf("a retry must be refused, got %v", err)
-	}
-	if got := len(env.render.requests()); got != 1 {
-		t.Fatalf("Render was called %d times", got)
-	}
-	result, err := env.svc.UpdateApp(ctx, owner, "app_1", "换一个入口写法")
-	if err != nil || result.State != app.StateBuilding {
-		t.Fatalf("update = %+v, %v", result, err)
-	}
-}
-
-func TestStartRuntimeFailures(t *testing.T) {
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	tests := map[string]struct {
-		setup func(*testEnv)
-		code  string
-	}{
-		"missing artifact": {
-			setup: func(env *testEnv) {
-				entry, _ := env.registry.Get("app_1")
-				entry.Update(func(value *app.App) { value.Artifact.DownloadURL = "" })
-			},
-			code: "ARTIFACT_INVALID",
-		},
-		"invalid artifact": {
-			setup: func(env *testEnv) {
-				env.render.errs = []error{&render.HTTPError{Status: http.StatusUnprocessableEntity, Code: render.CodeInvalidArtifact, Message: "launch.json is invalid"}}
-			},
-			code: "ARTIFACT_INVALID",
-		},
-		"render not ready": {
-			setup: func(env *testEnv) {
-				env.render.instance = render.App{InstanceID: "inst_1", State: render.StateStarting}
-			},
-			code: "START_FAILED",
-		},
-		"stream missing": {
-			setup: func(env *testEnv) {
-				env.render.instance = readyApp()
-				env.render.instance.Source = casting.StreamSource{}
-			},
-			code: "STREAM_START_FAILED",
-		},
-		"incompatible screen": {
-			setup: func(env *testEnv) {
-				env.casting.target.Endpoints[0].Capabilities.Formats = []string{"mp4"}
-			},
-			code: "TARGET_UNREACHABLE",
-		},
-		"projection create failure": {
-			setup: func(env *testEnv) {
-				env.casting.createErr = errors.New("casting down")
-			},
-			code: "PROJECTION_TIMEOUT",
-		},
-		"projection stopped": {
-			setup: func(env *testEnv) {
-				env.casting.session = casting.Session{ID: "ps_1", State: casting.SessionStopped}
-			},
-			code: "PROJECTION_TIMEOUT",
-		},
-		"port listing failure": {
-			setup: func(env *testEnv) {
-				env.render.listErr = errors.New("render down")
-			},
-			code: "START_FAILED",
-		},
-	}
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			env := newTestEnv(t, nil)
-			entry := env.registry.Add(idleApp(t, owner))
-			test.setup(env)
-			if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", false); toolCode(t, err) != test.code {
-				t.Fatalf("error = %v, want %s", err, test.code)
-			}
-			snapshot := entry.Snapshot()
-			if snapshot.State != app.StateError || snapshot.Error == nil || snapshot.Error.Stage != app.StageStarting {
-				t.Fatalf("snapshot = %+v", snapshot)
-			}
-			if len(env.notifier.notifications()) != 1 {
-				t.Fatalf("notifications = %+v", env.notifier.notifications())
-			}
-		})
-	}
 }

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 
-	core "github.com/open-anywhere/open-anywhere/internal/casting"
 	api "github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
@@ -24,7 +23,7 @@ func escape(s string) string {
 	return b.String()
 }
 
-func (t *Transport) call(ctx context.Context, d core.Device, action, args string) (string, error) {
+func (t *Transport) call(ctx context.Context, d Device, action, args string) (string, error) {
 	body := `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:` + action + ` xmlns:u="` + avTransport + `"><InstanceID>0</InstanceID>` + args + `</u:` + action + `></s:Body></s:Envelope>`
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.ControlURL, strings.NewReader(body))
 	if err != nil {
@@ -73,7 +72,7 @@ func (t *Transport) call(ctx context.Context, d core.Device, action, args string
 	return envelope.Body.Result.State, nil
 }
 
-func (t *Transport) Start(ctx context.Context, d core.Device, src api.StreamSource) error {
+func (t *Transport) Start(ctx context.Context, d Device, src api.StreamSource) error {
 	metadata := `<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="0" parentID="-1" restricted="1"><dc:title>Live stream</dc:title><upnp:class>object.item.videoItem</upnp:class><res protocolInfo="http-get:*:video/mp2t:*">` + escape(src.URL) + `</res></item></DIDL-Lite>`
 	if _, err := t.call(ctx, d, "SetAVTransportURI", "<CurrentURI>"+escape(src.URL)+"</CurrentURI><CurrentURIMetaData>"+escape(metadata)+"</CurrentURIMetaData>"); err != nil {
 		return err
@@ -81,11 +80,11 @@ func (t *Transport) Start(ctx context.Context, d core.Device, src api.StreamSour
 	_, err := t.call(ctx, d, "Play", "<Speed>1</Speed>")
 	return err
 }
-func (t *Transport) Stop(ctx context.Context, d core.Device) error {
+func (t *Transport) Stop(ctx context.Context, d Device) error {
 	_, err := t.call(ctx, d, "Stop", "")
 	return err
 }
-func (t *Transport) Status(ctx context.Context, d core.Device) (api.SessionState, error) {
+func (t *Transport) Status(ctx context.Context, d Device) (api.SessionState, error) {
 	state, err := t.call(ctx, d, "GetTransportInfo", "")
 	if err != nil {
 		return "", err

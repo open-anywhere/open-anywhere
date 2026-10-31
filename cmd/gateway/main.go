@@ -28,13 +28,11 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/netguard"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/portal"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/render"
-	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/secret"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/settings"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/store"
 	"github.com/open-anywhere/open-anywhere/pkg/agentapi"
-	"github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
 func main() {
@@ -58,10 +56,6 @@ func run(args []string) error {
 }
 
 func serve(ctx context.Context, cfg config.Config) error {
-	catalog, err := screen.LoadCatalog(cfg.ScreensPath)
-	if err != nil {
-		return err
-	}
 	database, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return err
@@ -112,7 +106,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 		if _, err := platform.Snapshot(ctx); err != nil {
 			return credentialError(cfg, "platform settings", err)
 		}
-		resolver = endpoints.NewResolver(database, platform, box, guard, catalog)
+		resolver = endpoints.NewResolver(database, platform, box, guard)
 		if err := resolver.ValidateSecrets(ctx); err != nil {
 			return credentialError(cfg, "service bindings", err)
 		}
@@ -194,8 +188,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 		// client's per-request deadline must not cut it short at the ordinary
 		// HTTP timeout (30s by default) while Render is still starting the app.
 		renderClient := render.New(cfg.RenderURL, cfg.StartTimeout+cfg.HTTPTimeout)
-		castingClient := casting.NewClient(cfg.CastingURL, cfg.HTTPTimeout)
-		apps = service.New(registry, builder, renderClient, castingClient, catalog, server, serviceConfig)
+		apps = service.New(registry, builder, renderClient, server, serviceConfig)
 	}
 	apps.SetArtifactStore(artifactStore)
 	if err := apps.RecoverRuntime(); err != nil {
@@ -224,6 +217,10 @@ func serve(ctx context.Context, cfg config.Config) error {
 	mux.HandleFunc("GET /healthz", healthHandler(database))
 
 	if cfg.PortalEnabled {
+		castingIP, err := optionalInterfaceIPv4(cfg.CastingInterface)
+		if err != nil {
+			return fmt.Errorf("casting-interface: %w", err)
+		}
 		portalService, err := portal.NewService(ctx, portal.BuildConfig{
 			DataDir:           cfg.PortalDataDir,
 			WebDir:            cfg.PortalWebDir,
@@ -236,6 +233,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 			ProvisionTimeout:  cfg.LinxProvisionTimeout,
 			TokenPollInterval: cfg.LinxTokenPollInterval,
 			TokenPollAttempts: cfg.LinxTokenPollAttempts,
+			CastingIP:         castingIP,
 		}, database, apps, platform, resolver, clientPool)
 		if err != nil {
 			return err
@@ -297,7 +295,6 @@ func seedPlatformSettings(ctx context.Context, provider *settings.Provider, cfg 
 		{Key: settings.KeyLinxOTAURL, Value: cfg.LinxOTAURL},
 		{Key: settings.KeyLinxAPIKey, Value: cfg.LinxAPIKey},
 		{Key: settings.KeyDefaultRenderURL, Value: cfg.RenderURL},
-		{Key: settings.KeyDefaultCastingURL, Value: cfg.CastingURL},
 		// Agent template and MCP address are managed in the admin page; these
 		// legacy gateway.yaml values only seed a database that has none yet.
 		{Key: settings.KeyLinxPublicMCPURL, Value: cfg.LinxPublicMCPURL},
@@ -396,6 +393,30 @@ func mcpTokenSource(cfg config.Config, platform *settings.Provider) func(context
 		return platform.MCPToken
 	}
 	return func(context.Context) (string, error) { return cfg.MCPToken, nil }
+}
+
+// optionalInterfaceIPv4 resolves the interface virtual devices use for on-site
+// casting. An empty name disables casting instead of guessing an address.
+func optionalInterfaceIPv4(name string) (net.IP, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, nil
+	}
+	nic, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, err
+	}
+	addresses, err := nic.Addrs()
+	if err != nil {
+		return nil, err
+	}
+	for _, address := range addresses {
+		if network, ok := address.(*net.IPNet); ok {
+			if ip := network.IP.To4(); ip != nil {
+				return ip, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("interface %s has no IPv4 address", name)
 }
 
 // awaitShutdown waits for cancellation or a serve failure and drains cleanly.

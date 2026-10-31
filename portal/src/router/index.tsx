@@ -154,12 +154,6 @@ const appDetailRoute = createRoute({
   component: lazyRouteComponent(() => import('../pages/portal/AppDetailPage'), 'AppDetailPage'),
 })
 
-const screensRoute = createRoute({
-  getParentRoute: () => portalRoute,
-  path: 'screens',
-  component: lazyRouteComponent(() => import('../pages/portal/ScreensPage'), 'ScreensPage'),
-})
-
 const devicesRoute = createRoute({
   getParentRoute: () => portalRoute,
   path: 'devices',
@@ -288,7 +282,6 @@ const routeTree = rootRoute.addChildren([
     overviewRoute,
     appsRoute,
     appDetailRoute,
-    screensRoute,
     agentsRoute,
     devicesRoute,
     servicesRoute,

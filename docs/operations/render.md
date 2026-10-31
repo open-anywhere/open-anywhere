@@ -91,7 +91,7 @@ curl http://localhost:39101/api/reset \
   -H 'Content-Type: application/json' -d '{}'
 ```
 
-响应中的 `source` 可以直接交给 Casting。也可以用 `ffplay '<source.url>'` 查看媒体流。停止时调用 `DELETE /v1/apps/<instance_id>`；不要用 `app_id` 替代路径里的运行实例 ID。
+响应中的 `stream_url`/`source` 可以交给现场设备的 `self.cast.cast`。也可以用 `ffplay '<source.url>'` 查看媒体流。停止时调用 `DELETE /v1/apps/<instance_id>`；不要用 `app_id` 替代路径里的运行实例 ID。
 
 ## E2E 检查
 
@@ -120,7 +120,7 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 
 ## 局域网与多租户部署
 
-- **局域网或自托管**：Render 与 Gateway 不在同一台机器、或必须走私网地址时，要在 `gateway.yaml` 显式设置 `services.allow_private_targets: true`。默认策略拒绝回环、私网、link-local 与 CGNAT 地址，不改这个开关就绑不上 `192.168.x.x` 这类地址。该开关同时放宽 custom 用户填写的 Render/Casting 地址，只适用于自己信任的单租户部署。
+- **局域网或自托管**：Render 与 Gateway 不在同一台机器、或必须走私网地址时，要在 `gateway.yaml` 显式设置 `services.allow_private_targets: true`。默认策略拒绝回环、私网、link-local 与 CGNAT 地址，不改这个开关就绑不上 `192.168.x.x` 这类地址。该开关同时放宽 custom 用户填写的 Render 地址，只适用于自己信任的单租户部署。
 - **不要直接暴露公网**：`POST /v1/apps` 没有鉴权，也没有 Node.js 沙箱隔离，任何能访问它的人都可以启动任意 tar.gz。Render 只应放在受信网络里，或由反向代理与网络策略收口。
 - **共享多租户是开放注册前的阻塞项**：平台默认 Render 被所有 managed 用户共用时，缺少运行时隔离、独立 UID、资源配额与 per-tenant 凭证。在完成隔离之前，不要在托管实例上打开注册；管理后台的注册开关旁也有同样的提示。
 - **token 只透传**：Gateway 会把用户或平台配置的 token 作为 `Authorization: Bearer` 发给 Render，但 Render 当前不解析、不校验这个头。需要访问控制的部署必须在网络层完成。
@@ -135,6 +135,7 @@ Chrome 不在默认路径时，额外设置 `RENDER_CHROME`。E2E 缺少依赖�
 - **音频启动失败**：重新执行设备列表命令确认编号；音频格式与输入必须成对配置。
 - **电视没有声音**：确认系统输出已切到虚拟音频设备，并检查实例响应中的 `source.audio_codec` 是否为 `aac`。
 - **电视无法播放**：先用 `ffprobe <source.url>` 检查媒体流，再确认电视支持 MPEG-TS、H.264 与 AAC。
+- **地址只有 Render 机器能访到**：`-public-url` 决定 `stream_url` 的主机名，电视拿到后自己去拉，不经过 Gateway。写成 `127.0.0.1`、内网网卡或 Tailscale 地址时，现场的电视就拉不到；设备端 `self.cast.cast` 可能仍返回成功（SOAP 200），但屏幕是黑的，日志里也看不到电视的请求。要写电视所在网络能路由到的地址：同网段用局域网 IP，跨网段用 frp/反代暴露的地址（如 `http://<公网>:6005`）。`-render-url` 是 Gateway 找 Render 用的，和这个不是一回事。
 
 ## 实现边界
 

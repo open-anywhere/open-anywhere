@@ -12,7 +12,7 @@ ARGS        ?=
 
 .PHONY: help deps tidy portal-install fmt fmt-check vet test cover e2e \
         portal-typecheck portal-build portal-dev check check-all \
-        build build-gateway build-gateway-embed run run-casting run-render run-voiceentry clean
+        build build-gateway build-gateway-embed run run-render clean
 
 ##@ 通用
 
@@ -87,14 +87,8 @@ build-gateway-embed: portal-build ## 编译内嵌前端产物的 Gateway（单�
 run: ## 启动 Gateway（默认读取 gateway.yaml）
 	$(GO) run ./cmd/gateway $(ARGS)
 
-run-casting: ## 启动 Casting，例：make run-casting ARGS="-addr :8080 -interface en0"
-	$(GO) run ./cmd/casting $(ARGS)
-
 run-render: ## 启动 Render，例：make run-render ARGS="-addr :8090 -public-url http://192.168.1.20:8090"
 	$(GO) run ./cmd/render $(ARGS)
-
-run-voiceentry: ## 启动现场语音入口
-	$(GO) run ./cmd/voiceentry -serve $(ARGS)
 
 portal-dev: ## 启动 Portal 前端开发服务器
 	cd $(PORTAL_DIR) && $(PNPM) dev

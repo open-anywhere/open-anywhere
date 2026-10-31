@@ -20,7 +20,7 @@ import (
 
 // schemaVersion is the newest schema this binary understands. A database that
 // reports a newer version is refused so an older binary cannot corrupt it.
-const schemaVersion = 4
+const schemaVersion = 5
 
 var memorySequence atomic.Uint64
 
@@ -143,6 +143,27 @@ var schemaV4 = []string{
 	`ALTER TABLE portal_devices ADD COLUMN name TEXT NOT NULL DEFAULT ''`,
 }
 
+// schemaV5 drops the casting binding columns. The control plane no longer
+// talks to a casting service, so their addresses and tokens have no reader.
+var schemaV5 = []string{
+	`CREATE TABLE portal_service_bindings_v5 (
+		user_id          TEXT PRIMARY KEY,
+		mode             TEXT NOT NULL DEFAULT 'managed'
+			CHECK (mode IN ('managed','custom')),
+		render_url       TEXT NOT NULL DEFAULT '',
+		render_token_enc TEXT NOT NULL DEFAULT '',
+		created_at       TEXT NOT NULL,
+		updated_at       TEXT NOT NULL,
+		FOREIGN KEY (user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+	)`,
+	`INSERT INTO portal_service_bindings_v5
+		(user_id, mode, render_url, render_token_enc, created_at, updated_at)
+		SELECT user_id, mode, render_url, render_token_enc, created_at, updated_at
+		FROM portal_service_bindings`,
+	`DROP TABLE portal_service_bindings`,
+	`ALTER TABLE portal_service_bindings_v5 RENAME TO portal_service_bindings`,
+}
+
 type migration struct {
 	version    int
 	statements []string
@@ -156,6 +177,7 @@ var migrations = []migration{
 	{version: 2, statements: schemaV2},
 	{version: 3, statements: schemaV3, prepare: prepareSchemaV3},
 	{version: 4, statements: schemaV4},
+	{version: 5, statements: schemaV5},
 }
 
 // prepareSchemaV3 refuses duplicate virtual devices and duplicate Linx agent

@@ -99,12 +99,7 @@ type App struct {
 	Port                int
 	AppBaseURL          string
 	Source              casting.StreamSource
-	ScreenID            string
-	TargetID            string
-	EndpointID          string
-	ProjectionSessionID string
 	PendingRuntime      bool
-	PendingProjection   bool
 	CleanupPending      bool
 
 	StartedAt time.Time
@@ -123,13 +118,6 @@ func (a App) BuildingMessage() string {
 		return a.LastStatusMessage
 	}
 	return "正在构建"
-}
-
-// OccupiesScreen reports whether the application still holds its screen. It
-// stays true while runtime or projection work is pending so a screen is not
-// treated as free before cleanup has finished.
-func (a App) OccupiesScreen() bool {
-	return a.ScreenID != "" && (a.State == StateRunning || a.PendingRuntime || a.PendingProjection || a.CleanupPending || a.InstanceID != "" || a.ProjectionSessionID != "")
 }
 
 // Record wraps an application with locks. Begin/End serialize lifecycle
@@ -312,30 +300,6 @@ func (r *Registry) List() []App {
 	return apps
 }
 
-// RunningOnScreen returns the application currently running on screenID,
-// whichever owner it belongs to. Ownership-aware callers use
-// RunningOnScreenFor instead.
-func (r *Registry) RunningOnScreen(screenID string) (App, bool) {
-	for _, value := range r.List() {
-		if value.ScreenID == screenID && value.OccupiesScreen() {
-			return value, true
-		}
-	}
-	return App{}, false
-}
-
-// RunningOnScreenFor returns the owner's application currently running on
-// screenID. Screen IDs are scoped to one owner's casting service, so another
-// owner's identical ID is ignored.
-func (r *Registry) RunningOnScreenFor(owner Identity, screenID string) (App, bool) {
-	for _, value := range r.List() {
-		if value.ScreenID == screenID && value.OccupiesScreen() && value.Owner.SameOwner(owner) {
-			return value, true
-		}
-	}
-	return App{}, false
-}
-
 // NewID returns a new application ID.
 func NewID() string { return "app_" + rand.Text() }
 
@@ -346,9 +310,8 @@ type Notifier interface {
 
 // Notification is the params object of notifications/app_status.
 type Notification struct {
-	AppID    string `json:"app_id"`
-	State    State  `json:"state"`
-	ScreenID string `json:"screen_id,omitempty"`
-	Message  string `json:"message,omitempty"`
-	Error    *Error `json:"error,omitempty"`
+	AppID   string `json:"app_id"`
+	State   State  `json:"state"`
+	Message string `json:"message,omitempty"`
+	Error   *Error `json:"error,omitempty"`
 }

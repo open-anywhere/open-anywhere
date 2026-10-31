@@ -10,7 +10,6 @@ import type {
   Device,
   McpService,
   PlatformSettings,
-  Screen,
   ServiceBindingState,
   User,
 } from '../api'
@@ -77,16 +76,6 @@ export function makeAppDetail(overrides: Partial<AppDetail> = {}): AppDetail {
   }
 }
 
-export function makeScreen(overrides: Partial<Screen> = {}): Screen {
-  return {
-    screen_id: 'screen_1',
-    name: '客厅电视',
-    online: true,
-    status: 'free',
-    ...overrides,
-  }
-}
-
 export function makeServices(overrides: Partial<ServiceBindingState> = {}): ServiceBindingState {
   return {
     mode: 'managed',
@@ -94,13 +83,10 @@ export function makeServices(overrides: Partial<ServiceBindingState> = {}): Serv
     managed: {
       available: true,
       render_url: 'https://render.example.com',
-      casting_url: 'https://casting.example.com',
     },
     custom: {
       render_url: '',
-      casting_url: '',
       render_token_configured: false,
-      casting_token_configured: false,
     },
     ...overrides,
   }
@@ -249,9 +235,7 @@ export function makePlatformSettings(overrides: Partial<PlatformSettings> = {}):
     },
     services: {
       render_url: 'https://render.example.com',
-      casting_url: 'https://casting.example.com',
       render_token: { configured: false },
-      casting_token: { configured: false },
     },
     registration: { open: false },
     ready: { agentapi: true, linx: true, mcp: true, services: true },

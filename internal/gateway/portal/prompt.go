@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -51,6 +52,9 @@ type BuildConfig struct {
 	ProvisionTimeout  time.Duration
 	TokenPollInterval time.Duration
 	TokenPollAttempts int
+	// CastingIP enables on-site casting for virtual devices. Nil keeps the
+	// self.cast.* tools off.
+	CastingIP net.IP
 }
 
 // Service is the complete portal.
@@ -88,7 +92,7 @@ func NewService(ctx context.Context, cfg BuildConfig, db *store.DB, apps *servic
 	if _, err := auth.EnsureAdmin(ctx, Credentials{Username: cfg.Username, Password: cfg.Password}); err != nil {
 		return nil, err
 	}
-	voice := NewVoiceManager(ctx)
+	voice := NewVoiceManager(ctx, WithOnSiteCasting(cfg.CastingIP))
 	linxProvider := func(ctx context.Context) (*linx.Client, error) {
 		if provider == nil {
 			return nil, app.ErrPlatformNotConfigured

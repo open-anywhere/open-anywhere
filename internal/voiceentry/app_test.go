@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -283,37 +282,6 @@ func TestResidentReconnectsAfterServerDrop(t *testing.T) {
 	st := waitStatus(t, base, func(s statusBody) bool { return s.Connected && s.SessionID == "s2" })
 	if st.State != "listening" {
 		t.Fatalf("status=%+v", st)
-	}
-}
-
-func TestResidentRegistersFromWeb(t *testing.T) {
-	f := newFakeLinx(t, false)
-	ota := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = fmt.Fprintf(w, `{"websocket":{"url":%q,"token":"tok"}}`, f.wsURL())
-	}))
-	defer ota.Close()
-	path := filepath.Join(t.TempDir(), "device.json")
-	base, _ := startResident(t, Config{DevicePath: path, OTA: linx.OTAClient{BaseURL: ota.URL + "/v1/ota"}})
-
-	if st := getStatus(t, base); st.Registered || st.Connected {
-		t.Fatalf("status before registering=%+v", st)
-	}
-	if got := post(t, base+"/reconnect", `{}`); got != http.StatusBadGateway {
-		t.Fatalf("reconnect before registering=%d", got)
-	}
-	if got := post(t, base+"/device/register", `{}`); got != http.StatusOK {
-		t.Fatalf("register=%d", got)
-	}
-	st := waitStatus(t, base, func(s statusBody) bool { return s.Connected })
-	if !st.Registered {
-		t.Fatalf("status=%+v", st)
-	}
-	d, err := linx.LoadDevice(path)
-	if err != nil || d.Token != "tok" {
-		t.Fatalf("saved device=%+v err=%v", d, err)
-	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o077 != 0 && os.PathSeparator == '/' {
-		t.Fatalf("credential file mode=%v err=%v", info.Mode(), err)
 	}
 }
 

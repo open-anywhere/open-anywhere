@@ -263,8 +263,6 @@ func TestPreview(t *testing.T) {
 			{Key: KeyLinxAPIKey, Value: "linx-secret"},
 			{Key: KeyDefaultRenderURL, Value: "https://render.example.com"},
 			{Key: KeyDefaultRenderToken, Value: "render-secret"},
-			{Key: KeyDefaultCastingURL, Value: "https://casting.example.com"},
-			{Key: KeyDefaultCastingToken, Value: "casting-secret"},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -285,8 +283,7 @@ func TestPreview(t *testing.T) {
 		if snapshot.AgentAPI.BaseURL != "https://agent.example.com" ||
 			snapshot.AgentAPI.APIKey != "agent-secret" ||
 			snapshot.AgentAPI.AgentVersion != 2 ||
-			snapshot.Linx.OTAURL != "https://ota.example.com" ||
-			snapshot.Services.CastingToken != "casting-secret" {
+			snapshot.Linx.OTAURL != "https://ota.example.com" {
 			t.Fatalf("snapshot = %+v", snapshot)
 		}
 	})
@@ -322,7 +319,7 @@ func TestPreview(t *testing.T) {
 		if snapshot.AgentAPI.APIKey != "agent-secret" || snapshot.Linx.APIKey != "linx-secret" {
 			t.Fatalf("empty secrets changed values: %+v", snapshot)
 		}
-		if snapshot.Services.RenderToken != "" || snapshot.Services.CastingToken != "casting-secret" {
+		if snapshot.Services.RenderToken != "" {
 			t.Fatalf("services = %+v", snapshot.Services)
 		}
 	})
@@ -348,7 +345,6 @@ func TestPreview(t *testing.T) {
 			"linx":     {Linx: &LinxPatch{APIBase: ptr("ftp://linx.example.com")}},
 			"ota":      {Linx: &LinxPatch{OTAURL: ptr("ftp://ota.example.com")}},
 			"render":   {Services: &ServicesPatch{RenderURL: ptr("ftp://render.example.com")}},
-			"casting":  {Services: &ServicesPatch{CastingURL: ptr("ftp://casting.example.com")}},
 			"relative": {AgentAPI: &AgentAPIPatch{BaseURL: ptr("agent.example.com")}},
 		}
 		for name, patch := range cases {
@@ -368,10 +364,8 @@ func TestPreview(t *testing.T) {
 				APIKey:  &SecretValue{Value: "linx-2"},
 			},
 			Services: &ServicesPatch{
-				RenderURL:    ptr(" https://render2.example.com "),
-				CastingURL:   ptr(" https://casting2.example.com "),
-				RenderToken:  &SecretValue{Value: "render-2"},
-				CastingToken: &SecretValue{Clear: true},
+				RenderURL:   ptr(" https://render2.example.com "),
+				RenderToken: &SecretValue{Value: "render-2"},
 			},
 			Registration: &RegistrationPatch{Open: ptr(false)},
 		})
@@ -383,8 +377,7 @@ func TestPreview(t *testing.T) {
 			t.Fatalf("linx = %+v", snapshot.Linx)
 		}
 		if snapshot.Services.RenderURL != "https://render2.example.com" ||
-			snapshot.Services.CastingURL != "https://casting2.example.com" ||
-			snapshot.Services.RenderToken != "render-2" || snapshot.Services.CastingToken != "" {
+			snapshot.Services.RenderToken != "render-2" {
 			t.Fatalf("services = %+v", snapshot.Services)
 		}
 	})
@@ -430,7 +423,6 @@ func TestUpdateErrorPaths(t *testing.T) {
 			"agentapi": {AgentAPI: &AgentAPIPatch{APIKey: &SecretValue{Value: "secret"}}},
 			"linx":     {Linx: &LinxPatch{APIKey: &SecretValue{Value: "secret"}}},
 			"render":   {Services: &ServicesPatch{RenderToken: &SecretValue{Value: "secret"}}},
-			"casting":  {Services: &ServicesPatch{CastingToken: &SecretValue{Value: "secret"}}},
 		}
 		for name, patch := range cases {
 			t.Run(name, func(t *testing.T) {
@@ -450,7 +442,6 @@ func TestUpdateErrorPaths(t *testing.T) {
 			"linx":     {Linx: &LinxPatch{APIBase: ptr("ftp://linx.example.com")}},
 			"ota":      {Linx: &LinxPatch{OTAURL: ptr("ftp://ota.example.com")}},
 			"render":   {Services: &ServicesPatch{RenderURL: ptr("ftp://render.example.com")}},
-			"casting":  {Services: &ServicesPatch{CastingURL: ptr("ftp://casting.example.com")}},
 		}
 		for name, patch := range cases {
 			t.Run(name, func(t *testing.T) {
@@ -481,10 +472,8 @@ func TestUpdateErrorPaths(t *testing.T) {
 				APIKey:  &SecretValue{Value: "linx-secret"},
 			},
 			Services: &ServicesPatch{
-				RenderURL:    ptr("https://render.example.com"),
-				CastingURL:   ptr(" https://casting.example.com "),
-				RenderToken:  &SecretValue{Value: "render-secret"},
-				CastingToken: &SecretValue{Value: "casting-secret"},
+				RenderURL:   ptr("https://render.example.com"),
+				RenderToken: &SecretValue{Value: "render-secret"},
 			},
 			Registration: &RegistrationPatch{Open: ptr(true)},
 		}, "usr_admin"); err != nil {
@@ -504,8 +493,7 @@ func TestUpdateErrorPaths(t *testing.T) {
 			t.Fatalf("linx = %+v", snapshot.Linx)
 		}
 		if snapshot.Services.RenderURL != "https://render.example.com" ||
-			snapshot.Services.CastingURL != "https://casting.example.com" ||
-			snapshot.Services.RenderToken != "render-secret" || snapshot.Services.CastingToken != "casting-secret" {
+			snapshot.Services.RenderToken != "render-secret" {
 			t.Fatalf("services = %+v", snapshot.Services)
 		}
 		if !snapshot.Registration.Open {
@@ -532,10 +520,8 @@ func TestUpdateErrorPaths(t *testing.T) {
 			AgentAPI: &AgentAPIPatch{BaseURL: ptr("  "), APIKey: &SecretValue{}},
 			Linx:     &LinxPatch{APIBase: ptr(""), APIKey: &SecretValue{Value: " "}},
 			Services: &ServicesPatch{
-				RenderURL:    ptr(" "),
-				CastingURL:   ptr(""),
-				RenderToken:  &SecretValue{},
-				CastingToken: &SecretValue{},
+				RenderURL:   ptr(" "),
+				RenderToken: &SecretValue{},
 			},
 			Registration: &RegistrationPatch{},
 		}, "admin"); err != nil {

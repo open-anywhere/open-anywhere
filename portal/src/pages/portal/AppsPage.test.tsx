@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { fail, mockApi, ok } from '../../test/http'
-import { makeApp, makeDevice, makeScreen, makeUser } from '../../test/fixtures'
+import { makeApp, makeDevice, makeUser } from '../../test/fixtures'
 import { renderApp, settledAt } from '../../test/router'
 
 const running = makeApp({ app_id: 'app_1', title: '电影知识竞赛', state: 'running' })
@@ -12,7 +12,6 @@ function routes(overrides: Record<string, unknown> = {}) {
   return {
     'GET /api/portal/me': ok({ user: makeUser(), devices: [makeDevice()] }),
     'GET /api/portal/apps': ok({ apps: [running, idle] }),
-    'GET /api/portal/screens': ok({ screens: [makeScreen()] }),
     ...overrides,
   }
 }

@@ -80,7 +80,7 @@ Open Anywhere 是一个“现场应用”平台。用户对着身边的语音入
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
 | 语音提出需求 → 生成 → 投屏 → 多人语音参与 | 已实现（组件级） | 主链路代码可核验；live E2E 以 Render / OpenAPI 为主，语音入口需环境变量，默认跳过 |
-| 多应用切换、多租户 Portal、管理员配置 | 已实现（切换有限制） | Portal 与多应用会话已上线；切换应用会先停止旧应用并重建 Casting 会话，尚未达到“切换不重建投屏”的目标 |
+| 多应用切换、多租户 Portal、管理员配置 | 已实现（切换有限制） | Portal 与多应用会话已上线；切换应用会先停止旧应用，现场投屏由设备重新 cast（同屏覆盖 URI，换屏时新屏接受后停旧屏），尚未达到“切换不重建投屏”的目标 |
 | DLNA 投屏 | 已实现 | 当前只注册 DLNA；AirPlay 为后续适配器 |
 | 声纹 / 手机身份 | 部分 / 路线图 | `speaker_probe` 默认关闭，探针返回 `verified:false`；手机加入为路线图 |
 | 手机扫码加入 / 手机控制器 | 路线图 | 3–6 个月里程碑；当前多人参与以语音为主 |
@@ -194,7 +194,7 @@ Open Anywhere 是一个“现场应用”平台。用户对着身边的语音入
    ↓
 Render（运行 / 页面采集 / 视频编码）
    ↓
-Casting（当前 DLNA MPEG-TS；AirPlay 为后续扩展）
+设备端 DLNA（固件 SSDP + DLNA；当前 MPEG-TS，AirPlay 为后续扩展）
    ↓
 身边的屏幕（电视 / 投影 / 盒子）
    ↑
@@ -868,7 +868,7 @@ Casting（当前 DLNA MPEG-TS；AirPlay 为后续扩展）
 | --- | --- | --- |
 | 语音入口 | 模拟硬件 + 本地控制台，或灵矽设备 | 语音入口 |
 | 应用生成 | 固定 3 个模板 + Agent 生成兜底 | AgentAPI |
-| 投屏 | DLNA 投到电视；备用 HDMI | Casting |
+| 投屏 | 设备端 SSDP + DLNA 投到电视；备用 HDMI | 固件（小智云聊 S3 MAX） |
 | 运行 | Render 本机/云端；预启动 Node/Chromium | Render |
 | 收款 | 微信/支付宝收款码 + 手工记账 | 业务 |
 | 反馈 | 纸质/在线表单 + 录音（经同意） | 业务 |
@@ -1341,7 +1341,7 @@ Casting（当前 DLNA MPEG-TS；AirPlay 为后续扩展）
 
 ### 7.6 计量口径与校准
 
-**已埋点。** 每次构建在应用记录中写入 `BuildStartedAt`、`BuildFinishedAt`、`BuildDuration`（`internal/gateway/build/builder.go`），可直接导出构建时长分布；运行时长与投屏会话由 Render / Casting 记录。构建是异步的，语音回合不等待构建（见 `AGENTS.md` 的不变量）。
+**已埋点。** 每次构建在应用记录中写入 `BuildStartedAt`、`BuildFinishedAt`、`BuildDuration`（`internal/gateway/build/builder.go`），可直接导出构建时长分布；运行时长由 Render 记录，投屏状态在设备固件与电视，控制面不保留投屏状态。构建是异步的，语音回合不等待构建（见 `AGENTS.md` 的不变量）。
 
 **待补。** token 用量、单次生成成本、上屏 P50/P95、生成成功率、首次通过率、布局溢出率。补齐前，本文的 1.8–6.8 元、P50 < 3 分钟、60% 毛利均为**经营参数**，不是实测值。
 
@@ -1369,7 +1369,7 @@ Casting（当前 DLNA MPEG-TS；AirPlay 为后续扩展）
 | 维度 | Open Anywhere | Jackbox / Kahoot | Lovable / Bolt / v0 | 证据 |
 | --- | --- | --- | --- | --- |
 | 内容来源 | 现场生成 | 预制游戏包 / 题库 | 生成代码 | 代码：build + AgentAPI |
-| 交付终点 | 电视 / 投影（DLNA） | 手机 + 主机 / 浏览器 | 浏览器预览 | `docs/operations/casting.md` |
+| 交付终点 | 电视 / 投影（DLNA） | 手机 + 主机 / 浏览器 | 浏览器预览 | `docs/architecture/home-casting.md` |
 | 多人现场 | 语音参与；手机加入在路线图 | 手机加入成熟 | 无现场主持 | `docs/product/research.md` |
 | 单次内容成本 | 1.8–6.8 元（待校准） | 游戏包 / 订阅分摊 | 订阅额度 | §5.5 |
 | 上屏延迟 | 异步构建，目标 P50 < 3 分钟 | 秒级 | 不适用 | §7.6 |
@@ -1391,7 +1391,7 @@ Casting（当前 DLNA MPEG-TS；AirPlay 为后续扩展）
 
 | 护城河 | 说明 | 随时间变强？ |
 | --- | --- | --- |
-| 现场交付链路 | Render + Casting + MCP + 语音入口的端到端整合 | 是，工程复杂度高 |
+| 现场交付链路 | Render + 设备端 DLNA + MCP + 语音入口的端到端整合 | 是，工程复杂度高 |
 | 场景模板库 | 高频场景参数化，成本低、质量稳、等待短 | 是，使用越多模板越好 |
 | 数据飞轮 | 构建成功/失败、用户修改、现场反馈回流提示词与模板 | 是，复利效应 |
 | 商家网络 | 本地关系、活动运营、复购 | 是，网络效应 |

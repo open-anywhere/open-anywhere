@@ -40,7 +40,6 @@ func TestSeedAndSnapshot(t *testing.T) {
 		{Key: KeyLinxAPIBase, Value: "https://linx.example.com"},
 		{Key: KeyLinxAPIKey, Value: "linx-secret"},
 		{Key: KeyDefaultRenderURL, Value: "https://render.example.com"},
-		{Key: KeyDefaultCastingURL, Value: "https://casting.example.com"},
 		{Key: KeyRegistrationOpen, Value: "true"},
 	}
 	if err := provider.Seed(ctx, seeds); err != nil {
@@ -215,10 +214,8 @@ func TestRegistrationOpenAndSnapshotDefaults(t *testing.T) {
 
 func TestServicesChanged(t *testing.T) {
 	current := Snapshot{Services: ServiceDefaults{
-		RenderURL:    "https://render.example.com",
-		RenderToken:  "render-secret",
-		CastingURL:   "https://casting.example.com",
-		CastingToken: "casting-secret",
+		RenderURL:   "https://render.example.com",
+		RenderToken: "render-secret",
 	}}
 	secret := func(value string) *SecretValue { return &SecretValue{Value: value} }
 	cases := []struct {
@@ -229,7 +226,7 @@ func TestServicesChanged(t *testing.T) {
 		{name: "no patch", patch: nil, want: false},
 		{name: "empty patch", patch: &ServicesPatch{}, want: false},
 		{name: "same urls", patch: &ServicesPatch{
-			RenderURL: ptr("https://render.example.com"), CastingURL: ptr("https://casting.example.com"),
+			RenderURL: ptr("https://render.example.com"),
 		}, want: false},
 		{name: "same urls with surrounding space", patch: &ServicesPatch{
 			RenderURL: ptr("  https://render.example.com  "),
@@ -237,18 +234,14 @@ func TestServicesChanged(t *testing.T) {
 		{name: "different render url", patch: &ServicesPatch{
 			RenderURL: ptr("https://render2.example.com"),
 		}, want: true},
-		{name: "different casting url", patch: &ServicesPatch{
-			CastingURL: ptr("https://casting2.example.com"),
-		}, want: true},
 		{name: "cleared render url", patch: &ServicesPatch{RenderURL: ptr("")}, want: true},
 		{name: "same render token", patch: &ServicesPatch{RenderToken: secret("render-secret")}, want: false},
 		{name: "empty token keeps the stored value", patch: &ServicesPatch{
-			RenderToken: &SecretValue{}, CastingToken: secret("  "),
+			RenderToken: &SecretValue{},
 		}, want: false},
 		{name: "different render token", patch: &ServicesPatch{RenderToken: secret("other")}, want: true},
-		{name: "different casting token", patch: &ServicesPatch{CastingToken: secret("other")}, want: true},
 		{name: "clear an existing token", patch: &ServicesPatch{
-			CastingToken: &SecretValue{Clear: true},
+			RenderToken: &SecretValue{Clear: true},
 		}, want: true},
 		{name: "clear an absent token", patch: &ServicesPatch{
 			RenderToken: &SecretValue{Clear: true},
@@ -362,10 +355,8 @@ func TestMaskedJSONOmitsActorAndSecrets(t *testing.T) {
 			APIKey:  &SecretValue{Value: "linx-plaintext-secret"},
 		},
 		Services: &ServicesPatch{
-			RenderURL:    ptr("https://render.example.com"),
-			CastingURL:   ptr("https://casting.example.com"),
-			RenderToken:  &SecretValue{Value: "render-plaintext-secret"},
-			CastingToken: &SecretValue{Value: "casting-plaintext-secret"},
+			RenderURL:   ptr("https://render.example.com"),
+			RenderToken: &SecretValue{Value: "render-plaintext-secret"},
 		},
 	}, "usr_admin"); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -382,7 +373,7 @@ func TestMaskedJSONOmitsActorAndSecrets(t *testing.T) {
 	for _, forbidden := range []string{
 		"updated_by", "usr_admin",
 		"agentapi-plaintext-secret", "linx-plaintext-secret",
-		"render-plaintext-secret", "casting-plaintext-secret",
+		"render-plaintext-secret",
 		"enc:v1:",
 	} {
 		if strings.Contains(text, forbidden) {
@@ -390,7 +381,7 @@ func TestMaskedJSONOmitsActorAndSecrets(t *testing.T) {
 		}
 	}
 	if !masked.AgentAPI.APIKey.Configured || !masked.Linx.APIKey.Configured ||
-		!masked.Services.RenderToken.Configured || !masked.Services.CastingToken.Configured {
+		!masked.Services.RenderToken.Configured {
 		t.Fatalf("secrets are not reported as configured: %s", encoded)
 	}
 	if !strings.Contains(text, `"configured":true`) {

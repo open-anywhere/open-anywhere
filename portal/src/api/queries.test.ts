@@ -9,7 +9,6 @@ import {
   appQueryOptions,
   appsQueryOptions,
   meQueryOptions,
-  screensQueryOptions,
   servicesQueryOptions,
 } from './queries'
 import { mockApi, ok } from '../test/http'
@@ -26,7 +25,6 @@ describe('query keys and polling', () => {
     expect(meQueryOptions.queryKey).toEqual(['me'])
     expect(servicesQueryOptions.queryKey).toEqual(['services'])
     expect(appsQueryOptions.queryKey).toEqual(['apps'])
-    expect(screensQueryOptions.queryKey).toEqual(['screens'])
     expect(appQueryOptions('app_1').queryKey).toEqual(['app', 'app_1'])
     expect(adminOverviewQueryOptions.queryKey).toEqual(['admin', 'overview'])
     expect(adminSettingsQueryOptions.queryKey).toEqual(['admin', 'settings'])
@@ -40,8 +38,7 @@ describe('query keys and polling', () => {
     expect(adminAppsQueryOptions({}).queryKey).toEqual(['admin', 'apps', {}])
   })
 
-  it('polls screens and admin summaries on a fixed interval', () => {
-    expect(screensQueryOptions.refetchInterval).toBe(10_000)
+  it('polls admin summaries on a fixed interval', () => {
     expect(adminOverviewQueryOptions.refetchInterval).toBe(10_000)
     expect(adminSettingsQueryOptions.refetchInterval).toBe(10_000)
     expect(adminAppsQueryOptions({}).refetchInterval).toBe(10_000)
@@ -53,8 +50,7 @@ describe('query keys and polling', () => {
       meQueryOptions,
       servicesQueryOptions,
       appsQueryOptions,
-      screensQueryOptions,
-      adminOverviewQueryOptions,
+          adminOverviewQueryOptions,
     ]) {
       expect(options.retry).toBe(false)
     }
@@ -93,7 +89,6 @@ describe('query functions', () => {
       'GET /api/portal/me': ok({ user: {}, devices: [] }),
       'GET /api/portal/services': ok({ mode: 'managed' }),
       'GET /api/portal/apps': ok({ apps: [] }),
-      'GET /api/portal/screens': ok({ screens: [] }),
       'GET /api/portal/apps/app_1': ok({ app: makeAppDetail() }),
       'GET /api/admin/overview': ok({ users: {} }),
       'GET /api/admin/settings': ok({ settings: {} }),
@@ -102,7 +97,6 @@ describe('query functions', () => {
     await meQueryOptions.queryFn!({} as never)
     await servicesQueryOptions.queryFn!({} as never)
     await appsQueryOptions.queryFn!({} as never)
-    await screensQueryOptions.queryFn!({} as never)
     await appQueryOptions('app_1').queryFn!({} as never)
     await adminOverviewQueryOptions.queryFn!({} as never)
     await adminSettingsQueryOptions.queryFn!({} as never)
@@ -111,7 +105,6 @@ describe('query functions', () => {
       '/api/portal/me',
       '/api/portal/services',
       '/api/portal/apps',
-      '/api/portal/screens',
       '/api/portal/apps/app_1',
       '/api/admin/overview',
       '/api/admin/settings',

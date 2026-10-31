@@ -8,11 +8,9 @@ import { deviceLabel } from '../../../lib/device'
 export function AppRow({
   app,
   device,
-  screenName,
 }: {
   app: AppSummary
   device?: Device
-  screenName?: string
 }) {
   const title = app.title || app.name || '未命名应用'
   const description =
@@ -38,7 +36,6 @@ export function AppRow({
           <span>{device ? deviceLabel(device) : '没有关联的智能体'}</span>
           <span>{app.operation_count ? `${app.operation_count} 个动作` : '还没有动作'}</span>
           <span>{app.built_at ? `生成于 ${formatDate(app.built_at)}` : '生成中'}</span>
-          {app.screen_id ? <span>{screenName || '已在屏幕上'}</span> : null}
         </div>
       </div>
       <span className="data-row-arrow" aria-hidden="true">

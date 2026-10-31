@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,7 +31,7 @@ func newPlatformHTTPEnv(t *testing.T) *portalHTTPEnv {
 	provider := settings.New(env.db, box)
 	guard := netguard.New(true)
 	env.api.SetPlatform(provider, endpoints.NewPool(guard, 5*time.Second, 5*time.Second),
-		endpoints.NewResolver(env.db, provider, box, guard, nil))
+		endpoints.NewResolver(env.db, provider, box, guard))
 	return env
 }
 
@@ -53,7 +52,6 @@ func TestPortalServicesReportsIncompleteCustomBindingAsNotReady(t *testing.T) {
 	if err := env.db.UpsertServiceBinding(context.Background(), store.PortalServiceBinding{
 		UserID:    user.ID,
 		Mode:      store.ServiceModeCustom,
-		RenderURL: "https://render.example.com",
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {
@@ -82,14 +80,12 @@ func TestPortalServicesReturns500ForAnUndecryptableToken(t *testing.T) {
 	user := loadPortalTestUser(t, env, testPortalUsername)
 	now := time.Now().UTC()
 	if err := env.db.UpsertServiceBinding(context.Background(), store.PortalServiceBinding{
-		UserID:          user.ID,
-		Mode:            store.ServiceModeCustom,
-		RenderURL:       "https://render.example.com",
-		CastingURL:      "https://casting.example.com",
-		RenderTokenEnc:  "enc:v1:bm90LXJlYWw=",
-		CastingTokenEnc: "enc:v1:bm90LXJlYWw=",
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		UserID:         user.ID,
+		Mode:           store.ServiceModeCustom,
+		RenderURL:      "https://render.example.com",
+		RenderTokenEnc: "enc:v1:bm90LXJlYWw=",
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}); err != nil {
 		t.Fatalf("UpsertServiceBinding: %v", err)
 	}
@@ -115,7 +111,7 @@ func TestPortalServiceTestRejectsAnInvalidMode(t *testing.T) {
 	}
 }
 
-func TestPortalServiceTestProbesFakeRenderAndCasting(t *testing.T) {
+func TestPortalServiceTestProbesFakeRender(t *testing.T) {
 	env := newPlatformHTTPEnv(t)
 	env.login(t)
 
@@ -127,35 +123,20 @@ func TestPortalServiceTestProbesFakeRenderAndCasting(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer renderServer.Close()
-	castingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/healthz":
-			w.WriteHeader(http.StatusOK)
-		case "/v1/targets":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"targets":[{"id":"tv_1","name":"客厅","state":"online"}]}`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer castingServer.Close()
 
-	body := fmt.Sprintf(`{"mode":"custom","render_url":%q,"casting_url":%q}`,
-		renderServer.URL, castingServer.URL)
+	body := fmt.Sprintf(`{"mode":"custom","render_url":%q}`, renderServer.URL)
 	response, payload := env.do(t, http.MethodPost, "/api/portal/services/test",
 		body, map[string]string{"Origin": env.server.URL})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.StatusCode, payload)
 	}
 	var out struct {
-		Render  serviceCheck `json:"render"`
-		Casting serviceCheck `json:"casting"`
-		Screens int          `json:"screens"`
+		Render serviceCheck `json:"render"`
 	}
 	if err := json.Unmarshal(payload, &out); err != nil {
 		t.Fatalf("body %s: %v", payload, err)
 	}
-	if !out.Render.OK || !out.Casting.OK || out.Screens != 1 {
+	if !out.Render.OK {
 		t.Fatalf("out=%+v body=%s", out, payload)
 	}
 }
