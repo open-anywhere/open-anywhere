@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup } from '@testing-library/react'
+import { cleanup, configure } from '@testing-library/react'
 import { afterEach, beforeEach } from 'vitest'
 
 // jsdom implements none of the browser APIs antd and the voice pages rely on.
@@ -108,6 +108,11 @@ function installLocalStorage() {
     },
   })
 }
+
+// CI runs the suite with coverage on four cores, where a page can take several
+// seconds to render. Testing Library's one-second default turns that into a
+// flaky "unable to find" that never reproduces on a fast machine.
+configure({ asyncUtilTimeout: 5_000 })
 
 installMatchMedia()
 installObservers()
