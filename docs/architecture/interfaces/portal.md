@@ -128,7 +128,7 @@ sequenceDiagram
   - **虚拟设备**：`kind=virtual`，新建一个独立的 Linx 智能体并走完整开通流程，在浏览器里用麦克风和扬声器对话。可选 `name` 用于区分。
   - **硬件设备**：`kind=physical`。硬件联网后会播报或显示激活码，用户把它填入 `activation_code`；网关调用 Linx `POST /xiaozhi/device/bind/{agentId}/{code}` 把硬件绑到所选智能体（`agent_device_id`，默认第一台已有智能体的设备），并用平台返回的 `macAddress` 记录设备，使该硬件发来的 MCP 请求按 `(MAC, AgentID)` 归到这个用户。硬件自己连接灵矽，没有浏览器语音运行时，也不会在网关重启时被恢复。一个智能体可以绑多台硬件，它们各自的应用互相独立。
 - 移除设备：`DELETE /api/portal/devices/{id}`。至少保留一台；设备名下还有应用返回 `APP_BUSY`；仍有硬件绑在某个智能体上时不能移除该智能体的设备（`DEVICE_HAS_HARDWARE`）。移除硬件会先向灵矽解绑，解绑失败返回 `UNBIND_FAILED`，确认已在灵矽侧处理后可加 `?force=true` 强制移除。移除虚拟设备会停止其语音运行时并删除凭证文件，灵矽上的智能体本身不删除。
-- 灵矽返回的硬件 MAC 按原样保存并精确匹配 MCP 的 `X-Linx-Device-Id`，不做大小写归一；接入新批次硬件后需用真实设备确认两边格式一致。
+- MAC 按原样保存，匹配时忽略大小写：门户为虚拟设备生成的地址是大写，灵矽在 `X-Linx-Device-Id` 里发小写，按字节精确比较会让虚拟设备全部变成 `OWNER_NOT_FOUND`。`Identity.SameOwner` 与分组键同样按小写归一。
 - 设备视图不返回 token 与凭证文件路径；`client_id` 可以展示，便于排障。
 
 ### 4.2 应用

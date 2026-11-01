@@ -89,3 +89,19 @@ func TestIdentity(t *testing.T) {
 		t.Fatal("IDs should be unique")
 	}
 }
+
+// A device ID is a MAC address: the portal stores what it generated while Linx
+// reports the same address in lowercase, so ownership must ignore case.
+func TestSameOwnerIgnoresIdentiferCase(t *testing.T) {
+	portal := Identity{DeviceID: "02:12:DC:27:32:D6", AgentID: "dbca7e42"}
+	linx := Identity{DeviceID: "02:12:dc:27:32:d6", AgentID: "dbca7e42"}
+	if !portal.SameOwner(linx) {
+		t.Fatal("identities that differ only by MAC case are not the same owner")
+	}
+	if portal.SameOwner(Identity{DeviceID: "02:12:dc:27:32:d7", AgentID: "dbca7e42"}) {
+		t.Fatal("a different MAC is the same owner")
+	}
+	if portal.SameOwner(Identity{DeviceID: "02:12:dc:27:32:d6", AgentID: "other"}) {
+		t.Fatal("a different agent is the same owner")
+	}
+}

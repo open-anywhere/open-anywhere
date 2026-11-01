@@ -119,7 +119,7 @@ func (d *DB) ApprovedPublications(ctx context.Context, query string, limit int) 
 		statement += ` AND (title LIKE ? ESCAPE '\' OR summary LIKE ? ESCAPE '\')`
 		args = append(args, pattern, pattern)
 	}
-	statement += ` ORDER BY published_at DESC, app_id LIMIT ?`
+	statement += ` ORDER BY published_at DESC, rowid DESC LIMIT ?`
 	args = append(args, limit)
 	return d.queryPublications(ctx, statement, args...)
 }

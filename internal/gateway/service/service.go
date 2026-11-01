@@ -210,7 +210,9 @@ func (k *keyedMutex) TryLock(key string) (func(), bool) {
 }
 
 func ownerKey(owner app.Identity) string {
-	return owner.DeviceID + "\x00" + owner.AgentID
+	// Case-insensitive so the same device never ends up in two lifecycle or
+	// pruning groups when the MAC arrives in a different case.
+	return strings.ToLower(owner.DeviceID) + "\x00" + strings.ToLower(owner.AgentID)
 }
 
 // ownedByAny reports whether owner is one of owners.

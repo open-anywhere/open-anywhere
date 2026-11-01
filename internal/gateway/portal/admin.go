@@ -982,7 +982,7 @@ func identityKey(deviceID, agentID string) string {
 	if deviceID == "" || agentID == "" {
 		return ""
 	}
-	return deviceID + "\x00" + agentID
+	return strings.ToLower(deviceID) + "\x00" + strings.ToLower(agentID)
 }
 
 func sumCounts(values map[string]int) int {
