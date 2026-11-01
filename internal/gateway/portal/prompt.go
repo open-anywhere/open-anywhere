@@ -92,7 +92,19 @@ func NewService(ctx context.Context, cfg BuildConfig, db *store.DB, apps *servic
 	if _, err := auth.EnsureAdmin(ctx, Credentials{Username: cfg.Username, Password: cfg.Password}); err != nil {
 		return nil, err
 	}
-	voice := NewVoiceManager(ctx, WithOnSiteCasting(cfg.CastingIP))
+	// On-site casting runs from the host's own LAN, so only the administrator's
+	// virtual device may use it: that device is the mock Linx hardware entry
+	// used to try the chain locally. Tenant devices must never see the
+	// operator's screens.
+	voice := NewVoiceManager(ctx,
+		WithOnSiteCasting(cfg.CastingIP),
+		WithCastingFor(func(userID string) bool {
+			user, err := db.PortalUserByID(ctx, userID)
+			if err != nil {
+				return false
+			}
+			return user.Role == store.PortalRoleAdmin && user.Status == store.PortalUserActive
+		}))
 	linxProvider := func(ctx context.Context) (*linx.Client, error) {
 		if provider == nil {
 			return nil, app.ErrPlatformNotConfigured

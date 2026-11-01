@@ -638,6 +638,10 @@ export function AdminSettingsPage() {
                         <p>
                           嵌入的语音入口在本机发 SSDP / DLNA。单网卡可自动启用；多网卡请指定与电视同网段的那一张。保存后会重连已在线的虚拟设备。
                         </p>
+                        <p>
+                          只有<strong>管理员账号</strong>的虚拟设备会用它——那台设备相当于模拟灵矽硬件，用来在本机跑通整条链路。其他租户的
+                          <code>self.cast.*</code> 始终不注册，否则他们会看到并投到这台服务器所在局域网的屏幕。
+                        </p>
                       </div>
                       {castingStatus?.active ? (
                         <Tag color="green">已启用</Tag>
@@ -648,7 +652,7 @@ export function AdminSettingsPage() {
                     <Form.Item
                       label="投屏网卡"
                       name="casting_interface"
-                      extra="真机固件不受此项影响，仍使用设备自己的 self.cast.*。"
+                      extra="只对管理员的虚拟设备生效；真机固件不受此项影响，仍使用设备自己的 self.cast.*。"
                     >
                       <Select
                         options={(() => {

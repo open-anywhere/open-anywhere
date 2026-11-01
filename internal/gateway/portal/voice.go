@@ -35,15 +35,27 @@ type VoiceManager struct {
 	// casting is the LAN address on-site casting starts from. Nil keeps the
 	// self.cast.* tools off, matching a deployment with no screens nearby.
 	casting net.IP
+	// castingFor limits on-site casting to selected accounts. The address is
+	// the host's own LAN, so in a multi-tenant deployment every other tenant
+	// would otherwise see — and cast to — the operator's screens. Nil allows
+	// every virtual device, which is only correct for a single-tenant portal.
+	castingFor func(userID string) bool
 }
 
 // VoiceOption adjusts a manager at construction time.
 type VoiceOption func(*VoiceManager)
 
-// WithOnSiteCasting makes every virtual device report the self.cast.* tools,
-// backed by DLNA on the given LAN address instead of a casting service.
+// WithOnSiteCasting makes virtual devices report the self.cast.* tools, backed
+// by DLNA on the given LAN address instead of a casting service.
 func WithOnSiteCasting(localIP net.IP) VoiceOption {
 	return func(m *VoiceManager) { m.casting = localIP }
+}
+
+// WithCastingFor limits on-site casting to the accounts the predicate accepts.
+// The predicate runs when a runtime starts, so a role change applies on the
+// next (re)start. Without it every virtual device gets the tools.
+func WithCastingFor(predicate func(userID string) bool) VoiceOption {
+	return func(m *VoiceManager) { m.castingFor = predicate }
 }
 
 // SetOnSiteCasting updates the LAN address used by future (and restarted)
@@ -52,6 +64,22 @@ func (m *VoiceManager) SetOnSiteCasting(localIP net.IP) {
 	m.mu.Lock()
 	m.casting = localIP
 	m.mu.Unlock()
+}
+
+// castingIPFor returns the LAN address this device may cast from, or nil when
+// casting is off for the deployment or this device's account is not allowed to
+// act as the mock hardware entry.
+func (m *VoiceManager) castingIPFor(device store.PortalDevice) net.IP {
+	m.mu.Lock()
+	ip, allowed := m.casting, m.castingFor
+	m.mu.Unlock()
+	if ip == nil {
+		return nil
+	}
+	if allowed != nil && !allowed(device.UserID) {
+		return nil
+	}
+	return ip
 }
 
 // CastingIP returns the address currently used for on-site casting, or nil.
@@ -94,6 +122,9 @@ func (m *VoiceManager) Start(device store.PortalDevice) error {
 	if err := checkStartable(device); err != nil {
 		return err
 	}
+	// Resolve the account policy before taking the lock: the predicate reads
+	// the account table, and Start holds m.mu for the whole runtime setup.
+	casting := m.castingIPFor(device)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if running, ok := m.apps[device.ID]; ok && running.err == "" {
@@ -106,9 +137,9 @@ func (m *VoiceManager) Start(device store.PortalDevice) error {
 		NoListen:   true,
 		Out:        io.Discard,
 	}
-	if m.casting != nil {
+	if casting != nil {
 		config.Casting = true
-		config.CastingLocalIP = m.casting
+		config.CastingLocalIP = casting
 	}
 	app, err := voiceentry.New(config)
 	if err != nil {
