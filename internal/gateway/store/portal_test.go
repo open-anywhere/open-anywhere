@@ -294,3 +294,36 @@ func TestPortalDevicesAndSettings(t *testing.T) {
 		t.Fatalf("missing setting err=%v", err)
 	}
 }
+
+// Linx sends the device MAC in lowercase while the portal stores the case it
+// generated; the identity lookup must still find the device.
+func TestPortalDeviceByIdentityIgnoresMacCase(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "store", "gateway.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	user := PortalUser{ID: "usr_1", Username: "ada", PasswordHash: "x",
+		Role: PortalRoleUser, Status: PortalUserActive,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	if err := db.CreatePortalUser(ctx, user); err != nil {
+		t.Fatalf("CreatePortalUser: %v", err)
+	}
+	device := PortalDevice{ID: "dev_1", UserID: user.ID, Kind: PortalDeviceVirtual,
+		MAC: "02:12:DC:27:32:D6", ClientID: "client", LinxAgentID: "agt_1",
+		State: PortalDeviceRegistered, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	if err := db.CreatePortalDevice(ctx, device); err != nil {
+		t.Fatalf("CreatePortalDevice: %v", err)
+	}
+	found, err := db.PortalDeviceByIdentity(ctx, "02:12:dc:27:32:d6", "agt_1")
+	if err != nil {
+		t.Fatalf("PortalDeviceByIdentity: %v", err)
+	}
+	if found.ID != device.ID {
+		t.Fatalf("found %q, want %q", found.ID, device.ID)
+	}
+	if _, err := db.PortalDeviceByIdentity(ctx, "02:12:dc:27:32:d6", "agt_other"); err == nil {
+		t.Fatal("a different agent matched the same MAC")
+	}
+}

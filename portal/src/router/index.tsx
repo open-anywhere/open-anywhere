@@ -154,6 +154,12 @@ const appDetailRoute = createRoute({
   component: lazyRouteComponent(() => import('../pages/portal/AppDetailPage'), 'AppDetailPage'),
 })
 
+const storeRoute = createRoute({
+  getParentRoute: () => portalRoute,
+  path: 'store',
+  component: lazyRouteComponent(() => import('../pages/portal/StorePage'), 'StorePage'),
+})
+
 const devicesRoute = createRoute({
   getParentRoute: () => portalRoute,
   path: 'devices',
@@ -237,6 +243,12 @@ const adminAppsRoute = createRoute({
   component: lazyRouteComponent(() => import('../pages/admin/AdminAppsPage'), 'AdminAppsPage'),
 })
 
+const adminStoreRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'store',
+  component: lazyRouteComponent(() => import('../pages/admin/AdminStorePage'), 'AdminStorePage'),
+})
+
 const adminSettingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'settings',
@@ -282,6 +294,7 @@ const routeTree = rootRoute.addChildren([
     overviewRoute,
     appsRoute,
     appDetailRoute,
+    storeRoute,
     agentsRoute,
     devicesRoute,
     servicesRoute,
@@ -294,6 +307,7 @@ const routeTree = rootRoute.addChildren([
     adminUserDetailRoute,
     adminAgentsRoute,
     adminAppsRoute,
+    adminStoreRoute,
     adminSettingsRoute,
   ]),
   callRoute,

@@ -547,9 +547,13 @@ func (d *DB) ListPortalDevices(ctx context.Context) ([]PortalDevice, error) {
 
 // PortalDeviceByIdentity resolves the device behind an MCP identity. The
 // agent ID must match, so a MAC alone cannot claim another user's agent.
+//
+// The MAC comparison ignores case: virtual devices are recorded with the case
+// the portal generated, while Linx reports the same address in lowercase. A
+// strict comparison made every virtual device look unregistered.
 func (d *DB) PortalDeviceByIdentity(ctx context.Context, mac, agentID string) (PortalDevice, error) {
 	return scanPortalDevice(d.sql.QueryRowContext(ctx, selectPortalDevice+`
-		WHERE mac = ? AND linx_agent_id = ?`, mac, agentID))
+		WHERE LOWER(mac) = LOWER(?) AND linx_agent_id = ?`, mac, agentID))
 }
 
 // CountPortalDevicesByState returns device counts keyed by provisioning state.

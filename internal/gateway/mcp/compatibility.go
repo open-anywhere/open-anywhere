@@ -233,10 +233,15 @@ func (s *Server) StreamableHTTPHosts(hosts func(context.Context) []string, probe
 		if validator := s.ownerValidator(); validator != nil {
 			identity := identityFrom(r)
 			if identity.DeviceID == "" || identity.AgentID == "" || identity.SessionID == "" {
+				s.logf("mcp: rejected a request without a full identity (device=%q agent=%q session=%q host=%s)",
+					identity.DeviceID, identity.AgentID, identity.SessionID, r.Host)
 				writeIdentityFailure(w, "MISSING_IDENTITY", http.StatusBadRequest)
 				return
 			}
 			if err := validator.ValidateOwner(r.Context(), identity); err != nil {
+				// An unseen device and a stale token both look like "the client
+				// never called us" without this line.
+				s.logf("mcp: rejected identity device=%s agent=%s: %v", identity.DeviceID, identity.AgentID, err)
 				writeIdentityError(w, err)
 				return
 			}

@@ -3,6 +3,7 @@ import {
   DeleteOutlined,
   DownloadOutlined,
   FileTextOutlined,
+  ShopOutlined,
 } from '@ant-design/icons'
 import {
   Alert,
@@ -10,6 +11,8 @@ import {
   Button,
   Card,
   Descriptions,
+  Form,
+  Input,
   Modal,
   Popconfirm,
   Result,
@@ -73,6 +76,13 @@ export function AppDetailPage() {
   const queryClient = useQueryClient()
   const { message } = AntApp.useApp()
   const [openapiOpen, setOpenapiOpen] = useState(false)
+  const [publishOpen, setPublishOpen] = useState(false)
+  const [publishForm] = Form.useForm<{ title: string; summary: string }>()
+  const publications = useQuery({
+    queryKey: ['publications'],
+    queryFn: () => api.myPublications(),
+  })
+  const publication = publications.data?.publications.find((item) => item.store_id === appId)
 
   const app = useQuery({
     ...appQueryOptions(appId),
@@ -98,6 +108,29 @@ export function AppDetailPage() {
     },
     onError: (error) => {
       message.error(error instanceof ApiError ? error.message : '删除失败')
+    },
+  })
+
+  const publish = useMutation({
+    mutationFn: (values: { title: string; summary: string }) => api.publishApp(appId, values),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['publications'] })
+      message.success('已提交审核，通过后会出现在应用商城')
+      setPublishOpen(false)
+    },
+    onError: (error) => {
+      message.error(error instanceof ApiError ? error.message : '提交失败')
+    },
+  })
+
+  const unpublish = useMutation({
+    mutationFn: () => api.unpublishApp(appId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['publications'] })
+      message.success('已从商城下架')
+    },
+    onError: (error) => {
+      message.error(error instanceof ApiError ? error.message : '下架失败')
     },
   })
 
@@ -151,6 +184,60 @@ export function AppDetailPage() {
               <Button icon={<FileTextOutlined />} onClick={() => setOpenapiOpen(true)}>
                 接口文档
               </Button>
+            ) : null}
+            {!building ? (
+              publication ? (
+                <Space wrap>
+                  <Tag
+                    color={
+                      publication.status === 'approved'
+                        ? 'green'
+                        : publication.status === 'rejected'
+                          ? 'red'
+                          : 'gold'
+                    }
+                  >
+                    {publication.status === 'approved'
+                      ? '商城中'
+                      : publication.status === 'rejected'
+                        ? '审核未通过'
+                        : '审核中'}
+                  </Tag>
+                  <Button
+                    icon={<ShopOutlined />}
+                    onClick={() => {
+                      publishForm.setFieldsValue({
+                        title: publication.title,
+                        summary: publication.summary,
+                      })
+                      setPublishOpen(true)
+                    }}
+                  >
+                    更新公开信息
+                  </Button>
+                  <Popconfirm
+                    title="从商城下架？"
+                    description="已添加到别人设备上的副本不受影响。"
+                    okText="下架"
+                    cancelText="取消"
+                    onConfirm={() => unpublish.mutate()}
+                  >
+                    <Button type="text" loading={unpublish.isPending}>
+                      下架
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ) : (
+                <Button
+                  icon={<ShopOutlined />}
+                  onClick={() => {
+                    publishForm.setFieldsValue({ title, summary: '' })
+                    setPublishOpen(true)
+                  }}
+                >
+                  公开到商城
+                </Button>
+              )
             ) : null}
             <Popconfirm
               title="删除这个应用？"
@@ -317,6 +404,32 @@ export function AppDetailPage() {
         ) : (
           <pre className="code-panel openapi-panel">{openapi.data}</pre>
         )}
+      </Modal>
+
+      <Modal
+        open={publishOpen}
+        title="公开到应用商城"
+        okText="提交审核"
+        cancelText="取消"
+        confirmLoading={publish.isPending}
+        onOk={() => publishForm.submit()}
+        onCancel={() => setPublishOpen(false)}
+      >
+        <Form form={publishForm} layout="vertical" onFinish={(values) => publish.mutate(values)}>
+          <Form.Item
+            label="标题"
+            name="title"
+            rules={[{ required: true, message: '给商城里的应用起个标题' }]}
+          >
+            <Input maxLength={40} placeholder="例如：周末答题夜" />
+          </Form.Item>
+          <Form.Item label="一句介绍" name="summary">
+            <Input.TextArea rows={3} maxLength={200} placeholder="这个应用适合什么场合、怎么玩" />
+          </Form.Item>
+          <p className="muted-text">
+            提交后需要管理员审核，通过后其他用户可以看到并复制一份。你的原始需求不会被公开。
+          </p>
+        </Form>
       </Modal>
     </div>
   )

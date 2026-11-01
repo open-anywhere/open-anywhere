@@ -183,4 +183,4 @@ Portal 模式下，MCP 会话必须携带 `X-Linx-Device-Id`、`X-Linx-Agent-Id`
 
 ## 8. 多租户 Portal
 
-Portal 与 Gateway 同进程，分用户端与管理端。注册时原子创建用户与虚拟智能体；每个用户按 owner 解析自己的 Render 绑定，租户之间不复用下游服务。角色、开通流程、接口清单与安全边界见[多租户 Portal](interfaces/portal.md)。
+Portal 与 Gateway 同进程，分用户端与管理端。注册时原子创建用户与虚拟智能体；每个用户按 owner 解析自己的 Render 绑定，租户之间不复用下游服务。用户可以把应用公开到应用商城，经管理员审核后供其他用户复制成自己的一份（`app_publications` 表，复制出的应用带 `InstalledFrom` 标记）。角色、开通流程、接口清单与安全边界见[多租户 Portal](interfaces/portal.md)。

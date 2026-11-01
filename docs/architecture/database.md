@@ -17,6 +17,7 @@
 | 门户账号、角色/状态、会话、设备记录 | `portal_users` / `portal_sessions` / `portal_devices` | 是（v2，v3 增加角色与状态） |
 | 用户服务绑定 | `portal_service_bindings` | 是（v3；token 为密文） |
 | 平台设置（AgentAPI / Linx / 默认服务 / 注册开关） | `platform_settings` | 是（v3；秘密字段为密文） |
+| 应用商城的公开条目与审核状态 | `app_publications` | 是（v6；`app_id` 外键指向 `apps.id`，级联删除） |
 | 平台侧 MCP Server/实例 ID 缓存 | `portal_settings` | 是 |
 | 虚拟设备凭证 | `{portal.data_dir}/devices/{device_id}.json` | 否，0600 文件 |
 | 主密钥 | `GATEWAY_SECRET_KEY` 或 `{portal.data_dir}/secret.key` | 否 |
@@ -114,7 +115,7 @@ erDiagram
     }
 ```
 
-`portal_devices` 的 `(mac, linx_agent_id)` 对应 `apps.data.Owner` 的 `(device_id, agent_id)`，应用归属仍由内存注册表按 `SameOwner` 判断，应用表不增加外键。平台设置是全局键值表，与用户没有外键关系。
+`portal_devices` 的 `(mac, linx_agent_id)` 对应 `apps.data.Owner` 的 `(device_id, agent_id)`，应用归属仍由内存注册表按 `SameOwner` 判断，应用表不增加外键（`SameOwner` 对 MAC 忽略大小写：门户生成的虚拟设备 MAC 是大写，灵矽在请求头里发小写）。平台设置是全局键值表，与用户没有外键关系。
 
 ## 4. 表结构
 
@@ -172,6 +173,35 @@ CREATE TABLE IF NOT EXISTS artifacts (
 
 产物元数据没有修订号保护，`SaveArtifact` 直接按 `app_id` 覆盖。当前只有构建完成和启动恢复会写入，调用方是串行的。
 
+### 4.3 `app_publications`
+
+```sql
+CREATE TABLE IF NOT EXISTS app_publications (
+    app_id        TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    summary       TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','approved','rejected')),
+    review_note   TEXT NOT NULL DEFAULT '',
+    reviewed_by   TEXT NOT NULL DEFAULT '',
+    published_at  TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+);
+```
+
+| 列 | 含义 | 说明 |
+| --- | --- | --- |
+| `app_id` | 被公开的应用 | 外键指向 `apps.id`；应用被删除或被历史裁剪时发布记录自动消失 |
+| `owner_user_id` | 发布者账号 | 用于「我的发布」；商城对其他人不返回这个字段 |
+| `title` / `summary` | 展示信息 | 作者填写；`summary` 可为空 |
+| `status` | `pending` / `approved` / `rejected` | 只有 `approved` 出现在商城；任何编辑都会退回 `pending` |
+| `review_note` / `reviewed_by` | 审核意见与审核人 | 只对作者与管理员可见 |
+| `published_at` / `updated_at` | 时间戳 | UTC、`time.RFC3339Nano`；列表按 `published_at DESC, rowid DESC` |
+
+这张表**没有**保存应用的 `Prompt` 或玩家名单：商城只公开作者填写的标题、简介，以及应用本身的名称与操作数量。
+
 ## 5. `data` 快照格式
 
 `apps.data` 是 `app.App` 的直接 JSON 序列化。顶层字段**没有 JSON tag**，因此列名就是 Go 字段名；只有嵌套的 `Identity`、`Error`、`StreamSource` 和 `openapi.Spec` 有自定义格式。
@@ -198,6 +228,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
   "BuildFinishedAt": "2026-10-25T10:03:00Z",
   "BuildDuration": 180000000000,
   "LastStatusMessage": "",
+  "InstalledFrom": "",
   "Artifact": {
     "Path": "artifacts/app_abc123.tar.gz",
     "SHA256": "abc",
@@ -221,12 +252,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
     "video_codec": "h264",
     "audio_codec": "aac"
   },
-  "ScreenID": "tv_1",
-  "TargetID": "tv_1",
-  "EndpointID": "dlna-renderer",
-  "ProjectionSessionID": "proj_1",
   "PendingRuntime": false,
-  "PendingProjection": false,
   "CleanupPending": false,
   "StartedAt": "2026-10-25T10:04:00Z",
   "StoppedAt": "0001-01-01T00:00:00Z"
@@ -240,9 +266,10 @@ CREATE TABLE IF NOT EXISTS artifacts (
 | 归属与输入 | `ID`、`Owner`、`Prompt`、`PlayerNames` | 历史和重启后继续构建 |
 | 构建 | `State`、`SessionID`、`EventCursor`、`BuildStartedAt`、`BuildFinishedAt`、`BuildDuration`、`LastAgentMessage`、`LastProgress`、`LastStatusMessage` | 重启后继续监听 `building` 会话 |
 | 构建产物 | `Name`、`OpenAPI`、`Artifact` | 无需重新下载即可提供 `get-app-operations` / `get-openapi`；下载地址在重启时重写 |
-| 运行绑定 | `Source`、`InstanceID`、`Port`、`AppBaseURL`；`ScreenID`、`TargetID`、`EndpointID`、`ProjectionSessionID` 仅旧版/调试记录使用 | 重启后核对并清理遗留资源 |
+| 运行绑定 | `Source`、`InstanceID`、`Port`、`AppBaseURL` | 重启后核对并清理遗留资源 |
+| 来源 | `InstalledFrom` | 非空表示从应用商城复制而来：没有 AgentAPI 会话，`update-app` 返回 `APP_INSTALLED` |
 | 运行时间 | `StartedAt`、`StoppedAt` | 状态查询 |
-| 未完成意图 | `PendingRuntime`、`PendingProjection`、`CleanupPending`、`Error` | 写前约束：先记录意图，再调用下游；崩溃后由 `reconcile` 核对 |
+| 未完成意图 | `PendingRuntime`、`CleanupPending`、`Error` | 写前约束：先记录意图，再调用下游；崩溃后由 `reconcile` 核对 |
 
 注意事项：
 
@@ -272,8 +299,8 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 
 1. 创建数据库父目录（`db.go:57-63`）。
 2. 以 10 秒超时 `Ping`。
-3. 读取 `PRAGMA user_version`；若大于程序支持的 `schemaVersion`（当前为 4）则拒绝启动。
-4. 按版本依次执行尚未应用的迁移（v1 → v2 → v3 → v4）；每个版本在独立事务中执行，成功后在同一事务写入 `PRAGMA user_version`。新库从 0 一次执行到 4，已有 v3 库只执行 v4。
+3. 读取 `PRAGMA user_version`；若大于程序支持的 `schemaVersion`（当前为 6）则拒绝启动。
+4. 按版本依次执行尚未应用的迁移（v1 → … → v6）；每个版本在独立事务中执行，成功后在同一事务写入 `PRAGMA user_version`。新库从 0 一次执行到 6，已有 v4 库依次执行 v5、v6。
 
 写入并发控制分两层：
 
@@ -303,7 +330,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 4. `database.ListApps`：读取全部 `data` 并反序列化为 `app.App`。
 5. 对每个同时存在产物行的应用，用步骤 3 计算的路径和地址覆盖 `App.Artifact`，`Revision++` 后 `SaveApp`。
 6. `registry.Load`：只加载，不写回；`Revision` 为 0 时补为 1。
-7. `RecoverRuntime`：把 `PendingRuntime` / `PendingProjection`，以及 `idle` 但仍有实例或投屏绑定的应用标为 `error` + `CleanupPending` + `RECOVERY_PENDING`，等待 `reconcile` 只读核对。
+7. `RecoverRuntime`：把 `PendingRuntime`，以及 `idle` 但仍有实例绑定的应用标为 `error` + `CleanupPending` + `RECOVERY_PENDING`，等待 `reconcile` 只读核对。
 8. `PruneHistory`：按 `(device_id, agent_id)` 分组，每组保留最新 10 个。
 9. 对 `State == building` 的应用调用 `builder.Resume`；缺少 `SessionID` 的直接置为构建失败。
 10. `RunMonitor` 周期核对运行状态并完成遗留清理。
@@ -319,15 +346,14 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 | 构建进度 | `EventCursor`、`LastAgentMessage`、`LastProgress`、`LastStatusMessage` | `Update` |
 | 构建成功 | `State=idle`、`Name`、`OpenAPI`、`Artifact`、`BuildFinishedAt`、`BuildDuration` | `Do` |
 | 构建失败 | `State=error`、`BuildFinishedAt`、`Error` | `Update` |
-| 启动：占屏（旧版） | `ScreenID`、`TargetID`、`CleanupPending=true` | `Do` |
-| 启动：Render | `Port`、`PendingRuntime=true` → `InstanceID`、`AppBaseURL` | `Do` |
-| 启动：投屏（旧版） | `EndpointID`、`Source`、`PendingProjection=true` → `ProjectionSessionID` | `Do` |
-| 启动成功 | `State=running`、下游全部绑定、`StartedAt`；新路径还会清空屏幕/投屏字段 | `Do` |
-| 停止 | 有旧版投屏会话时先停它，再停 Render，最后清空绑定、`State=idle`、`StoppedAt`；新路径没有投屏会话 | `Do` |
-| 清理遗留资源 | 逐步清空 `ProjectionSessionID` / `InstanceID` / 标记，最后清 `CleanupPending` | `Do` |
+| 从商城安装 | `State=idle`、`Name`、`InstalledFrom`、`Artifact`、`OpenAPI` | `Add` + `Do` |
+| 启动：Render | `Port`、`PendingRuntime=true` → `InstanceID`、`AppBaseURL`、`Source` | `Do` |
+| 启动成功 | `State=running`、下游绑定、`StartedAt` | `Do` |
+| 停止 | 停 Render 实例，清空绑定、`State=idle`、`StoppedAt` | `Do` |
+| 清理遗留资源 | 逐步清空 `InstanceID` 与标记，最后清 `CleanupPending` | `Do` |
 | 历史裁剪 | 删除 `apps` 行、产物文件、`artifacts` 行 | `DeleteApp` + `Remove` |
 
-`PendingRuntime` / `PendingProjection` / `CleanupPending` 是**写前意图标记**：先落盘"我要调用下游"，再发起网络请求。这样进程在任意位置崩溃，重启后都能从已持久化的标识判断是否存在遗留资源，而不会重复创建。`StartApp` 走新路径时只登记 Render 绑定，并把 `ScreenID` / `TargetID` / `EndpointID` / `ProjectionSessionID` 清空；`PendingProjection` 只为旧版 `startAppOnScreen` 和未完成的历史记录保留。
+`PendingRuntime` / `CleanupPending` 是**写前意图标记**：先落盘"我要调用下游"，再发起网络请求。这样进程在任意位置崩溃，重启后都能从已持久化的标识判断是否存在遗留资源，而不会重复创建。投屏状态不在控制面：`start-app` 只登记 Render 绑定并返回 `stream_url`，屏幕由设备端 `self.cast.*` 管理。
 
 ## 8. 产物生命周期
 
@@ -358,7 +384,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 
 ## 10. Schema 版本与迁移
 
-- 当前 `schemaVersion = 4`，版本号保存在 SQLite `PRAGMA user_version`。
+- 当前 `schemaVersion = 6`，版本号保存在 SQLite `PRAGMA user_version`。
 - 迁移是有序列表，而不是一组混合的 `CREATE ... IF NOT EXISTS`：
 
 | 版本 | 内容 |
@@ -367,6 +393,8 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 | v2 | `portal_users`、`portal_sessions`、`portal_devices`、`portal_settings` 及索引 |
 | v3 | `portal_users.role/status/last_login_at`、角色/过期索引、虚拟设备与 AgentID 唯一索引、`portal_service_bindings`、`platform_settings` |
 | v4 | 删除 `portal_devices_one_virtual` 与 `portal_devices_agent`，新增 `portal_devices_agent_mac(linx_agent_id, mac)` 唯一索引与 `portal_devices.name` |
+| v5 | 重建 `portal_service_bindings`，删除投屏服务地址与令牌两列（投屏已改为设备端发起） |
+| v6 | 新增 `app_publications`（应用商城：标题、简介、审核状态、审核意见与审核人） |
 
 - 每个版本在一个事务中执行，`PRAGMA user_version` 也在该事务内写入；任一步失败会回滚整个版本，schema 与版本号都保持原状。
 - 打开时只拒绝**比程序更新**的数据库，旧程序看到更新的版本会拒绝启动，避免写入不认识的 schema。
@@ -378,7 +406,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 - **迁移验收**：迁移完成后逐项确认，任何一项不符都不要继续启动业务。
 
 ```sh
-sqlite3 open-anywhere.gateway.db "PRAGMA user_version;"   # 期望 4
+sqlite3 open-anywhere.gateway.db "PRAGMA user_version;"   # 期望 6
 sqlite3 open-anywhere.gateway.db "PRAGMA integrity_check;" # 期望 ok
 sqlite3 open-anywhere.gateway.db "SELECT COUNT(*) FROM portal_devices WHERE name IS NULL;" # 期望 0
 ```
@@ -446,8 +474,13 @@ sqlite3 -header -column open-anywhere.gateway.db \
 sqlite3 open-anywhere.gateway.db \
   "SELECT json_extract(data,'$.Owner.agent_id'), json_extract(data,'$.State'),
           json_extract(data,'$.Artifact.Path'), json_extract(data,'$.InstanceID'),
-          json_extract(data,'$.ProjectionSessionID')
+          json_extract(data,'$.InstalledFrom')
      FROM apps WHERE id='app_xxx';"
+
+# 商城发布记录
+sqlite3 -header -column open-anywhere.gateway.db \
+  "SELECT app_id, owner_user_id, title, status, reviewed_by, updated_at
+     FROM app_publications ORDER BY updated_at DESC;"
 
 # 产物元数据
 sqlite3 -header -column open-anywhere.gateway.db \

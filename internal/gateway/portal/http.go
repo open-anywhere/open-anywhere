@@ -113,6 +113,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/portal/apps/{id}", a.withUser(a.getApp))
 	mux.HandleFunc("GET /api/portal/apps/{id}/openapi.yaml", a.withUser(a.getOpenAPI))
 	mux.HandleFunc("DELETE /api/portal/apps/{id}", a.withUser(a.deleteApp))
+	mux.HandleFunc("PUT /api/portal/apps/{id}/publication", a.withUser(a.publishApp))
+	mux.HandleFunc("DELETE /api/portal/apps/{id}/publication", a.withUser(a.unpublishApp))
+	mux.HandleFunc("GET /api/portal/store", a.withUser(a.listStore))
+	mux.HandleFunc("POST /api/portal/store/{id}/clone", a.withUser(a.cloneStoreApp))
+	mux.HandleFunc("GET /api/portal/publications", a.withUser(a.listMyPublications))
 	mux.Handle("/api/portal/", http.NotFoundHandler())
 	return a.securityHeaders(a.guard(mux))
 }
@@ -591,6 +596,16 @@ func mapServiceError(err error) error {
 		return apiError(http.StatusBadGateway, "TARGET_UNREACHABLE", "无法访问应用地址")
 	case "STOP_FAILED":
 		return apiError(http.StatusBadGateway, "STOP_FAILED", "停止投屏失败")
+	case "STORE_ITEM_NOT_FOUND":
+		return apiError(http.StatusNotFound, "STORE_ITEM_NOT_FOUND", "商城里没有这个应用")
+	case "QUOTA_EXCEEDED":
+		return apiError(http.StatusConflict, "QUOTA_EXCEEDED", "应用数量已达上限，请先删除一个")
+	case "ARTIFACT_MISSING":
+		return apiError(http.StatusConflict, "ARTIFACT_MISSING", "应用产物已丢失")
+	case "APP_INSTALLED":
+		return apiError(http.StatusConflict, "APP_INSTALLED", "这是从应用商城添加的应用，不能直接修改")
+	case "STORE_UNAVAILABLE":
+		return apiError(http.StatusServiceUnavailable, "STORE_UNAVAILABLE", "应用商城暂不可用")
 	case "OPERATION_NOT_FOUND":
 		return apiError(http.StatusNotFound, "OPERATION_NOT_FOUND", "应用没有这个操作")
 	case "INVALID_ARGUMENT":

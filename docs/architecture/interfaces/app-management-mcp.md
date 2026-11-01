@@ -77,6 +77,8 @@ Portal 启用时，MCP 请求必须携带三个头：
 | `start-app` | 启动已构建应用的云端运行时，返回流地址；不涉及屏幕 | `app_id` | `app_id`, `state: running`, `stream_url` |
 | `stop-app` | 停止运行中的应用 | `app_id` | `app_id`, `state: idle` |
 | `send-request` | 调用应用的业务操作 | `app_id`, `operation_id`, `parameters`, `body` | `status`, `body` |
+| `list-store-apps` | 浏览应用商城里审核通过的公开应用 | 可选 `query`、`limit` | `items[]`：`store_id`、`title`、`summary`、`name`、`operation_count` |
+| `install-app` | 把商城应用复制到当前设备 | `store_id`、可选 `name` | `app_id`, `state: idle` |
 
 **兼容层工具**（`internal/gateway/mcp/compatibility.go`，为旧版灵矽提示词保留）：
 
@@ -182,7 +184,8 @@ Portal 启用时，MCP 请求必须携带三个头：
       "built_at": "2026-10-24T08:20:00Z",
       "build_duration_seconds": 95,
       "operation_count": 1,
-      "operations": ["rollDice"]
+      "operations": ["rollDice"],
+      "installed_from": ""
     }
   ]
 }
@@ -190,6 +193,7 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 - `startable` 表示现在能否直接 `start-app`；false 时 `not_startable_reason` 说明原因（构建中、运行中、构建失败、产物无效需 `update-app` 重建、产物丢失，或上次启动还在核对/清理）。
 - 用户说“玩上次那个/之前那个”时，先 `list-apps` 让用户确认，再用 `start-app` 启动；不要重新 `create-app`。
+- `installed_from` 非空表示这个应用是从应用商城复制来的：它可以启动、改名、投屏，但 `update-app` 会返回 `APP_INSTALLED`，要改内容只能按新需求重新 `create-app`。
 - `list-apps` 是历史快照，启动时仍以 `get-app-status` / `start-app` 的结果为准。
 
 ### 3.2 `update-app`
@@ -506,6 +510,9 @@ sequenceDiagram
 | `UPDATE_START_FAILED` | `update-app` | 绑定会话存在但提交修订消息失败 |
 | `SESSION_UNAVAILABLE` | `update-app` | 绑定会话缺失、已终止、已归档或无法接收消息 |
 | `APP_RUNNING` | `update-app` | 应用仍在运行，需先 `stop-app` |
+| `APP_INSTALLED` | `update-app` | 这是从应用商城添加的应用，没有构建会话；按新需求重新 `create-app` |
+| `STORE_ITEM_NOT_FOUND` | `install-app` | 商城里没有这个应用，或它还没通过审核 |
+| `QUOTA_EXCEEDED` | `install-app` | 该设备与智能体的应用数量已达上限，需先删除一个 |
 | `MISSING_CONTEXT` | `list-apps` 等 | 缺少设备标识 |
 | `APP_BUILDING` | `start-app`, `stop-app`, `get-app-operations`, `update-app` | 应用仍在构建或修订中 |
 | `APP_IN_ERROR` | `start-app`, `get-app-operations`, `update-app` | 应用处于不可启动或不可修订的 `error` |

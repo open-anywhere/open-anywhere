@@ -13,6 +13,7 @@ export type ConsolePath =
   | '/portal/agents'
   | '/portal/devices'
   | '/portal/apps'
+  | '/portal/store'
   | '/portal/services'
   | '/portal/activity'
   | '/portal/settings'
@@ -20,6 +21,7 @@ export type ConsolePath =
   | '/admin/users'
   | '/admin/agents'
   | '/admin/apps'
+  | '/admin/store'
   | '/admin/settings'
 
 export interface ConsoleNavItem {

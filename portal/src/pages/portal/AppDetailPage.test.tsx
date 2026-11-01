@@ -12,6 +12,9 @@ function routes(detail = makeAppDetail(), overrides: Record<string, unknown> = {
     'GET /api/portal/apps/app_1/openapi.yaml': { text: 'openapi: 3.0.0' },
     'DELETE /api/portal/apps/app_1': ok(null, 204),
     'GET /api/portal/apps': ok({ apps: [] }),
+    'GET /api/portal/publications': ok({ publications: [] }),
+    'PUT /api/portal/apps/app_1/publication': ok({ publication: { store_id: 'app_1' } }),
+    'DELETE /api/portal/apps/app_1/publication': ok(null, 204),
     ...overrides,
   }
 }
@@ -130,5 +133,59 @@ describe('AppDetailPage', () => {
       expect(http.callsFor('DELETE', '/api/portal/apps/app_1')).toHaveLength(1),
     )
     await settledAt(router, '/portal/apps')
+  })
+
+  it('publishes the app to the store for review', async () => {
+    const user = userEvent.setup()
+    const http = mockApi(routes())
+    await renderApp('/portal/apps/app_1')
+
+    // The action carries an icon, whose aria-label becomes part of the
+    // accessible name; the visible text is the stable handle.
+    await user.click((await screen.findAllByText('公开到商城', {}, { timeout: 5_000 }))[0])
+    const title = await screen.findByLabelText('标题')
+    await user.clear(title)
+    await user.type(title, '周末答题夜')
+    await user.type(screen.getByLabelText('一句介绍'), '适合家庭聚会')
+    await user.click(screen.getByRole('button', { name: '提交审核' }))
+
+    await waitFor(() => {
+      expect(http.callsFor('PUT', '/api/portal/apps/app_1/publication')[0]?.body).toEqual({
+        title: '周末答题夜',
+        summary: '适合家庭聚会',
+      })
+    })
+  })
+
+  it('shows the review state and can unpublish', async () => {
+    const user = userEvent.setup()
+    const http = mockApi(
+      routes(makeAppDetail(), {
+        'GET /api/portal/publications': ok({
+          publications: [
+            {
+              store_id: 'app_1',
+              title: '电影知识竞赛',
+              summary: '五人抢答',
+              operation_count: 2,
+              published_at: '2026-10-02T10:00:00Z',
+              updated_at: '2026-10-02T10:00:00Z',
+              status: 'approved',
+            },
+          ],
+        }),
+      }),
+    )
+    await renderApp('/portal/apps/app_1')
+
+    expect(await screen.findByText('商城中')).toBeInTheDocument()
+    const unpublish = await screen.findAllByRole('button', { name: /下\s*架/ }, { timeout: 5_000 })
+    await user.click(unpublish[0])
+    const confirms = await screen.findAllByRole('button', { name: /下\s*架/ })
+    await user.click(confirms.at(-1) as HTMLElement)
+
+    await waitFor(() => {
+      expect(http.callsFor('DELETE', '/api/portal/apps/app_1/publication')).toHaveLength(1)
+    })
   })
 })

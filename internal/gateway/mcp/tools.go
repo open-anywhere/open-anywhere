@@ -28,6 +28,16 @@ type startAppInput struct {
 	AppID string `json:"app_id" jsonschema:"create-app 返回的正在创建中应用 ID"`
 }
 
+type listStoreAppsInput struct {
+	Query string `json:"query,omitempty" jsonschema:"可选关键字，匹配商城应用的标题或简介"`
+	Limit int    `json:"limit,omitempty" jsonschema:"返回条数，默认 10，最多 20"`
+}
+
+type installAppInput struct {
+	StoreID string `json:"store_id" jsonschema:"list-store-apps 返回的 store_id"`
+	Name    string `json:"name,omitempty" jsonschema:"用户确认过的应用名字；不填则沿用商城里的标题"`
+}
+
 type sendRequestInput struct {
 	AppID       string         `json:"app_id" jsonschema:"create-app 返回的应用 ID"`
 	OperationID string         `json:"operation_id" jsonschema:"get-app-operations 返回的 operation_id"`
@@ -143,6 +153,45 @@ func addTools(server *sdk.Server, tools Apps, identity app.Identity, timeout tim
 		}
 		return nil, result, nil
 	})
+
+	sdk.AddTool(server, &sdk.Tool{
+		Name:        "list-store-apps",
+		Title:       "浏览应用商城",
+		Description: "列出应用商城里已经审核通过的公开应用，可按关键字匹配标题或简介。用户问有没有现成的应用、或需求很笼统时先用它；用户已经明确描述需求时直接 create-app。返回 store_id 与标题，不要向用户念出 store_id。选好之后用 install-app 添加到当前设备。",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *sdk.CallToolRequest, input listStoreAppsInput) (*sdk.CallToolResult, storeListResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		limit := input.Limit
+		if limit <= 0 || limit > 20 {
+			limit = 10
+		}
+		items, err := tools.ListStoreApps(ctx, input.Query, limit)
+		if err != nil {
+			return nil, storeListResult{}, err
+		}
+		return nil, storeListResult{Items: items}, nil
+	})
+
+	sdk.AddTool(server, &sdk.Tool{
+		Name:        "install-app",
+		Title:       "添加商城应用",
+		Description: "把商城里的公开应用复制一份到当前设备，成为用户可以自己使用和改名的应用。store_id 必须来自 list-store-apps；name 是用户确认过的名字，可不填。安装是同步完成的，不需要 get-app-status 轮询，装好之后可以直接 start-app。装来的应用没有构建会话，后续不能 update-app，用户要改内容时按新需求重新 create-app。",
+		Annotations: mutatingAnnotations(false, true),
+	}, func(ctx context.Context, _ *sdk.CallToolRequest, input installAppInput) (*sdk.CallToolResult, service.CreateResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		result, err := tools.InstallStoreApp(ctx, identity, input.StoreID, input.Name)
+		if err != nil {
+			return nil, service.CreateResult{}, err
+		}
+		return nil, result, nil
+	})
+}
+
+// storeListResult wraps the store listing so the tool result stays an object.
+type storeListResult struct {
+	Items []service.StoreItemView `json:"items"`
 }
 
 func readOnlyAnnotations() *sdk.ToolAnnotations {

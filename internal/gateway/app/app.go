@@ -2,6 +2,7 @@
 package app
 
 import (
+	"strings"
 	"crypto/rand"
 	"errors"
 	"log"
@@ -57,7 +58,10 @@ type Identity struct {
 // The Linx session is deliberately not part of ownership: it changes on every
 // reconnect, while the applications built for a device and agent stay theirs.
 func (i Identity) SameOwner(other Identity) bool {
-	return i.DeviceID != "" && i.DeviceID == other.DeviceID && i.AgentID == other.AgentID
+	// Device IDs are MAC addresses reported by two systems; they differ only in
+	// case (the portal stores what it generated, Linx sends lowercase).
+	return i.DeviceID != "" && strings.EqualFold(i.DeviceID, other.DeviceID) &&
+		strings.EqualFold(i.AgentID, other.AgentID)
 }
 
 // Artifact describes the stored application package.
@@ -101,6 +105,10 @@ type App struct {
 	Source              casting.StreamSource
 	PendingRuntime      bool
 	CleanupPending      bool
+	// InstalledFrom is the store application this one was copied from. It is
+	// empty for applications this owner built itself. Update-app refuses an
+	// installed application instead of reporting a missing build session.
+	InstalledFrom string
 
 	StartedAt time.Time
 	StoppedAt time.Time

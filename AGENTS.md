@@ -27,14 +27,15 @@ Everything in this table can be verified by reading the named files; none of it 
 
 | Capability | Code | Tests and supporting evidence |
 | --- | --- | --- |
-| Stable MCP surface — 7 tools | `internal/gateway/mcp/tools.go` (8 tool definitions), `server.go` | `tools_edge_test.go`, `server_owner_test.go`, `server_test.go` |
+| Stable MCP surface — 9 tools | `internal/gateway/mcp/tools.go` (9 typed tools; plus the compatibility helpers below), `server.go` | `tools_edge_test.go`, `server_owner_test.go`, `server_test.go` |
 | Compatibility helper — `list-apps` | `internal/gateway/mcp/compatibility.go` | `compatibility_test.go`; not part of the stable surface |
 | Asynchronous build through AgentAPI | `internal/gateway/build/builder.go` | `builder_test.go`, `builder_extra_test.go`; build duration is recorded (`builder.go:513`); a failed update keeps the previous artifact |
 | Artifact and OpenAPI validation | `internal/gateway/artifact/validate.go`, `internal/gateway/openapi/spec.go` | package tests; Render validates the artifact again before running |
 | Render runtime and stage capture | `cmd/render`, `internal/render` | `e2e/render_test.go` drives real Node, Chromium and FFmpeg |
 | DLNA casting (device-side; the prototype lives in the voice runtime) | `internal/casting/dlna`, `internal/voiceentry/casting` | `caster_test.go`, `tools_test.go`, `transport_test.go` |
 | Voice entry (embedded in the portal runtime) | `internal/voiceentry` | `docs/architecture/voice-entry.md`; the live gateway E2E is opt-in (`e2e/gateway_live_test.go`) |
-| Multi-tenant portal with identity isolation | `internal/gateway/portal/` (`auth.go`, `admin.go`, `http.go`) | Go tests in the package; the React frontend (`portal/src`) has no unit tests |
+| Multi-tenant portal with identity isolation | `internal/gateway/portal/` (`auth.go`, `admin.go`, `http.go`); MCP identity matches the device MAC case-insensitively | Go tests in the package; the React frontend has unit tests (`portal/src/**/*.test.tsx`) but no e2e |
+| App store: publish, review, install | `internal/gateway/store/publications.go`, `internal/gateway/portal/store.go`, `internal/gateway/service/appstore.go`, `portal/src/pages/portal/StorePage.tsx` | `publications_test.go`, `store_test.go`, `appstore_test.go`, `StorePage.test.tsx`, `AdminStorePage.test.tsx` |
 | Multi-app sessions | `internal/gateway/service/service.go` | package tests; see the switching limitation below |
 | Recorded happy path | First-screen demo badges in `README.md` link to Bilibili (4K), Xiaohongshu, and the GitHub release (1080p) | the recording shows the chain running; it is not evidence of demand |
 

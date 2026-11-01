@@ -210,7 +210,9 @@ func (k *keyedMutex) TryLock(key string) (func(), bool) {
 }
 
 func ownerKey(owner app.Identity) string {
-	return owner.DeviceID + "\x00" + owner.AgentID
+	// Case-insensitive so the same device never ends up in two lifecycle or
+	// pruning groups when the MAC arrives in a different case.
+	return strings.ToLower(owner.DeviceID) + "\x00" + strings.ToLower(owner.AgentID)
 }
 
 // ownedByAny reports whether owner is one of owners.
@@ -237,7 +239,10 @@ type Service struct {
 	render    RenderClient
 	notifier  app.Notifier
 	artifacts ArtifactStore
-	cfg       Config
+	// store is the read side of the app store used by the MCP tools; nil when
+	// the deployment runs without a portal and therefore without a catalog.
+	store StoreSource
+	cfg   Config
 
 	http        *http.Client
 	validateURL func(context.Context, string) error
@@ -362,6 +367,12 @@ func (s *Service) UpdateApp(ctx context.Context, owner app.Identity, appID, prom
 		return CreateResult{}, err
 	}
 	before := record.Snapshot()
+	// An installed application has no build session by design. Saying so is
+	// clearer than SESSION_UNAVAILABLE, which asks the caller to retry the same
+	// call on a new app.
+	if before.InstalledFrom != "" {
+		return CreateResult{}, &ToolError{Code: "APP_INSTALLED", Message: "这是从应用商城添加的应用，不能直接修改；请用新的需求重新生成"}
+	}
 	switch before.State {
 	case app.StateBuilding:
 		return CreateResult{}, &ToolError{Code: "APP_BUILDING", Message: "应用仍在构建或修订中"}

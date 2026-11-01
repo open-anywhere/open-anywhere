@@ -20,7 +20,7 @@ import (
 
 // schemaVersion is the newest schema this binary understands. A database that
 // reports a newer version is refused so an older binary cannot corrupt it.
-const schemaVersion = 5
+const schemaVersion = 6
 
 var memorySequence atomic.Uint64
 
@@ -164,6 +164,29 @@ var schemaV5 = []string{
 	`ALTER TABLE portal_service_bindings_v5 RENAME TO portal_service_bindings`,
 }
 
+// schemaV6 introduces the app store: one publication row per published
+// application. Status carries the review outcome, so a row can exist before it
+// is visible to anyone else.
+var schemaV6 = []string{
+	`CREATE TABLE IF NOT EXISTS app_publications (
+		app_id        TEXT PRIMARY KEY,
+		owner_user_id TEXT NOT NULL,
+		title         TEXT NOT NULL,
+		summary       TEXT NOT NULL,
+		status        TEXT NOT NULL DEFAULT 'pending'
+			CHECK (status IN ('pending','approved','rejected')),
+		review_note   TEXT NOT NULL DEFAULT '',
+		reviewed_by   TEXT NOT NULL DEFAULT '',
+		published_at  TEXT NOT NULL,
+		updated_at    TEXT NOT NULL,
+		FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS app_publications_status
+		ON app_publications(status, published_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS app_publications_owner
+		ON app_publications(owner_user_id, updated_at DESC)`,
+}
+
 type migration struct {
 	version    int
 	statements []string
@@ -178,6 +201,7 @@ var migrations = []migration{
 	{version: 3, statements: schemaV3, prepare: prepareSchemaV3},
 	{version: 4, statements: schemaV4},
 	{version: 5, statements: schemaV5},
+	{version: 6, statements: schemaV6},
 }
 
 // prepareSchemaV3 refuses duplicate virtual devices and duplicate Linx agent

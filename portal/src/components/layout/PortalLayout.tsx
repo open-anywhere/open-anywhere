@@ -6,6 +6,7 @@ import {
   MobileOutlined,
   RobotOutlined,
   SettingOutlined,
+  ShopOutlined,
   TeamOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
@@ -18,6 +19,7 @@ const portalNavItems: readonly ConsoleNavItem[] = [
   { to: '/portal/agents', label: '智能体', icon: <RobotOutlined />, exact: false },
   { to: '/portal/devices', label: '设备', icon: <MobileOutlined />, exact: false },
   { to: '/portal/apps', label: '应用', icon: <AppstoreOutlined />, exact: false },
+  { to: '/portal/store', label: '应用商城', icon: <ShopOutlined />, exact: false },
   { to: '/portal/services', label: '服务', icon: <ThunderboltOutlined />, exact: false },
   { to: '/portal/activity', label: '动态', icon: <HistoryOutlined />, exact: false },
   { to: '/portal/settings', label: '设置', icon: <SettingOutlined />, exact: false },
@@ -31,6 +33,7 @@ const adminNavItems: readonly ConsoleNavItem[] = [
   { to: '/admin/users', label: '用户', icon: <TeamOutlined />, exact: false },
   { to: '/admin/agents', label: '全部智能体', icon: <RobotOutlined />, exact: false },
   { to: '/admin/apps', label: '全部应用', icon: <AppstoreOutlined />, exact: false },
+  { to: '/admin/store', label: '商城审核', icon: <ShopOutlined />, exact: false },
   { to: '/admin/settings', label: '平台设置', icon: <SettingOutlined />, exact: false },
 ]
 

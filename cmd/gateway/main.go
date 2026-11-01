@@ -191,6 +191,11 @@ func serve(ctx context.Context, cfg config.Config) error {
 		apps = service.New(registry, builder, renderClient, server, serviceConfig)
 	}
 	apps.SetArtifactStore(artifactStore)
+	// The app store lives in the portal's database. Without a portal there is
+	// nothing published, so the tools simply report an empty catalog.
+	if database != nil {
+		apps.SetStoreSource(database)
+	}
 	if err := apps.RecoverRuntime(); err != nil {
 		return err
 	}
@@ -343,10 +348,14 @@ func mcpAuthFunc(token func(context.Context) (string, error), next http.Handler)
 		if r.URL.Path == "/mcp" || r.URL.Path == "/mcp/message" || r.URL.Path == "/sse" {
 			want, err := token(r.Context())
 			if err != nil {
+				log.Printf("mcp: cannot read the current token: %v", err)
 				http.Error(w, "Unauthorized", 401)
 				return
 			}
 			if want != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+want)) != 1 {
+				// Without this line a stale token looks like "the client never
+				// called us": the caller only sees a 401.
+				log.Printf("mcp: rejected a request with a missing or stale bearer token (remote=%s host=%s)", r.RemoteAddr, r.Host)
 				http.Error(w, "Unauthorized", 401)
 				return
 			}

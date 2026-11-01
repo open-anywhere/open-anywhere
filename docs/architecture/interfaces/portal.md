@@ -128,7 +128,7 @@ sequenceDiagram
   - **虚拟设备**：`kind=virtual`，新建一个独立的 Linx 智能体并走完整开通流程，在浏览器里用麦克风和扬声器对话。可选 `name` 用于区分。
   - **硬件设备**：`kind=physical`。硬件联网后会播报或显示激活码，用户把它填入 `activation_code`；网关调用 Linx `POST /xiaozhi/device/bind/{agentId}/{code}` 把硬件绑到所选智能体（`agent_device_id`，默认第一台已有智能体的设备），并用平台返回的 `macAddress` 记录设备，使该硬件发来的 MCP 请求按 `(MAC, AgentID)` 归到这个用户。硬件自己连接灵矽，没有浏览器语音运行时，也不会在网关重启时被恢复。一个智能体可以绑多台硬件，它们各自的应用互相独立。
 - 移除设备：`DELETE /api/portal/devices/{id}`。至少保留一台；设备名下还有应用返回 `APP_BUSY`；仍有硬件绑在某个智能体上时不能移除该智能体的设备（`DEVICE_HAS_HARDWARE`）。移除硬件会先向灵矽解绑，解绑失败返回 `UNBIND_FAILED`，确认已在灵矽侧处理后可加 `?force=true` 强制移除。移除虚拟设备会停止其语音运行时并删除凭证文件，灵矽上的智能体本身不删除。
-- 灵矽返回的硬件 MAC 按原样保存并精确匹配 MCP 的 `X-Linx-Device-Id`，不做大小写归一；接入新批次硬件后需用真实设备确认两边格式一致。
+- MAC 按原样保存，匹配时忽略大小写：门户为虚拟设备生成的地址是大写，灵矽在 `X-Linx-Device-Id` 里发小写，按字节精确比较会让虚拟设备全部变成 `OWNER_NOT_FOUND`。`Identity.SameOwner` 与分组键同样按小写归一。
 - 设备视图不返回 token 与凭证文件路径；`client_id` 可以展示，便于排障。
 
 ### 4.2 应用
@@ -230,6 +230,11 @@ Portal 不再有屏幕页，也没有 `GET /api/portal/screens`。屏幕发现�
 | `GET` | `/api/portal/apps/{id}` | 应用详情与操作 |
 | `GET` | `/api/portal/apps/{id}/openapi.yaml` | OpenAPI 文档，`text/yaml` |
 | `DELETE` | `/api/portal/apps/{id}` | 删除应用与产物，返回 `204` |
+| `PUT` | `/api/portal/apps/{id}/publication` | 公开或更新展示信息 `{title, summary}`；只有 owner 可以，落库为待审核 |
+| `DELETE` | `/api/portal/apps/{id}/publication` | 下架；已复制的副本不受影响，返回 `204` |
+| `GET` | `/api/portal/store?query=&limit=` | 应用商城：只返回审核通过的条目 |
+| `GET` | `/api/portal/publications` | 我发布的条目，含待审核与被拒的审核意见 |
+| `POST` | `/api/portal/store/{id}/clone` | `{name, device_id}`：把审核通过的应用复制到指定设备，返回 `{app_id, state: idle}` |
 
 语音控制端点（Cookie 鉴权，归属校验后挂载）：
 
@@ -254,6 +259,8 @@ POST /voice/{device_id}/abort
 | `GET` | `/api/admin/agents?state=&query=` | 按灵矽智能体归并。同一 `linx_agent_id` 的虚拟设备和硬件在一行里，`devices` 列出每台设备；还没有智能体 ID 的开通中设备按用户并成一行。`state` 按这一行的虚拟设备筛选，`query` 匹配用户名、用户 ID、MAC、设备名或智能体 ID |
 | `POST` | `/api/admin/agents/{id}/retry` | 重试开通或重启语音。`id` 是门户设备 ID，作用在那台虚拟设备上 |
 | `GET` | `/api/admin/apps?state=&query=&limit=` | 全局应用 |
+| `GET` | `/api/admin/store` | 商城审核队列，待审核在前，含发布者 |
+| `POST` | `/api/admin/store/{id}/review` | `{decision: approve\|reject, note?}`；通过后进入商城，拒绝只对作者可见 |
 | `GET` | `/api/admin/settings` | 平台设置（秘密脱敏） |
 | `PUT` | `/api/admin/settings` | 保存平台设置；默认服务变更受 `APPS_RUNNING` 保护 |
 | `POST` | `/api/admin/settings/test` | 测试 Linx/Render；限流 20 次/分钟 |

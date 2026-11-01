@@ -30,6 +30,8 @@ func (a *API) AdminHandler() http.Handler {
 	mux.HandleFunc("GET /api/admin/agents", a.withAdmin(a.adminListAgents))
 	mux.HandleFunc("POST /api/admin/agents/{id}/retry", a.withAdmin(a.adminRetryAgent))
 	mux.HandleFunc("GET /api/admin/apps", a.withAdmin(a.adminListApps))
+	mux.HandleFunc("GET /api/admin/store", a.withAdmin(a.adminListStore))
+	mux.HandleFunc("POST /api/admin/store/{id}/review", a.withAdmin(a.adminReviewStore))
 	mux.HandleFunc("GET /api/admin/settings", a.withAdmin(a.adminGetSettings))
 	mux.HandleFunc("PUT /api/admin/settings", a.withAdmin(a.adminUpdateSettings))
 	mux.HandleFunc("POST /api/admin/settings/test", a.withAdmin(a.adminTestSettings))
@@ -980,7 +982,7 @@ func identityKey(deviceID, agentID string) string {
 	if deviceID == "" || agentID == "" {
 		return ""
 	}
-	return deviceID + "\x00" + agentID
+	return strings.ToLower(deviceID) + "\x00" + strings.ToLower(agentID)
 }
 
 func sumCounts(values map[string]int) int {

@@ -58,6 +58,9 @@ stateDiagram-v2
 | `building` | `error(stage=building)` | 构建超时、会话终止、产物校验失败 | 写入 `error`；**不会**产生可启动的 `idle` |
 | `building` | `idle`（保留旧包） | 修订失败但上一版产物可用 | 清空 `error`，保留旧 `artifact`；通知说明更新失败 |
 | `idle` | `building` | `update-app` | 复用绑定的 AgentAPI 会话提交修订 |
+| — | `idle` | 从应用商城安装（`install-app` 或门户复制） | 新建 `app_id`，复制产物与 OpenAPI，写入 `installed_from`；**没有构建会话，也没有 `building` 阶段** |
+
+安装是唯一跳过生成阶段进入 `idle` 的路径：它复制的是别人已经验证过的产物，秒级完成，不需要 `get-app-status` 轮询。代价是这类应用**不能修订**——`update-app` 返回 `APP_INSTALLED`，而不是含糊的 `SESSION_UNAVAILABLE`；要改内容只能按新需求重新 `create-app`。安装同样计入该 `(device, agent)` 的 10 个历史上限，满了返回 `QUOTA_EXCEEDED`。
 
 ### 2.3 失败与恢复
 
