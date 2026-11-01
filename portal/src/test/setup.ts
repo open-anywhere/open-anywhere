@@ -81,8 +81,37 @@ function installObservers() {
     getComputedStyle(element)) as typeof window.getComputedStyle
 }
 
+// Node 26 defines an unavailable `localStorage` global, which shadows the one
+// jsdom installs and leaves `window.localStorage` undefined. The tests only need
+// the in-memory behaviour, so provide a minimal Storage when the environment has
+// none. On supported Node versions jsdom's own implementation is used.
+function installLocalStorage() {
+  if (typeof window.localStorage !== 'undefined') {
+    return
+  }
+  const data = new Map<string, string>()
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      get length() {
+        return data.size
+      },
+      clear: () => data.clear(),
+      getItem: (key: string) => (data.has(key) ? (data.get(key) as string) : null),
+      key: (index: number) => Array.from(data.keys())[index] ?? null,
+      removeItem: (key: string) => {
+        data.delete(key)
+      },
+      setItem: (key: string, value: string) => {
+        data.set(String(key), String(value))
+      },
+    },
+  })
+}
+
 installMatchMedia()
 installObservers()
+installLocalStorage()
 
 beforeEach(() => {
   systemPrefersDark = false
