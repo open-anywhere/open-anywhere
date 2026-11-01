@@ -47,7 +47,6 @@
 | `artifact` | 产物下载与二次校验 | artifact 读取 |
 | `openapi` | 解析、校验 OpenAPI，转发 HTTP | `SendRequest` |
 | `app` | 应用注册表 | 应用 CRUD |
-| `screen` | 控制面兼容的屏幕视图与旧版占用（生产投屏由设备完成） | 屏幕状态迁移 |
 | `render` | Render HTTP 客户端 | 启动/停止/状态 |
 | `endpoints` | 按 owner 解析 Render 端点 | `BindingFor` / `ValidateOwner` |
 | `portal` | 注册、登录、角色、开通 | `/api/*` handler |

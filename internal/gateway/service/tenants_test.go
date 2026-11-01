@@ -98,7 +98,6 @@ func newTenantEnv(t *testing.T) *tenantEnv {
 	}
 	env.svc = NewWithBindings(env.registry, env.builder, env.bindings, env.clients, env.notifier, Config{
 		StartTimeout:      2 * time.Second,
-		ProjectionTimeout: time.Second,
 		OperationsTimeout: time.Second,
 		MonitorInterval:   time.Hour,
 		PortMin:           39000,
@@ -147,4 +146,3 @@ func TestStopAllForOwnerReportsFailuresWithoutBlocking(t *testing.T) {
 		t.Fatalf("a failed stop must keep the runtime reservation: %+v", value.Snapshot())
 	}
 }
-

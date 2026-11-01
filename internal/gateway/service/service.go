@@ -43,7 +43,6 @@ type RenderClient interface {
 // Config contains service timeouts and port allocation bounds.
 type Config struct {
 	StartTimeout      time.Duration
-	ProjectionTimeout time.Duration
 	OperationsTimeout time.Duration
 	MonitorInterval   time.Duration
 	PortMin           int
@@ -67,12 +66,12 @@ type CreateResult struct {
 
 // StatusView is the state-dependent get-app-status response.
 type StatusView struct {
-	AppID                string     `json:"app_id"`
-	State                app.State  `json:"state"`
-	ElapsedSeconds       int64      `json:"elapsed_seconds,omitempty"`
-	Message              string     `json:"message,omitempty"`
-	Name                 string     `json:"name,omitempty"`
-	BuildDurationSeconds int64      `json:"build_duration_seconds,omitempty"`
+	AppID                string    `json:"app_id"`
+	State                app.State `json:"state"`
+	ElapsedSeconds       int64     `json:"elapsed_seconds,omitempty"`
+	Message              string    `json:"message,omitempty"`
+	Name                 string    `json:"name,omitempty"`
+	BuildDurationSeconds int64     `json:"build_duration_seconds,omitempty"`
 	// StreamURL is the application's media stream. The device casts it to a
 	// screen on site; the control plane does not project it itself.
 	StreamURL     string     `json:"stream_url,omitempty"`
@@ -259,9 +258,6 @@ func New(registry *app.Registry, builder BuildStarter, renderClient RenderClient
 func NewWithBindings(registry *app.Registry, builder BuildStarter, bindings BindingSource, clients Clients, notifier app.Notifier, cfg Config) *Service {
 	if cfg.StartTimeout <= 0 {
 		cfg.StartTimeout = 60 * time.Second
-	}
-	if cfg.ProjectionTimeout <= 0 {
-		cfg.ProjectionTimeout = 30 * time.Second
 	}
 	if cfg.OperationsTimeout <= 0 {
 		cfg.OperationsTimeout = 15 * time.Second
@@ -843,7 +839,7 @@ type renderStart struct {
 
 // startRender starts the application's Render instance and returns the stream
 // it serves. It touches no casting service: projection is a separate step that
-// only the frozen on-screen path performs.
+// the on-site device performs with its own self.cast.* tools.
 func (s *Service) startRender(ctx context.Context, rt runtime, value app.App) (renderStart, *startFailure) {
 	persistFailure := func(err error) (renderStart, *startFailure) {
 		return renderStart{}, &startFailure{Code: "PERSISTENCE_FAILED", Message: "无法保存运行状态，停止后续操作", Cause: err}

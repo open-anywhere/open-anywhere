@@ -77,12 +77,6 @@ func describeToolCall(req sdk.Request, result sdk.Result, err error) string {
 	if v := firstString(args, "operation_id", "operationId"); v != "" {
 		line += " op=" + v
 	}
-	if v := str(args["screen_id"]); v != "" {
-		line += " screen=" + v
-	}
-	if force, _ := args["force"].(bool); force {
-		line += " force=true"
-	}
 	if body := firstValue(args, "body", "requestBody"); body != nil {
 		line += " body=" + truncate(compact(body), 160)
 	}

@@ -41,7 +41,6 @@ type AppSummary struct {
 	BuildDurationSeconds int64      `json:"build_duration_seconds,omitempty"`
 	OperationCount       int        `json:"operation_count"`
 	Operations           []string   `json:"operations,omitempty"`
-	ScreenID             string     `json:"screen_id,omitempty"`
 	StartedAt            *time.Time `json:"started_at,omitempty"`
 	StoppedAt            *time.Time `json:"stopped_at,omitempty"`
 	Error                *app.Error `json:"error,omitempty"`
@@ -98,11 +97,11 @@ func sortNewestFirst(apps []app.App) {
 
 func (s *Service) summarize(a app.App) AppSummary {
 	sum := AppSummary{
-		AppID:    a.ID,
-		Name:     a.Name,
-		Summary:  truncateRunes(strings.Join(strings.Fields(a.Prompt), " "), 80),
-		State:    a.State,
-		Error:    a.Error,
+		AppID:   a.ID,
+		Name:    a.Name,
+		Summary: truncateRunes(strings.Join(strings.Fields(a.Prompt), " "), 80),
+		State:   a.State,
+		Error:   a.Error,
 	}
 	if !a.BuildStartedAt.IsZero() {
 		started := a.BuildStartedAt
@@ -288,8 +287,8 @@ func hasActiveResources(value app.App) bool {
 }
 
 // HasActiveRuntime reports whether any of owners has an application that still
-// holds a runtime or projection. Portal handlers use it to refuse a service
-// binding change before the old endpoints are lost.
+// holds a runtime. Portal handlers use it to refuse a service binding change
+// before the old endpoints are lost.
 func (s *Service) HasActiveRuntime(owners []app.Identity) bool {
 	for _, value := range s.apps.List() {
 		if ownedByAny(value.Owner, owners) && hasActiveResources(value) {
@@ -300,8 +299,8 @@ func (s *Service) HasActiveRuntime(owners []app.Identity) bool {
 }
 
 // HasAnyActiveResources reports whether any application on the control plane
-// still holds a runtime or projection. It protects a change of the platform
-// default services, which managed users rely on for cleanup.
+// still holds a runtime. It protects a change of the platform default services,
+// which managed users rely on for cleanup.
 func (s *Service) HasAnyActiveResources() bool {
 	for _, value := range s.apps.List() {
 		if hasActiveResources(value) {

@@ -134,7 +134,7 @@ sequenceDiagram
 ### 4.2 应用
 
 - 应用列表按当前用户的智能体 `(MAC, AgentID)` 查询并归并，只显示自己的应用。
-- 应用状态：`building`、`idle`、`running`、`error`；列表展示构建进度、生命周期时间、操作数与所在 `screen_id`。
+- 应用状态：`building`、`idle`、`running`、`error`；列表展示构建进度、生命周期时间与操作数。
 - 应用详情复用 `get-app-status` / `get-app-operations` 语义，展示操作列表、运行时间与 OpenAPI 是否可用。
 - `openapi.yaml` 由已保存的规范重新序列化为 YAML，以 `text/yaml` 返回，支持查看与下载；页面按文本渲染，不注入 HTML。
 - 删除只允许 `idle` / 可清理的 `error`；`building`、`running` 或仍有待清理资源时返回 `APP_BUSY`。启动仍由灵矽语音侧的 `start-app` 完成，Portal 不提供手动投屏。
