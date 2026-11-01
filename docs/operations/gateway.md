@@ -152,7 +152,8 @@ portal:
 | 启动报 `-xxx is required` | 独立模式下 AgentAPI、Render 配置必填；门户模式下只有管理员账号必填 |
 | 启动报凭证无法解密 | 数据库里的密钥与当前主密钥不匹配，恢复原来的 `portal-data/secret.key` 或 `GATEWAY_SECRET_KEY` |
 | Render 启动应用失败 | 用 Render 主机访问 `artifacts.base_url` 下的下载地址，确认 Render 能拉到产物 |
-| MCP 返回 401 | 请求没有带 `Bearer` token，或 token 与当前 MCP Token 不一致（门户模式在 `/admin/settings` 里重新生成会让旧 token 立即失效） |
+| MCP 返回 401 | 请求没有带 `Bearer` token，或 token 与当前 MCP Token 不一致（门户模式在 `/admin/settings` 里重新生成会让旧 token 立即失效）。服务日志会出现 `mcp: rejected a request with a missing or stale bearer token` |
+| MCP 返回 403 | 设备不在 `portal_devices`、尚未完成开通或账号被停用。日志里是 `mcp: rejected identity device=… agent=…`；MAC 比较忽略大小写，若仍被拒，先核对设备是否属于该账号 |
 | 应用能构建但投屏失败 | 确认现场设备与电视同广播域、设备端 `self.cast.list_screens` 能看到电视，并检查 Render `render.yaml` 的 `public_url` 是否是电视能访问的地址 |
 | 门户登录后无法保存平台配置 | 检查主密钥是否可用；查看服务日志中的解密错误 |
 

@@ -184,7 +184,8 @@ Portal 启用时，MCP 请求必须携带三个头：
       "built_at": "2026-10-24T08:20:00Z",
       "build_duration_seconds": 95,
       "operation_count": 1,
-      "operations": ["rollDice"]
+      "operations": ["rollDice"],
+      "installed_from": ""
     }
   ]
 }
@@ -192,6 +193,7 @@ Portal 启用时，MCP 请求必须携带三个头：
 
 - `startable` 表示现在能否直接 `start-app`；false 时 `not_startable_reason` 说明原因（构建中、运行中、构建失败、产物无效需 `update-app` 重建、产物丢失，或上次启动还在核对/清理）。
 - 用户说“玩上次那个/之前那个”时，先 `list-apps` 让用户确认，再用 `start-app` 启动；不要重新 `create-app`。
+- `installed_from` 非空表示这个应用是从应用商城复制来的：它可以启动、改名、投屏，但 `update-app` 会返回 `APP_INSTALLED`，要改内容只能按新需求重新 `create-app`。
 - `list-apps` 是历史快照，启动时仍以 `get-app-status` / `start-app` 的结果为准。
 
 ### 3.2 `update-app`
