@@ -123,8 +123,7 @@ Invariants to preserve when changing code:
 
 - The MCP surface stays stable while app capabilities remain dynamic. Do not register a tool per app or per OpenAPI operation.
 - Builds are slow and asynchronous; control is fast and synchronous. Never make a voice turn wait for a build.
-- **Cloud-initiated casting is frozen.** The control-plane path that started an app on a `screen_id` remains only as a debug harness with no product surface; the product path is device-initiated: `start-app` returns a `stream_url` and the device's `self.cast.*` tools cast it. Do not add `screen_id` or `force` back to the MCP tools.
-- Casting is device-initiated: the device discovers the TV and sends `SetAVTransportURI` / `Play`. Re-casting to the same screen overwrites the URI; switching screens stops the old screen after the new one accepts the stream. The control plane does not hold a production projection session and exposes no screen query; device tools are the only screen authority.
+- **Casting is device-initiated only.** `start-app` returns a `stream_url` and the device's `self.cast.*` tools cast it; the device discovers the TV and sends `SetAVTransportURI` / `Play`. The control plane has no casting client, no screen query, and no projection session, so it is not the screen authority: re-casting to the same screen overwrites the URI, and switching screens stops the old screen after the new one accepts the stream. Do not add `screen_id`, `force`, or any control-plane screen state back to the MCP tools.
 - The screen is a display, not a runtime. Keep app logic out of the display plane and display logic out of apps.
 - Generated artifacts are untrusted input. Validate structure, launch contract, and OpenAPI before running; Render validates again.
 - State belongs to its owner: control-plane state in SQLite, app state in the app, casting state in the device firmware and the TV; the control plane keeps none.

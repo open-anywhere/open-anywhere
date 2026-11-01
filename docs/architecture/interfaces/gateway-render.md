@@ -80,7 +80,7 @@ Render 的接口本身不区分租户；控制面在多租户 Portal 中按应�
 
 - 一个用户最多一行 `portal_service_bindings`；`custom` 必须填写 Render URL，否则 `SERVICE_NOT_CONFIGURED`。
 - 控制面把 token 作为 `Authorization: Bearer <token>` 附加到 Render 请求；没有 token 时不发该头。token 只参与客户端缓存键的哈希，不写日志、不进入 API 响应。Render 在自己的 `render.yaml` 里配置了同一段 `token` 时，校验 `/v1/apps` 和 `/v1/ports`；留空则不校验。`/healthz` 和 `/streams` 始终不校验，电视直接 GET `stream_url`。`custom` 部署要把用户保存的令牌写进那台 Render 的 `token`。
-- 客户端池按 `(URL, token)` 缓存 `render.Client` / `casting.Client`，上限 128；地址或 token 变化后旧客户端自然不再命中。
+- 客户端池按 `(URL, token)` 缓存 `render.Client`，上限 128；地址或 token 变化后旧客户端自然不再命中。
 - 平台默认地址与用户地址都在保存/测试时校验；`render.Client` 的 `Health(ctx)` 探测 `/healthz`，Portal 的服务测试复用同一套客户端。
 - 保存用户绑定前，如果该用户有运行中或待清理的应用，返回 `APPS_RUNNING`，要求先停止；管理员修改平台默认 Render（含 token）时，如果控制面上仍有任何用户存在活动资源，同样返回 `APPS_RUNNING`。
 - 管理员修改默认地址后，新启动的应用立即使用新值；已经在运行的应用不被迁移，因此必须先停止再修改。
@@ -334,7 +334,7 @@ Render 停止不会通知电视。新路径下 `stop-app` 只停 Render，现场
 | `APPS_RUNNING` | `409` | 有运行中/待清理资源时修改绑定或平台默认服务 |
 | `OWNER_NOT_FOUND` | `404` / `403` | 用户侧服务绑定请求无法识别账号（`404`）；MCP 身份校验失败映射为 `403` |
 
-服务测试成功时返回 `{"render":{"ok":true},"casting":{"ok":true},"screens":<数量>}`；失败时 `ok=false` 并带可读 `message`。测试不会返回屏幕详情或任何 token。
+服务测试成功时返回 `{"render":{"ok":true}}`；失败时 `ok=false` 并带可读 `message`。测试不会返回任何 token。
 
 ## 5. 页面与媒体输出
 

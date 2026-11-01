@@ -158,7 +158,6 @@ ports:
 timeouts:
   build: "45m"
   start: "30s"
-  projection: "20s"
   monitor_interval: "3s"
   call: "90s"
   http: "10s"
@@ -185,7 +184,7 @@ timeouts:
 	if cfg.PortMin != 41000 || cfg.PortMax != 41010 {
 		t.Fatalf("ports = %+v", cfg)
 	}
-	if cfg.BuildTimeout != 45*time.Minute || cfg.StartTimeout != 30*time.Second || cfg.ProjectionTimeout != 20*time.Second || cfg.MonitorInterval != 3*time.Second || cfg.CallTimeout != 90*time.Second || cfg.HTTPTimeout != 10*time.Second {
+	if cfg.BuildTimeout != 45*time.Minute || cfg.StartTimeout != 30*time.Second || cfg.MonitorInterval != 3*time.Second || cfg.CallTimeout != 90*time.Second || cfg.HTTPTimeout != 10*time.Second {
 		t.Fatalf("timeouts = %+v", cfg)
 	}
 }

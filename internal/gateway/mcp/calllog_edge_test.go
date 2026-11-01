@@ -88,7 +88,7 @@ func TestResultTextAndCompact(t *testing.T) {
 }
 
 func TestFirstHelpers(t *testing.T) {
-	args := map[string]any{"operationId": "fallback", "body": nil, "requestBody": map[string]any{"x": 1}, "screen_id": 5}
+	args := map[string]any{"operationId": "fallback", "body": nil, "requestBody": map[string]any{"x": 1}, "extra": 5}
 	if got := firstString(args, "operation_id", "operationId"); got != "fallback" {
 		t.Fatalf("firstString = %q", got)
 	}
@@ -98,7 +98,7 @@ func TestFirstHelpers(t *testing.T) {
 	if got := firstValue(args, "body", "requestBody"); got == nil {
 		t.Fatal("firstValue should skip nil values")
 	}
-	if got := firstValue(args, "screen_id", "missing"); got == nil {
+	if got := firstValue(args, "extra", "missing"); got == nil {
 		t.Fatal("firstValue should return non-nil values of any type")
 	}
 	if got := firstValue(args, "missing"); got != nil {

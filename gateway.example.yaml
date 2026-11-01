@@ -44,7 +44,6 @@ ports:
 timeouts:
   build: "60m"
   start: "60s"
-  projection: "30s"
   monitor_interval: "5s"
   call: "2m"
   http: "30s"

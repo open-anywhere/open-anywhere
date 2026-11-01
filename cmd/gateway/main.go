@@ -172,7 +172,6 @@ func serve(ctx context.Context, cfg config.Config) error {
 	}
 	serviceConfig := service.Config{
 		StartTimeout:      cfg.StartTimeout,
-		ProjectionTimeout: cfg.ProjectionTimeout,
 		OperationsTimeout: cfg.HTTPTimeout,
 		MonitorInterval:   cfg.MonitorInterval,
 		PortMin:           cfg.PortMin,

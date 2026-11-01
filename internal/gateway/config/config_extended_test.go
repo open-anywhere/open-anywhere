@@ -170,17 +170,16 @@ func TestParseRejectsNegativeTokenPollAttempts(t *testing.T) {
 
 func validPortalConfig() Config {
 	return Config{
-		ArtifactBaseURL:   "https://gateway.example",
-		ArtifactsDir:      "artifacts",
-		DBPath:            "gateway.db",
-		PortMin:           39000,
-		PortMax:           39999,
-		BuildTimeout:      time.Minute,
-		StartTimeout:      time.Minute,
-		ProjectionTimeout: time.Minute,
-		MonitorInterval:   time.Second,
-		CallTimeout:       time.Minute,
-		HTTPTimeout:       time.Minute,
+		ArtifactBaseURL: "https://gateway.example",
+		ArtifactsDir:    "artifacts",
+		DBPath:          "gateway.db",
+		PortMin:         39000,
+		PortMax:         39999,
+		BuildTimeout:    time.Minute,
+		StartTimeout:    time.Minute,
+		MonitorInterval: time.Second,
+		CallTimeout:     time.Minute,
+		HTTPTimeout:     time.Minute,
 
 		PortalEnabled:         true,
 		MCPToken:              "mcp-token",

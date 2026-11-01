@@ -119,7 +119,7 @@ func TestRunEnforcesTokenFromConfig(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	health.Body.Close()
+	drain(t, health)
 	if health.StatusCode != http.StatusOK {
 		t.Fatalf("health status %d", health.StatusCode)
 	}
@@ -127,7 +127,7 @@ func TestRunEnforcesTokenFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	open.Body.Close()
+	drain(t, open)
 	if open.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("open control status %d", open.StatusCode)
 	}
@@ -140,7 +140,7 @@ func TestRunEnforcesTokenFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authed.Body.Close()
+	drain(t, authed)
 	if authed.StatusCode == http.StatusUnauthorized {
 		t.Fatal("configured bearer was rejected")
 	}
@@ -148,20 +148,42 @@ func TestRunEnforcesTokenFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream.Body.Close()
+	drain(t, stream)
 	if stream.StatusCode != http.StatusNotFound {
 		t.Fatalf("stream status %d", stream.StatusCode)
 	}
 	cancel()
+	// http.Server.Shutdown only treats a never-used connection as idle once
+	// Go's five-second grace expires, so a leftover connection would stretch
+	// shutdown to ~5s. drain above keeps connections reusable; the deadline
+	// stays well under the 20s graceful budget while tolerating that grace.
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("CLI shutdown timed out")
 	}
 	if strings.Contains(secret, "\n") {
 		t.Fatal("secret fixture must stay a single line")
+	}
+}
+
+// drain reads a response body to EOF before closing it. Closing an unread body
+// makes the client abandon its connection, which leaves the server holding a
+// connection that never completes a request and postpones Shutdown until Go's
+// five-second grace for never-used connections expires.
+func drain(t *testing.T, res *http.Response) {
+	t.Helper()
+	path := ""
+	if res.Request != nil && res.Request.URL != nil {
+		path = res.Request.URL.Path
+	}
+	if _, err := io.Copy(io.Discard, res.Body); err != nil {
+		t.Errorf("read %s body: %v", path, err)
+	}
+	if err := res.Body.Close(); err != nil {
+		t.Errorf("close %s body: %v", path, err)
 	}
 }

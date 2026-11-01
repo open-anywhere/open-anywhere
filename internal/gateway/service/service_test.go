@@ -188,7 +188,6 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	env.svc = New(env.registry, env.builder, env.render, env.notifier, Config{
 		StartTimeout:      2 * time.Second,
-		ProjectionTimeout: time.Nanosecond,
 		OperationsTimeout: time.Second,
 		MonitorInterval:   time.Hour,
 		PortMin:           39000,
@@ -239,14 +238,14 @@ func idleApp(t *testing.T, owner app.Identity) app.App {
 
 func runningApp(owner app.Identity) app.App {
 	return app.App{
-		ID:                  "app_1",
-		Owner:               owner,
-		Name:                "quiz",
-		State:               app.StateRunning,
-		InstanceID:          "inst_1",
-		Port:                39000,
-		AppBaseURL:          "http://127.0.0.1:39000",
-		StartedAt:           time.Now().Add(-time.Minute),
+		ID:         "app_1",
+		Owner:      owner,
+		Name:       "quiz",
+		State:      app.StateRunning,
+		InstanceID: "inst_1",
+		Port:       39000,
+		AppBaseURL: "http://127.0.0.1:39000",
+		StartedAt:  time.Now().Add(-time.Minute),
 	}
 }
 

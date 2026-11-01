@@ -48,12 +48,11 @@ type Config struct {
 	PortMin int
 	PortMax int
 
-	BuildTimeout      time.Duration
-	StartTimeout      time.Duration
-	ProjectionTimeout time.Duration
-	MonitorInterval   time.Duration
-	CallTimeout       time.Duration
-	HTTPTimeout       time.Duration
+	BuildTimeout    time.Duration
+	StartTimeout    time.Duration
+	MonitorInterval time.Duration
+	CallTimeout     time.Duration
+	HTTPTimeout     time.Duration
 
 	PortalEnabled           bool
 	PortalDataDir           string
@@ -119,7 +118,6 @@ type fileConfig struct {
 	Timeouts struct {
 		Build           string `yaml:"build"`
 		Start           string `yaml:"start"`
-		Projection      string `yaml:"projection"`
 		MonitorInterval string `yaml:"monitor_interval"`
 		Call            string `yaml:"call"`
 		HTTP            string `yaml:"http"`
@@ -165,17 +163,16 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	base := Config{
-		Addr:              ":8090",
-		ArtifactsDir:      "artifacts",
-		DBPath:            "open-anywhere.gateway.db",
-		PortMin:           39000,
-		PortMax:           39999,
-		BuildTimeout:      60 * time.Minute,
-		StartTimeout:      60 * time.Second,
-		ProjectionTimeout: 30 * time.Second,
-		MonitorInterval:   5 * time.Second,
-		CallTimeout:       2 * time.Minute,
-		HTTPTimeout:       30 * time.Second,
+		Addr:            ":8090",
+		ArtifactsDir:    "artifacts",
+		DBPath:          "open-anywhere.gateway.db",
+		PortMin:         39000,
+		PortMax:         39999,
+		BuildTimeout:    60 * time.Minute,
+		StartTimeout:    60 * time.Second,
+		MonitorInterval: 5 * time.Second,
+		CallTimeout:     2 * time.Minute,
+		HTTPTimeout:     30 * time.Second,
 
 		PortalDataDir:         "portal-data",
 		PortalWebDir:          "portal/dist",
@@ -221,7 +218,6 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	flags.IntVar(&cfg.PortMax, "port-max", envInt(getenv, "PORT_MAX", base.PortMax), "last application port")
 	flags.DurationVar(&cfg.BuildTimeout, "build-timeout", envDuration(getenv, "BUILD_TIMEOUT", base.BuildTimeout), "overall build timeout")
 	flags.DurationVar(&cfg.StartTimeout, "start-timeout", envDuration(getenv, "START_TIMEOUT", base.StartTimeout), "Render start timeout")
-	flags.DurationVar(&cfg.ProjectionTimeout, "projection-timeout", envDuration(getenv, "PROJECTION_TIMEOUT", base.ProjectionTimeout), "projection start timeout")
 	flags.DurationVar(&cfg.MonitorInterval, "monitor-interval", envDuration(getenv, "MONITOR_INTERVAL", base.MonitorInterval), "running application poll interval")
 	flags.DurationVar(&cfg.CallTimeout, "call-timeout", envDuration(getenv, "CALL_TIMEOUT", base.CallTimeout), "MCP tool call timeout")
 	flags.DurationVar(&cfg.HTTPTimeout, "http-timeout", envDuration(getenv, "HTTP_TIMEOUT", base.HTTPTimeout), "ordinary outbound HTTP timeout")
@@ -295,12 +291,11 @@ func (c Config) Validate() error {
 		return fmt.Errorf("gateway: invalid port range %d-%d", c.PortMin, c.PortMax)
 	}
 	for name, duration := range map[string]time.Duration{
-		"build-timeout":      c.BuildTimeout,
-		"start-timeout":      c.StartTimeout,
-		"projection-timeout": c.ProjectionTimeout,
-		"monitor-interval":   c.MonitorInterval,
-		"call-timeout":       c.CallTimeout,
-		"http-timeout":       c.HTTPTimeout,
+		"build-timeout":    c.BuildTimeout,
+		"start-timeout":    c.StartTimeout,
+		"monitor-interval": c.MonitorInterval,
+		"call-timeout":     c.CallTimeout,
+		"http-timeout":     c.HTTPTimeout,
 	} {
 		if duration <= 0 {
 			return fmt.Errorf("gateway: -%s must be positive", name)
@@ -467,7 +462,6 @@ func applyFile(cfg *Config, file fileConfig) error {
 	}{
 		{"timeouts.build", file.Timeouts.Build, &cfg.BuildTimeout},
 		{"timeouts.start", file.Timeouts.Start, &cfg.StartTimeout},
-		{"timeouts.projection", file.Timeouts.Projection, &cfg.ProjectionTimeout},
 		{"timeouts.monitor_interval", file.Timeouts.MonitorInterval, &cfg.MonitorInterval},
 		{"timeouts.call", file.Timeouts.Call, &cfg.CallTimeout},
 		{"timeouts.http", file.Timeouts.HTTP, &cfg.HTTPTimeout},
