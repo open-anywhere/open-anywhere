@@ -19,6 +19,9 @@ const HistoryLimit = 10
 type ArtifactStore interface {
 	Has(appID string) bool
 	Remove(appID string) error
+	// Copy duplicates one package under a new application id so an installed
+	// application keeps its own file when the source is replaced or deleted.
+	Copy(fromID, toID string) (app.Artifact, error)
 }
 
 // SetArtifactStore tells the service where application packages live.
@@ -41,9 +44,11 @@ type AppSummary struct {
 	BuildDurationSeconds int64      `json:"build_duration_seconds,omitempty"`
 	OperationCount       int        `json:"operation_count"`
 	Operations           []string   `json:"operations,omitempty"`
-	StartedAt            *time.Time `json:"started_at,omitempty"`
-	StoppedAt            *time.Time `json:"stopped_at,omitempty"`
-	Error                *app.Error `json:"error,omitempty"`
+	// InstalledFrom names the store application this one was copied from.
+	InstalledFrom string     `json:"installed_from,omitempty"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	StoppedAt     *time.Time `json:"stopped_at,omitempty"`
+	Error         *app.Error `json:"error,omitempty"`
 }
 
 // ListApps returns the applications of the caller's device and agent, newest
@@ -97,11 +102,12 @@ func sortNewestFirst(apps []app.App) {
 
 func (s *Service) summarize(a app.App) AppSummary {
 	sum := AppSummary{
-		AppID:   a.ID,
-		Name:    a.Name,
-		Summary: truncateRunes(strings.Join(strings.Fields(a.Prompt), " "), 80),
-		State:   a.State,
-		Error:   a.Error,
+		AppID:         a.ID,
+		Name:          a.Name,
+		Summary:       truncateRunes(strings.Join(strings.Fields(a.Prompt), " "), 80),
+		State:         a.State,
+		Error:         a.Error,
+		InstalledFrom: a.InstalledFrom,
 	}
 	if !a.BuildStartedAt.IsZero() {
 		started := a.BuildStartedAt
@@ -324,4 +330,11 @@ func (s *Service) StopAllForOwner(ctx context.Context, owners []app.Identity) []
 		}
 	}
 	return failures
+}
+
+// HasArtifact reports whether the stored package for appID still exists. The
+// store uses it to refuse publishing an application Render could no longer
+// start.
+func (s *Service) HasArtifact(appID string) bool {
+	return s.artifacts != nil && s.artifacts.Has(appID)
 }

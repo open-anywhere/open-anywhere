@@ -29,6 +29,8 @@ type Apps interface {
 	StartApp(ctx context.Context, owner app.Identity, appID string) (service.StatusView, error)
 	StopApp(ctx context.Context, owner app.Identity, appID string) (service.StatusView, error)
 	SendRequest(ctx context.Context, owner app.Identity, appID, operationID string, parameters map[string]any, body any) (service.OperationResult, error)
+	ListStoreApps(ctx context.Context, query string, limit int) ([]service.StoreItemView, error)
+	InstallStoreApp(ctx context.Context, owner app.Identity, storeID, name string) (service.CreateResult, error)
 }
 
 const (

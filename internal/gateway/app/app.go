@@ -101,6 +101,10 @@ type App struct {
 	Source              casting.StreamSource
 	PendingRuntime      bool
 	CleanupPending      bool
+	// InstalledFrom is the store application this one was copied from. It is
+	// empty for applications this owner built itself. Update-app refuses an
+	// installed application instead of reporting a missing build session.
+	InstalledFrom string
 
 	StartedAt time.Time
 	StoppedAt time.Time

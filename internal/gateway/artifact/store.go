@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 )
 
 // Item describes one stored artifact and its download address.
@@ -131,6 +133,32 @@ func (s *Store) Get(appID string) (Item, bool) {
 	defer s.mu.Unlock()
 	item, ok := s.items[appID]
 	return item, ok
+}
+
+// Copy duplicates the package of fromID to toID. The copy gets its own file,
+// digest check and download token, so deleting or replacing the source never
+// affects the clone.
+func (s *Store) Copy(fromID, toID string) (app.Artifact, error) {
+	if !safeID(toID) {
+		return app.Artifact{}, fmt.Errorf("invalid app id %q", toID)
+	}
+	s.mu.Lock()
+	source, ok := s.items[fromID]
+	s.mu.Unlock()
+	if !ok {
+		return app.Artifact{}, fmt.Errorf("artifact %s: %w", fromID, os.ErrNotExist)
+	}
+	item, err := s.SaveFile(toID, source.Path, source.Size, source.SHA256)
+	if err != nil {
+		return app.Artifact{}, err
+	}
+	return app.Artifact{
+		Path:        item.Path,
+		SHA256:      item.SHA256,
+		Size:        item.Size,
+		DownloadURL: item.DownloadURL,
+		StoredAt:    item.StoredAt,
+	}, nil
 }
 
 // Has reports whether the package of appID is recorded and still on disk.

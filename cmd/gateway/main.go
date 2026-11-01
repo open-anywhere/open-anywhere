@@ -191,6 +191,11 @@ func serve(ctx context.Context, cfg config.Config) error {
 		apps = service.New(registry, builder, renderClient, server, serviceConfig)
 	}
 	apps.SetArtifactStore(artifactStore)
+	// The app store lives in the portal's database. Without a portal there is
+	// nothing published, so the tools simply report an empty catalog.
+	if database != nil {
+		apps.SetStoreSource(database)
+	}
 	if err := apps.RecoverRuntime(); err != nil {
 		return err
 	}

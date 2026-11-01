@@ -274,6 +274,9 @@ func TestStartableRejectsAnUnknownState(t *testing.T) {
 type failingArtifactStore struct{ err error }
 
 func (f failingArtifactStore) Has(string) bool { return true }
+func (f failingArtifactStore) Copy(string, string) (app.Artifact, error) {
+	return app.Artifact{}, errors.New("copy failed")
+}
 func (f failingArtifactStore) Remove(string) error {
 	return f.err
 }

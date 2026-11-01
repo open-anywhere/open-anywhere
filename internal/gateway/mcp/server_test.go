@@ -96,6 +96,25 @@ func (f *fakeApps) StopApp(_ context.Context, owner app.Identity, _ string) (ser
 	return f.status, f.err
 }
 
+func (f *fakeApps) ListStoreApps(_ context.Context, _ string, _ int) ([]service.StoreItemView, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	return nil, nil
+}
+
+func (f *fakeApps) InstallStoreApp(_ context.Context, owner app.Identity, storeID, name string) (service.CreateResult, error) {
+	f.record(owner)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return service.CreateResult{}, f.err
+	}
+	return f.create, nil
+}
+
 func (f *fakeApps) SendRequest(_ context.Context, owner app.Identity, _, operationID string, parameters map[string]any, body any) (service.OperationResult, error) {
 	f.record(owner)
 	f.mu.Lock()
@@ -210,7 +229,8 @@ func TestServerSessionFlow(t *testing.T) {
 
 	call(3, "tools/list", nil)
 	tools, _ := resultOf(t, readResponse())["tools"].([]any)
-	if len(tools) != 7 {
+	// Seven application tools plus the two store tools.
+	if len(tools) != 9 {
 		t.Fatalf("tools = %d", len(tools))
 	}
 	names := make(map[string]bool, len(tools))

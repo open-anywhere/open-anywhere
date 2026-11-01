@@ -226,6 +226,36 @@ export interface AdminAgent {
   updated_at: string
 }
 
+export interface StoreItem {
+  store_id: string
+  title: string
+  summary: string
+  app_name?: string
+  operation_count: number
+  published_at: string
+}
+
+export interface Publication extends StoreItem {
+  status: 'pending' | 'approved' | 'rejected'
+  review_note?: string
+  updated_at: string
+}
+
+export interface AdminStoreItem extends Publication {
+  owner_user_id: string
+  username?: string
+}
+
+export interface PublicationInput {
+  title: string
+  summary: string
+}
+
+export interface CloneInput {
+  name: string
+  device_id: string
+}
+
 export interface AdminUser {
   id: string
   username: string
@@ -507,6 +537,21 @@ export const api = {
       method: 'DELETE',
       body: '{}',
     }),
+  publishApp: (id: string, input: PublicationInput) =>
+    request<{ publication: Publication }>(`/apps/${encodeURIComponent(id)}/publication`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  unpublishApp: (id: string) =>
+    request<void>(`/apps/${encodeURIComponent(id)}/publication`, { method: 'DELETE', body: '{}' }),
+  myPublications: () => request<{ publications: Publication[] }>('/publications'),
+  listStore: (query = '') =>
+    request<{ items: StoreItem[] }>(`/store${query ? `?query=${encodeURIComponent(query)}` : ''}`),
+  cloneStoreApp: (id: string, input: CloneInput) =>
+    request<{ app_id: string; name: string; state: AppState }>(`/store/${encodeURIComponent(id)}/clone`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   openapi: async (id: string) => {
     const response = await fetch(`${BASE}/apps/${encodeURIComponent(id)}/openapi.yaml`, {
       credentials: 'same-origin',
@@ -550,6 +595,12 @@ export const adminApi = {
     adminRequest<{ user: User }>(`/users/${encodeURIComponent(id)}/status`, {
       method: 'POST',
       body: JSON.stringify({ status }),
+    }),
+  store: () => adminRequest<{ items: AdminStoreItem[] }>('/store'),
+  reviewStore: (id: string, decision: 'approve' | 'reject', note = '') =>
+    adminRequest<{ publication: Publication }>(`/store/${encodeURIComponent(id)}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, note }),
     }),
   agents: (params: { state?: string; query?: string }) => {
     const search = new URLSearchParams()

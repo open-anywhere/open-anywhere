@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"context"
 	"fmt"
 	"sync"
@@ -20,6 +21,13 @@ func (f *fakeArtifacts) Has(id string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return !f.missing[id]
+}
+
+func (f *fakeArtifacts) Copy(fromID, toID string) (app.Artifact, error) {
+	if !f.Has(fromID) {
+		return app.Artifact{}, os.ErrNotExist
+	}
+	return app.Artifact{Path: toID + ".tar.gz", SHA256: "sha-" + fromID, Size: 1}, nil
 }
 
 func (f *fakeArtifacts) Remove(id string) error {
