@@ -57,26 +57,17 @@ func TestHasEncryptedSecrets(t *testing.T) {
 	})
 
 	t.Run("encrypted binding token", func(t *testing.T) {
-		for _, column := range []string{"render", "casting"} {
-			t.Run(column, func(t *testing.T) {
-				db := openPortalDB(t)
-				if err := db.CreatePortalUser(ctx, PortalUser{ID: "usr_1", Username: "alice", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}); err != nil {
-					t.Fatal(err)
-				}
-				binding := PortalServiceBinding{UserID: "usr_1", Mode: ServiceModeCustom}
-				if column == "render" {
-					binding.RenderTokenEnc = "enc:v1:render"
-				} else {
-					binding.CastingTokenEnc = "enc:v1:casting"
-				}
-				if err := db.UpsertServiceBinding(ctx, binding); err != nil {
-					t.Fatal(err)
-				}
-				found, err := db.HasEncryptedSecrets(ctx)
-				if err != nil || !found {
-					t.Fatalf("HasEncryptedSecrets=%v err=%v", found, err)
-				}
-			})
+		db := openPortalDB(t)
+		if err := db.CreatePortalUser(ctx, PortalUser{ID: "usr_1", Username: "alice", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		binding := PortalServiceBinding{UserID: "usr_1", Mode: ServiceModeCustom, RenderTokenEnc: "enc:v1:render"}
+		if err := db.UpsertServiceBinding(ctx, binding); err != nil {
+			t.Fatal(err)
+		}
+		found, err := db.HasEncryptedSecrets(ctx)
+		if err != nil || !found {
+			t.Fatalf("HasEncryptedSecrets=%v err=%v", found, err)
 		}
 	})
 
@@ -138,8 +129,8 @@ func TestServiceBindingErrorPaths(t *testing.T) {
 					t.Fatal(err)
 				}
 				mustExec(t, db.sql, `INSERT INTO portal_service_bindings
-					(user_id, mode, render_url, casting_url, render_token_enc, casting_token_enc, created_at, updated_at)
-					VALUES ('usr_1', 'managed', '', '', '', '', '`+testCase.created+`', '`+testCase.updated+`')`)
+					(user_id, mode, render_url, render_token_enc, created_at, updated_at)
+					VALUES ('usr_1', 'managed', '', '', '`+testCase.created+`', '`+testCase.updated+`')`)
 				if _, err := db.ServiceBindingByUser(ctx, "usr_1"); err == nil ||
 					!strings.Contains(err.Error(), "decode service binding time") {
 					t.Fatalf("err = %v", err)

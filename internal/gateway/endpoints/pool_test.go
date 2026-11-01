@@ -27,13 +27,6 @@ func TestPoolCachesClientsByAddressAndToken(t *testing.T) {
 		t.Fatal("a different address must not reuse the client")
 	}
 
-	casting := pool.Casting(service.Binding{CastingURL: "https://render.example", CastingToken: "one"})
-	if casting == nil {
-		t.Fatal("casting client is nil")
-	}
-	if castAgain := pool.Casting(service.Binding{CastingURL: "https://render.example", CastingToken: "one"}); castAgain != casting {
-		t.Fatal("the same casting address should reuse a client")
-	}
 }
 
 func TestPoolKeysDoNotContainSecrets(t *testing.T) {
@@ -49,7 +42,7 @@ func TestPoolKeysDoNotContainSecrets(t *testing.T) {
 func TestPoolRebuildsWhenItReachesTheLimit(t *testing.T) {
 	pool := NewPool(nil, time.Second, time.Second)
 	for index := 0; index < maxCachedClients+2; index++ {
-		pool.Casting(service.Binding{CastingURL: fmt.Sprintf("https://casting-%d.example", index)})
+		pool.Render(service.Binding{RenderURL: fmt.Sprintf("https://render-%d.example", index)})
 	}
 	if len(pool.clients) > maxCachedClients {
 		t.Fatalf("cache size = %d", len(pool.clients))

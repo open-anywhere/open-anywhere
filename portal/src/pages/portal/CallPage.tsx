@@ -5,10 +5,12 @@ import {
   PhoneOutlined,
   ReloadOutlined,
   RobotOutlined,
+  SendOutlined,
 } from '@ant-design/icons'
-import { Alert, Button, Popconfirm, Result, Space, Spin } from 'antd'
+import { Alert, Button, Input, Popconfirm, Result, Space, Spin } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearch } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 import type { Device } from '../../api'
 import { ApiError, api } from '../../api'
 import { meQueryOptions } from '../../api/queries'
@@ -130,6 +132,28 @@ function CallSession({ device }: { device: Device }) {
   const voiceState = session.status?.state ?? device.voice.state
   const connected = session.status?.connected ?? device.voice.connected
   const paused = voiceState === 'idle'
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string>()
+
+  useEffect(() => {
+    if (connected) setSendError(undefined)
+  }, [connected])
+
+  const sendText = async () => {
+    const text = draft.trim()
+    if (!text) return
+    setSending(true)
+    setSendError(undefined)
+    try {
+      await session.say(text)
+      setDraft('')
+    } catch (err) {
+      setSendError(err instanceof ApiError ? err.message : '暂时发不出去，请稍后再试')
+    } finally {
+      setSending(false)
+    }
+  }
 
   return (
     <div className="call-page">
@@ -224,6 +248,37 @@ function CallSession({ device }: { device: Device }) {
 
         <section className="surface call-transcript-surface">
           <TranscriptFeed entries={[...saved, ...session.entries]} />
+        </section>
+
+        <section className="surface call-text-surface">
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
+              value={draft}
+              placeholder="也可以打字说点什么"
+              disabled={!connected}
+              onChange={(event) => setDraft(event.target.value)}
+              onPressEnter={(event) => {
+                if (!event.shiftKey) {
+                  event.preventDefault()
+                  void sendText()
+                }
+              }}
+            />
+            <Button
+              type="primary"
+              icon={<SendOutlined />}
+              loading={sending}
+              disabled={!connected || !draft.trim()}
+              onClick={() => void sendText()}
+            >
+              发送
+            </Button>
+          </Space.Compact>
+          {sendError ? (
+            <p className="muted-text" style={{ marginTop: 8 }}>
+              {sendError}
+            </p>
+          ) : null}
         </section>
 
         <VoiceControls

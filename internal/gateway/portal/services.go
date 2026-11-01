@@ -18,24 +18,18 @@ import (
 // servicesRequest is the body of a binding save or connection test. Empty
 // token fields keep the stored secret; the clear flags remove it.
 type servicesRequest struct {
-	Mode              string `json:"mode"`
-	RenderURL         string `json:"render_url"`
-	CastingURL        string `json:"casting_url"`
-	RenderToken       string `json:"render_token"`
-	CastingToken      string `json:"casting_token"`
-	ClearRenderToken  bool   `json:"clear_render_token"`
-	ClearCastingToken bool   `json:"clear_casting_token"`
+	Mode             string `json:"mode"`
+	RenderURL        string `json:"render_url"`
+	RenderToken      string `json:"render_token"`
+	ClearRenderToken bool   `json:"clear_render_token"`
 }
 
 func (in servicesRequest) override() endpoints.BindingOverride {
 	return endpoints.BindingOverride{
-		Mode:              in.Mode,
-		RenderURL:         in.RenderURL,
-		CastingURL:        in.CastingURL,
-		RenderToken:       in.RenderToken,
-		CastingToken:      in.CastingToken,
-		ClearRenderToken:  in.ClearRenderToken,
-		ClearCastingToken: in.ClearCastingToken,
+		Mode:             in.Mode,
+		RenderURL:        in.RenderURL,
+		RenderToken:      in.RenderToken,
+		ClearRenderToken: in.ClearRenderToken,
 	}
 }
 
@@ -115,17 +109,10 @@ func (a *API) testServices(w http.ResponseWriter, r *http.Request, user store.Po
 			writeError(w, mapURLPolicyError(err))
 			return
 		}
-		if err := a.resolver.CheckURL(r.Context(), binding.CastingURL); err != nil {
-			writeError(w, mapURLPolicyError(err))
-			return
-		}
 	}
 	render := a.checkRender(r.Context(), binding)
-	casting, screens := a.checkCasting(r.Context(), binding)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"render":  render,
-		"casting": casting,
-		"screens": screens,
+		"render": render,
 	})
 }
 
@@ -151,7 +138,7 @@ func (a *API) serviceBindingView(ctx context.Context, userID string) (map[string
 		binding, err := a.resolver.BindingForUser(ctx, userID)
 		switch {
 		case err == nil:
-			ready = binding.RenderURL != "" && binding.CastingURL != ""
+			ready = binding.RenderURL != ""
 		case toolCode(err) == "SERVICE_NOT_CONFIGURED":
 			// The user has not finished configuring services. Other failures
 			// (for example an undecryptable token) must not look like "unset".
@@ -164,15 +151,12 @@ func (a *API) serviceBindingView(ctx context.Context, userID string) (map[string
 		"mode":  mode,
 		"ready": ready,
 		"managed": map[string]any{
-			"available":   snapshot.Services.Ready(),
-			"render_url":  snapshot.Services.RenderURL,
-			"casting_url": snapshot.Services.CastingURL,
+			"available":  snapshot.Services.Ready(),
+			"render_url": snapshot.Services.RenderURL,
 		},
 		"custom": map[string]any{
-			"render_url":               saved.RenderURL,
-			"casting_url":              saved.CastingURL,
-			"render_token_configured":  saved.RenderTokenEnc != "",
-			"casting_token_configured": saved.CastingTokenEnc != "",
+			"render_url":              saved.RenderURL,
+			"render_token_configured": saved.RenderTokenEnc != "",
 		},
 	}, nil
 }
@@ -193,26 +177,6 @@ func (a *API) checkRender(ctx context.Context, binding service.Binding) serviceC
 		return serviceCheck{Message: "无法连接渲染服务"}
 	}
 	return serviceCheck{OK: true}
-}
-
-func (a *API) checkCasting(ctx context.Context, binding service.Binding) (serviceCheck, int) {
-	client := a.pool.Casting(binding)
-	checker, ok := client.(healthChecker)
-	if !ok {
-		return serviceCheck{Message: "投屏服务不可用"}, 0
-	}
-	probe, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if err := checker.Health(probe); err != nil {
-		return serviceCheck{Message: "无法连接投屏服务"}, 0
-	}
-	listCtx, cancelList := context.WithTimeout(ctx, 10*time.Second)
-	defer cancelList()
-	targets, err := client.ListTargets(listCtx)
-	if err != nil {
-		return serviceCheck{Message: "无法获取投屏服务的屏幕列表"}, 0
-	}
-	return serviceCheck{OK: true}, len(targets)
 }
 
 func mapURLPolicyError(err error) error {

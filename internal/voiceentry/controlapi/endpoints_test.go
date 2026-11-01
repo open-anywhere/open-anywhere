@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/open-anywhere/open-anywhere/internal/voiceentry/register"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/voice"
 )
 
@@ -99,20 +98,6 @@ func TestEventsStreamsPublishedEvents(t *testing.T) {
 	}
 }
 
-func TestAudioEndpointWithoutHandlerAndConsolePath(t *testing.T) {
-	_, ts := newStartedServer(t)
-	resp, err := http.Get(ts.URL + "/audio")
-	if err != nil || resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("audio=%v err=%v", resp, err)
-	}
-	resp.Body.Close()
-	resp, err = http.Get(ts.URL + "/")
-	if err != nil || resp.StatusCode != http.StatusOK || !strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
-		t.Fatalf("console=%v err=%v", resp, err)
-	}
-	resp.Body.Close()
-}
-
 func TestAudioHandlerErrorClosesSocket(t *testing.T) {
 	s, ts := newStartedServer(t)
 	s.SetPCMHandler(func([]byte) error { return http.ErrAbortHandler })
@@ -126,31 +111,6 @@ func TestAudioHandlerErrorClosesSocket(t *testing.T) {
 	_ = conn.Write(ctx, websocket.MessageBinary, []byte{1})
 	if _, _, err := conn.Read(ctx); err == nil {
 		t.Fatal("socket stayed open after handler error")
-	}
-}
-
-func TestRegistrationUnavailableAndBadBody(t *testing.T) {
-	s, ts := newStartedServer(t)
-	post := func(body string) int {
-		resp, err := http.Post(ts.URL+"/device/register", "application/json", strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		return resp.StatusCode
-	}
-	if got := post("{}"); got != http.StatusNotImplemented {
-		t.Fatalf("no handler=%d", got)
-	}
-	s.SetRegistration(func(context.Context, register.Request) (register.Result, error) { return register.Result{}, nil })
-	if got := post("not json"); got != http.StatusBadRequest {
-		t.Fatalf("bad body=%d", got)
-	}
-	if resp, _ := http.Get(ts.URL + "/device/register"); resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("GET=%d", resp.StatusCode)
-	}
-	if got := post("{}"); got != http.StatusOK {
-		t.Fatalf("ok=%d", got)
 	}
 }
 

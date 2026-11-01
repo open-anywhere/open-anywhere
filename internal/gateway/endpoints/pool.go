@@ -10,14 +10,13 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/netguard"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/render"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
-	"github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
 // maxCachedClients bounds the cache. When it is exceeded the map is rebuilt
 // rather than evicted entry by entry; clients are cheap to recreate.
 const maxCachedClients = 128
 
-// Pool builds and caches Render and Casting clients per address and token.
+// Pool builds and caches Render clients per address and token.
 // Tokens only participate in the cache key hash and never appear in logs.
 type Pool struct {
 	mu            sync.Mutex
@@ -50,15 +49,6 @@ func (p *Pool) Render(binding service.Binding) service.RenderClient {
 		return render.New(binding.RenderURL, p.renderTimeout, render.WithToken(binding.RenderToken), render.WithHTTPClient(client))
 	})
 	client, _ := value.(service.RenderClient)
-	return client
-}
-
-// Casting implements service.Clients.
-func (p *Pool) Casting(binding service.Binding) service.CastingClient {
-	value := p.cached("casting", binding.CastingURL, binding.CastingToken, func(client *http.Client) any {
-		return casting.NewClient(binding.CastingURL, p.httpTimeout, casting.WithToken(binding.CastingToken), casting.WithHTTPClient(client))
-	})
-	client, _ := value.(service.CastingClient)
 	return client
 }
 

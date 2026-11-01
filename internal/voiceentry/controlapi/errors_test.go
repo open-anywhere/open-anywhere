@@ -3,7 +3,6 @@ package controlapi
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/open-anywhere/open-anywhere/internal/voiceentry/register"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/voice"
 )
 
@@ -41,24 +39,6 @@ func TestControlEndpointsReportTransportFailuresAsConflict(t *testing.T) {
 		if resp.StatusCode != http.StatusConflict {
 			t.Errorf("%s=%d, want 409", path, resp.StatusCode)
 		}
-	}
-}
-
-func TestRegisterFailureWithoutStatusIsLabelledError(t *testing.T) {
-	s := New(voice.NewController(fakeTransport{}, voice.Realtime), func() Status { return Status{} })
-	s.SetRegistration(func(context.Context, register.Request) (register.Result, error) {
-		return register.Result{}, errors.New("platform unreachable")
-	})
-	ts := httptest.NewServer(s.Handler())
-	defer ts.Close()
-	resp, err := http.Post(ts.URL+"/device/register", "application/json", strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), `"status":"error"`) {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
 }
 

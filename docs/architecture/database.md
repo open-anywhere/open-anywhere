@@ -12,7 +12,7 @@
 | 产物元数据、下载令牌 | `artifacts` 表 | 是 |
 | 产物压缩包 | `{artifacts.dir}/{app_id}.tar.gz` | 否，文件系统 |
 | 屏幕映射 | `screens` 指向的 JSON 文件 | 否 |
-| 投屏会话 | Casting 服务内存 | 否 |
+| 投屏会话 | 设备固件与电视；控制面不保存 | 否 |
 | Render 实例 | Render 服务内存 | 否 |
 | 门户账号、角色/状态、会话、设备记录 | `portal_users` / `portal_sessions` / `portal_devices` | 是（v2，v3 增加角色与状态） |
 | 用户服务绑定 | `portal_service_bindings` | 是（v3；token 为密文） |
@@ -22,7 +22,7 @@
 | 主密钥 | `GATEWAY_SECRET_KEY` 或 `{portal.data_dir}/secret.key` | 否 |
 | MCP 调用日志 | 进程标准日志 | 否 |
 
-因此控制面重启后能恢复的是"应用属于谁、处于什么阶段、产物在哪、下一步该做什么"，而不是下游的真实运行状态。下游状态通过 `session_id`、`instance_id`、`projection_session_id` 等已持久化标识，由 `reconcile` 只读核对后重建（见 `internal/gateway/service/reconcile.go`）。
+因此控制面重启后能恢复的是"应用属于谁、处于什么阶段、产物在哪、下一步该做什么"，而不是下游的真实运行状态。下游状态通过 `session_id`、`instance_id` 等已持久化标识，由 `reconcile` 只读核对后重建（见 `internal/gateway/service/reconcile.go`）。`projection_session_id` 只属于旧版单租户/调试路径，新启动路径不再写入。
 
 设计约束：
 
@@ -240,7 +240,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 | 归属与输入 | `ID`、`Owner`、`Prompt`、`PlayerNames` | 历史和重启后继续构建 |
 | 构建 | `State`、`SessionID`、`EventCursor`、`BuildStartedAt`、`BuildFinishedAt`、`BuildDuration`、`LastAgentMessage`、`LastProgress`、`LastStatusMessage` | 重启后继续监听 `building` 会话 |
 | 构建产物 | `Name`、`OpenAPI`、`Artifact` | 无需重新下载即可提供 `get-app-operations` / `get-openapi`；下载地址在重启时重写 |
-| 运行绑定 | `ScreenID`、`TargetID`、`EndpointID`、`Source`、`InstanceID`、`Port`、`AppBaseURL`、`ProjectionSessionID` | 重启后核对并清理遗留资源 |
+| 运行绑定 | `Source`、`InstanceID`、`Port`、`AppBaseURL`；`ScreenID`、`TargetID`、`EndpointID`、`ProjectionSessionID` 仅旧版/调试记录使用 | 重启后核对并清理遗留资源 |
 | 运行时间 | `StartedAt`、`StoppedAt` | 状态查询 |
 | 未完成意图 | `PendingRuntime`、`PendingProjection`、`CleanupPending`、`Error` | 写前约束：先记录意图，再调用下游；崩溃后由 `reconcile` 核对 |
 
@@ -319,15 +319,15 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 | 构建进度 | `EventCursor`、`LastAgentMessage`、`LastProgress`、`LastStatusMessage` | `Update` |
 | 构建成功 | `State=idle`、`Name`、`OpenAPI`、`Artifact`、`BuildFinishedAt`、`BuildDuration` | `Do` |
 | 构建失败 | `State=error`、`BuildFinishedAt`、`Error` | `Update` |
-| 启动：占屏 | `ScreenID`、`TargetID`、`CleanupPending=true` | `Do` |
+| 启动：占屏（旧版） | `ScreenID`、`TargetID`、`CleanupPending=true` | `Do` |
 | 启动：Render | `Port`、`PendingRuntime=true` → `InstanceID`、`AppBaseURL` | `Do` |
-| 启动：投屏 | `EndpointID`、`Source`、`PendingProjection=true` → `ProjectionSessionID` | `Do` |
-| 启动成功 | `State=running`、下游全部绑定、`StartedAt` | `Do` |
-| 停止 | 先停投屏，再停 Render，最后清空绑定、`State=idle`、`StoppedAt` | `Do` |
+| 启动：投屏（旧版） | `EndpointID`、`Source`、`PendingProjection=true` → `ProjectionSessionID` | `Do` |
+| 启动成功 | `State=running`、下游全部绑定、`StartedAt`；新路径还会清空屏幕/投屏字段 | `Do` |
+| 停止 | 有旧版投屏会话时先停它，再停 Render，最后清空绑定、`State=idle`、`StoppedAt`；新路径没有投屏会话 | `Do` |
 | 清理遗留资源 | 逐步清空 `ProjectionSessionID` / `InstanceID` / 标记，最后清 `CleanupPending` | `Do` |
 | 历史裁剪 | 删除 `apps` 行、产物文件、`artifacts` 行 | `DeleteApp` + `Remove` |
 
-`PendingRuntime` / `PendingProjection` / `CleanupPending` 是**写前意图标记**：先落盘"我要调用下游"，再发起网络请求。这样进程在任意位置崩溃，重启后都能从已持久化的标识判断是否存在遗留资源，而不会重复创建。
+`PendingRuntime` / `PendingProjection` / `CleanupPending` 是**写前意图标记**：先落盘"我要调用下游"，再发起网络请求。这样进程在任意位置崩溃，重启后都能从已持久化的标识判断是否存在遗留资源，而不会重复创建。`StartApp` 走新路径时只登记 Render 绑定，并把 `ScreenID` / `TargetID` / `EndpointID` / `ProjectionSessionID` 清空；`PendingProjection` 只为旧版 `startAppOnScreen` 和未完成的历史记录保留。
 
 ## 8. 产物生命周期
 
@@ -352,7 +352,7 @@ file:{path}?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign
 
 - 按 `(device_id, agent_id)` 分组，每组保留最新的 10 个应用，用户之间互不挤占。
 - 只在创建应用后和进程启动时触发。
-- `building`、`running`，以及仍持有 Render 实例、投屏会话、清理标记的应用永不删除。
+- `building`、`running`，以及仍持有 Render 实例、旧版投屏会话、清理标记的应用永不删除。
 - 删除一个应用会同时删除其产物文件和元数据。
 - 启动或运行时的任何一次裁剪都不做“删除后校验”，因此不是跨表事务。
 
@@ -583,7 +583,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 - `credential_path` 只是相对 `portal.data_dir` 的文件名，设备 token 不进数据库；凭证文件 `0600`，目录 `0700`。
 - `portal_sessions.token_hash` 存会话 token 的 SHA-256，不存明文；启动时清理 `expires_at < now` 的行。
 - `portal_settings` 只保存平台侧 MCP Server/实例 ID 等少量缓存，不保存 API Key。
-- `portal_service_bindings` 每个用户最多一行。`mode=managed` 时忽略用户地址，使用 `platform_settings` 的默认服务；`mode=custom` 时必须同时有 Render/Casting 地址。切换到 managed 不会删除已保存的自定义地址与 token。
+- `portal_service_bindings` 每个用户最多一行。`mode=managed` 时忽略用户地址，使用 `platform_settings` 的默认 Render；`mode=custom` 时必须填写 Render 地址。切换到 managed 不会删除已保存的自定义地址与 token。
 - `platform_settings` 是平台级键值表，`updated_by` 记录最后修改的管理员用户 ID（配置 seed 的值为 `bootstrap`）。键包括：
   - `agentapi.base_url`、`agentapi.api_key`、`agentapi.agent_id`、`agentapi.agent_version`、`agentapi.environment_id`
   - `linx.api_base`、`linx.ota_url`、`linx.api_key`

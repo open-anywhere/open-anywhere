@@ -43,7 +43,4 @@ func TestPoolBuildsGuardedClients(t *testing.T) {
 	if pool.Render(service.Binding{RenderURL: "https://render.example", RenderToken: "token"}) == nil {
 		t.Fatal("guarded render client is nil")
 	}
-	if pool.Casting(service.Binding{CastingURL: "https://casting.example", CastingToken: "token"}) == nil {
-		t.Fatal("guarded casting client is nil")
-	}
 }

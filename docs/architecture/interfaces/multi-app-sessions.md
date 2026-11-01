@@ -17,7 +17,7 @@
 - 同一设备与智能体可以并行创建多个应用，互不抢占彼此的构建会话。
 - 每个应用在控制面持有稳定的 AgentAPI `session_id` 绑定，重启后可恢复监听与后续更新。
 - 用户说「改一下这个应用」时，灵矽用 `update-app(app_id, prompt)` 走同一会话，而不是再 `create-app`。
-- MCP 面仍只暴露 `app_id` / `screen_id`；`session_id`、Render、Casting 标识不外泄。
+- MCP 面仍只暴露 `app_id` 与设备投屏所需的 `stream_url`；`session_id` 与 Render 标识不外泄。控制面不提供屏幕查询，`screen_id` 也不参与 `start-app`。
 
 ### 2.2 非目标
 
@@ -70,7 +70,7 @@
 
 ### 4.3 不变约束
 
-- 一块屏幕同时只展示一个应用；`start-app` 的 `TARGET_BUSY` / `force` 语义不变。
+- 一块屏幕同时只展示一个应用；`start-app` 不再接收屏幕参数，也没有 `TARGET_BUSY` / `force`。同一块屏重复 `self.cast.cast` 覆盖 URI；换屏时新屏接受流后停止旧屏。
 - 一个应用同时只绑定一块屏幕。
 - 历史按 `(device, agent)` 分组，每组约 10 个可淘汰槽位，用户之间互不挤占；`building` / `running` / 仍占下游资源的应用不淘汰。
 
@@ -174,7 +174,7 @@ sequenceDiagram
 | 做一个新东西 | `create-app` |
 | 改已有应用的玩法 / 界面 / 规则（需重新生成） | `update-app` |
 | 开始、答题、查分等已有 API | `send-request` |
-| 换屏展示 | `stop-app` / `start-app` |
+| 换屏展示 | 设备端 `self.cast.stop` / `self.cast.cast`；`stop-app` 只停云端运行时 |
 
 ## 6. AgentAPI 侧要点
 
@@ -224,7 +224,7 @@ sequenceDiagram
 
 ## 9. 验收场景
 
-1. 同一 owner 连续两次不同 `prompt` 的 `create-app`，得到两个 `app_id`，AgentAPI 上存在两个 session，均可独立完成并 `start-app` 到不同屏幕（若有两块屏）。
+1. 同一 owner 连续两次不同 `prompt` 的 `create-app`，得到两个 `app_id`，AgentAPI 上存在两个 session，均可独立完成、分别 `start-app` 获得 `stream_url`，再在设备端 `self.cast.cast` 到不同屏幕（若有两块屏）。
 2. 应用 A `building` 时，应用 B 的 `create-app` 不返回 A 的 `app_id`。
 3. 应用在 `idle` 时 `update-app`，状态进入 `building`，完成后产物与 OpenAPI 更新，`list-apps` / `get-app-operations` 反映新能力；绑定 `session_id` 不变。
 4. `running` 时 `update-app` 返回 `APP_RUNNING`，应用状态不变。

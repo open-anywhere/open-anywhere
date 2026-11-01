@@ -1,5 +1,5 @@
-// Package endpoints resolves each tenant's Render and Casting services and
-// builds the HTTP clients that talk to them.
+// Package endpoints resolves each tenant's Render service and builds the HTTP
+// clients that talk to it.
 package endpoints
 
 import (
@@ -13,7 +13,6 @@ import (
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/netguard"
-	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/secret"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/settings"
@@ -23,24 +22,20 @@ import (
 // Resolver implements service.BindingSource and the MCP owner validator from
 // the portal device table and platform settings.
 type Resolver struct {
-	db              *store.DB
-	settings        *settings.Provider
-	box             *secret.Box
-	guard           *netguard.Guard
-	platformScreens *screen.Catalog
+	db       *store.DB
+	settings *settings.Provider
+	box      *secret.Box
+	guard    *netguard.Guard
 }
 
-// NewResolver returns a resolver. platformScreens is the deployment's screen
-// catalog, used as an alias for the platform-managed Casting service; it may
-// be nil. box decrypts per-user service tokens and may be nil only when no
-// custom token exists.
-func NewResolver(db *store.DB, provider *settings.Provider, box *secret.Box, guard *netguard.Guard, platformScreens *screen.Catalog) *Resolver {
+// NewResolver returns a resolver. box decrypts per-user service tokens and may
+// be nil only when no custom token exists.
+func NewResolver(db *store.DB, provider *settings.Provider, box *secret.Box, guard *netguard.Guard) *Resolver {
 	return &Resolver{
-		db:              db,
-		settings:        provider,
-		box:             box,
-		guard:           guard,
-		platformScreens: platformScreens,
+		db:       db,
+		settings: provider,
+		box:      box,
+		guard:    guard,
 	}
 }
 
@@ -78,36 +73,27 @@ func (r *Resolver) BindingForUser(ctx context.Context, userID string) (service.B
 	if binding.Mode != store.ServiceModeCustom {
 		return r.managed(ctx)
 	}
-	if binding.RenderURL == "" || binding.CastingURL == "" {
-		return service.Binding{}, &service.ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "请先绑定渲染和投屏服务"}
+	if binding.RenderURL == "" {
+		return service.Binding{}, &service.ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "请先绑定渲染服务"}
 	}
 	renderToken, err := r.decrypt(binding.RenderTokenEnc, secret.BindingAAD(userID, "render"))
 	if err != nil {
 		return service.Binding{}, err
 	}
-	castingToken, err := r.decrypt(binding.CastingTokenEnc, secret.BindingAAD(userID, "casting"))
-	if err != nil {
-		return service.Binding{}, err
-	}
 	return service.Binding{
-		RenderURL:    binding.RenderURL,
-		RenderToken:  renderToken,
-		CastingURL:   binding.CastingURL,
-		CastingToken: castingToken,
-		Managed:      false,
+		RenderURL:   binding.RenderURL,
+		RenderToken: renderToken,
+		Managed:     false,
 	}, nil
 }
 
 // BindingOverride carries values a user is about to save. Empty token fields
 // reuse the stored token; a clear flag removes it.
 type BindingOverride struct {
-	Mode              string
-	RenderURL         string
-	CastingURL        string
-	RenderToken       string
-	CastingToken      string
-	ClearRenderToken  bool
-	ClearCastingToken bool
+	Mode             string
+	RenderURL        string
+	RenderToken      string
+	ClearRenderToken bool
 }
 
 // PreviewBinding builds the binding a save or connection test would use.
@@ -136,27 +122,17 @@ func (r *Resolver) PreviewBinding(ctx context.Context, userID string, override B
 	if renderURL == "" {
 		renderURL = saved.RenderURL
 	}
-	castingURL := strings.TrimSpace(override.CastingURL)
-	if castingURL == "" {
-		castingURL = saved.CastingURL
-	}
 	renderToken, err := r.overrideToken(userID, "render", override.RenderToken, override.ClearRenderToken, saved.RenderTokenEnc)
 	if err != nil {
 		return service.Binding{}, err
 	}
-	castingToken, err := r.overrideToken(userID, "casting", override.CastingToken, override.ClearCastingToken, saved.CastingTokenEnc)
-	if err != nil {
-		return service.Binding{}, err
-	}
-	if renderURL == "" || castingURL == "" {
-		return service.Binding{}, &service.ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "请先绑定渲染和投屏服务"}
+	if renderURL == "" {
+		return service.Binding{}, &service.ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "请先绑定渲染服务"}
 	}
 	return service.Binding{
-		RenderURL:    renderURL,
-		RenderToken:  renderToken,
-		CastingURL:   castingURL,
-		CastingToken: castingToken,
-		Managed:      false,
+		RenderURL:   renderURL,
+		RenderToken: renderToken,
+		Managed:     false,
 	}, nil
 }
 
@@ -192,14 +168,12 @@ func (r *Resolver) SaveBinding(ctx context.Context, userID string, override Bind
 	}
 	now := time.Now().UTC()
 	binding := store.PortalServiceBinding{
-		UserID:          userID,
-		Mode:            mode,
-		RenderURL:       saved.RenderURL,
-		CastingURL:      saved.CastingURL,
-		RenderTokenEnc:  saved.RenderTokenEnc,
-		CastingTokenEnc: saved.CastingTokenEnc,
-		CreatedAt:       saved.CreatedAt,
-		UpdatedAt:       now,
+		UserID:         userID,
+		Mode:           mode,
+		RenderURL:      saved.RenderURL,
+		RenderTokenEnc: saved.RenderTokenEnc,
+		CreatedAt:      saved.CreatedAt,
+		UpdatedAt:      now,
 	}
 	if binding.CreatedAt.IsZero() {
 		binding.CreatedAt = now
@@ -208,31 +182,19 @@ func (r *Resolver) SaveBinding(ctx context.Context, userID string, override Bind
 		if value := strings.TrimSpace(override.RenderURL); value != "" {
 			binding.RenderURL = value
 		}
-		if value := strings.TrimSpace(override.CastingURL); value != "" {
-			binding.CastingURL = value
-		}
-		if binding.RenderURL == "" || binding.CastingURL == "" {
-			return store.PortalServiceBinding{}, &service.ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "请先填写渲染和投屏服务地址"}
+		if binding.RenderURL == "" {
+			return store.PortalServiceBinding{}, &service.ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "请先填写渲染服务地址"}
 		}
 		if err := r.CheckURL(ctx, binding.RenderURL); err != nil {
 			return store.PortalServiceBinding{}, err
 		}
-		if err := r.CheckURL(ctx, binding.CastingURL); err != nil {
-			return store.PortalServiceBinding{}, err
-		}
 		if binding.RenderTokenEnc, err = r.encryptToken(userID, "render", override.RenderToken, override.ClearRenderToken, binding.RenderTokenEnc); err != nil {
-			return store.PortalServiceBinding{}, err
-		}
-		if binding.CastingTokenEnc, err = r.encryptToken(userID, "casting", override.CastingToken, override.ClearCastingToken, binding.CastingTokenEnc); err != nil {
 			return store.PortalServiceBinding{}, err
 		}
 	} else {
 		// Explicit clearing still applies when the user restores managed mode.
 		if override.ClearRenderToken {
 			binding.RenderTokenEnc = ""
-		}
-		if override.ClearCastingToken {
-			binding.CastingTokenEnc = ""
 		}
 	}
 	if err := r.db.UpsertServiceBinding(ctx, binding); err != nil {
@@ -282,15 +244,12 @@ func (r *Resolver) managed(ctx context.Context) (service.Binding, error) {
 		return service.Binding{}, fmt.Errorf("endpoints: read platform services: %w", err)
 	}
 	if !snapshot.Services.Ready() {
-		return service.Binding{}, &service.ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "平台还没有配置默认屏幕服务"}
+		return service.Binding{}, &service.ToolError{Code: "SERVICE_NOT_CONFIGURED", Message: "平台还没有配置默认渲染服务"}
 	}
 	return service.Binding{
-		RenderURL:    snapshot.Services.RenderURL,
-		RenderToken:  snapshot.Services.RenderToken,
-		CastingURL:   snapshot.Services.CastingURL,
-		CastingToken: snapshot.Services.CastingToken,
-		Managed:      true,
-		Screens:      r.platformScreens,
+		RenderURL:   snapshot.Services.RenderURL,
+		RenderToken: snapshot.Services.RenderToken,
+		Managed:     true,
 	}, nil
 }
 
@@ -319,9 +278,6 @@ func (r *Resolver) ValidateSecrets(ctx context.Context) error {
 	for _, binding := range bindings {
 		if _, err := r.decrypt(binding.RenderTokenEnc, secret.BindingAAD(binding.UserID, "render")); err != nil {
 			return fmt.Errorf("endpoints: service binding %s render token: %w", binding.UserID, err)
-		}
-		if _, err := r.decrypt(binding.CastingTokenEnc, secret.BindingAAD(binding.UserID, "casting")); err != nil {
-			return fmt.Errorf("endpoints: service binding %s casting token: %w", binding.UserID, err)
 		}
 	}
 	return nil

@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/audio"
+	"github.com/open-anywhere/open-anywhere/internal/voiceentry/casting"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/controlapi"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/linx"
-	"github.com/open-anywhere/open-anywhere/internal/voiceentry/register"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/tools"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/voice"
 )
@@ -61,6 +61,15 @@ type Config struct {
 	Timeout time.Duration
 	// ReconnectDelays is the backoff after an unexpected disconnect.
 	ReconnectDelays []time.Duration
+
+	// Casting enables the self.cast.* tools. The device discovers and controls
+	// DLNA renderers on its own network, so there is no casting service to
+	// point at: Linx runs the application in the cloud, gets a stream address
+	// back, and uses these tools to put it on a screen on site.
+	Casting bool
+	// CastingLocalIP is the IPv4 address SSDP is sent from. Empty uses the
+	// route the kernel picks.
+	CastingLocalIP net.IP
 }
 
 func (c *Config) applyDefaults() {
@@ -93,10 +102,10 @@ type App struct {
 	cfg        Config
 	dev        atomic.Pointer[linx.Device]
 	tools      *tools.Set
+	casting    *casting.Tools
 	transport  *transport
 	controller *voice.Controller
 	api        *controlapi.Server
-	reg        *register.Registrar
 	conns      chan connCmd
 	runCtx     context.Context
 
@@ -125,15 +134,23 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a.tools = tools.New(func(e voice.Event) { a.api.Publish(e) })
+	if cfg.Casting {
+		a.casting = casting.NewTools(casting.New(casting.Config{LocalIP: cfg.CastingLocalIP}), func(text string) {
+			a.api.Publish(voice.Event{Type: "cast", Text: text})
+		})
+	}
 	a.controller = voice.NewController(a.transport, cfg.Mode)
-	a.reg = register.New(register.Config{
-		Path:   cfg.DevicePath,
-		OTA:    cfg.OTA,
-		Device: &a.dev,
-		Apply:  func() error { return a.command(true) },
-	})
 	a.api = controlapi.New(a.controller, a.status)
 	return a, nil
+}
+
+// deviceTools is the device-side tool list for the current configuration.
+func (a *App) deviceTools() []linx.Tool {
+	list := a.tools.List()
+	if a.casting != nil {
+		list = append(list, a.casting.List()...)
+	}
+	return list
 }
 
 func (a *App) status() controlapi.Status {
@@ -142,8 +159,7 @@ func (a *App) status() controlapi.Status {
 		Mode:           a.controller.Mode(),
 		SessionID:      a.transport.SessionID(),
 		Connected:      a.transport.Connected(),
-		Volume:         a.tools.Volume(),
-		ActivationCode: a.reg.ActivationCode(),
+		Volume: a.tools.Volume(),
 	}
 	if dev := a.dev.Load(); dev != nil {
 		st.MAC, st.Registered = dev.MAC, true
@@ -161,11 +177,6 @@ func (a *App) Handler() http.Handler {
 	return a.api.Handler()
 }
 
-// Register advances device registration in-process. It is the same operation
-// as POST /device/register on the control API; Run must already be active.
-func (a *App) Register(ctx context.Context, in register.Request) (register.Result, error) {
-	return a.reg.Register(ctx, in)
-}
 
 // Status reports the current session state without exposing credentials.
 func (a *App) Status() controlapi.Status { return a.status() }
@@ -176,7 +187,7 @@ func (a *App) Status() controlapi.Status { return a.status() }
 func (a *App) Run(ctx context.Context) error {
 	a.runCtx = ctx
 	if dev := a.dev.Load(); dev != nil {
-		s, err := linx.NewSession(linx.Config{Device: *dev, Tools: a.tools.List()})
+		s, err := linx.NewSession(linx.Config{Device: *dev, Tools: a.deviceTools()})
 		if err != nil {
 			return err
 		}
@@ -201,7 +212,6 @@ func (a *App) Run(ctx context.Context) error {
 
 	if a.cfg.Serve {
 		a.setupWebAudio()
-		a.api.SetRegistration(a.reg.Register)
 		a.api.SetConnectionControl(func() error { return a.command(false) }, func() error { return a.command(true) })
 		if !a.cfg.NoListen {
 			shutdown, err := a.serveHTTP()
@@ -388,7 +398,7 @@ func (a *App) loop(ctx context.Context) error {
 
 // autoReconnect re-dials after an unexpected disconnect, with backoff.
 func (a *App) autoReconnect(ctx context.Context) {
-	err := reconnect(ctx, &a.session, a.transport, a.controller, *a.dev.Load(), a.tools.List(), a.cfg.ReconnectDelays)
+	err := reconnect(ctx, &a.session, a.transport, a.controller, *a.dev.Load(), a.deviceTools(), a.cfg.ReconnectDelays)
 	if err != nil {
 		log.Printf("reconnect: %v", err)
 		return
@@ -413,7 +423,7 @@ func (a *App) handleCommand(ctx context.Context, c connCmd) {
 		c.done <- errors.New("设备未注册，请先在网页注册")
 		return
 	}
-	err := reconnect(ctx, &a.session, a.transport, a.controller, *dev, a.tools.List(), []time.Duration{0})
+	err := reconnect(ctx, &a.session, a.transport, a.controller, *dev, a.deviceTools(), []time.Duration{0})
 	a.down = err != nil
 	if err != nil {
 		a.controller.Disconnected()

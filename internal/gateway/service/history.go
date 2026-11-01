@@ -102,7 +102,6 @@ func (s *Service) summarize(a app.App) AppSummary {
 		Name:     a.Name,
 		Summary:  truncateRunes(strings.Join(strings.Fields(a.Prompt), " "), 80),
 		State:    a.State,
-		ScreenID: a.ScreenID,
 		Error:    a.Error,
 	}
 	if !a.BuildStartedAt.IsZero() {
@@ -146,7 +145,7 @@ func (s *Service) startable(a app.App) (bool, string) {
 	case app.StateBuilding:
 		return false, "仍在构建"
 	case app.StateRunning:
-		return false, "已在屏幕上运行"
+		return false, "已在运行"
 	case app.StateError:
 		if a.Error != nil && a.Error.Code == "ARTIFACT_INVALID" {
 			return false, "产物无效，需要修订后重新构建"
@@ -251,17 +250,11 @@ func removable(a app.App) bool {
 	if a.State != app.StateIdle && a.State != app.StateError {
 		return false
 	}
-	return !a.CleanupPending && !a.PendingRuntime && !a.PendingProjection && a.InstanceID == "" && a.ProjectionSessionID == ""
+	return !a.CleanupPending && !a.PendingRuntime && a.InstanceID == ""
 }
 
 // releaseFailedStart frees what a failed start left behind and returns the
 // application to idle so it can be started again.
-//
-// A projection request that timed out has an unknown outcome, which reconcile
-// keeps as an occupation. When Casting reports no active session on the target
-// there is nothing to stop and nothing that is not ours to touch, so the
-// unknown outcome is dropped; a session that does exist is left to reconcile,
-// which only ever stops one it can prove is ours.
 func (s *Service) releaseFailedStart(ctx context.Context, entry *app.Record) error {
 	rt, err := s.runtimeFor(ctx, entry.Snapshot().Owner)
 	if err != nil {
@@ -271,17 +264,6 @@ func (s *Service) releaseFailedStart(ctx context.Context, entry *app.Record) err
 }
 
 func (s *Service) releaseFailedStartWith(ctx context.Context, rt runtime, entry *app.Record) error {
-	value := entry.Snapshot()
-	if value.PendingProjection && value.TargetID != "" {
-		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
-		target, err := rt.casting.GetTarget(probe, value.TargetID)
-		cancel()
-		if err == nil && target.ActiveSessionID == "" {
-			if err := persistRuntime(entry, func(a *app.App) { a.PendingProjection = false }); err != nil {
-				return err
-			}
-		}
-	}
 	if err := s.reconcileWith(ctx, rt, entry); err != nil {
 		var toolErr *ToolError
 		if errors.As(err, &toolErr) {
@@ -301,9 +283,8 @@ func (s *Service) releaseFailedStartWith(ctx context.Context, rt runtime, entry 
 // resources or is about to. Changing a service binding while this is true
 // would leave those resources at an address nobody remembers.
 func hasActiveResources(value app.App) bool {
-	return value.State == app.StateRunning || value.OccupiesScreen() ||
-		value.PendingRuntime || value.PendingProjection || value.CleanupPending ||
-		value.InstanceID != "" || value.ProjectionSessionID != ""
+	return value.State == app.StateRunning ||
+		value.PendingRuntime || value.CleanupPending || value.InstanceID != ""
 }
 
 // HasActiveRuntime reports whether any of owners has an application that still

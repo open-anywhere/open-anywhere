@@ -5,7 +5,6 @@ import {
   formatDate,
   formatDuration,
   formatRelative,
-  screenStatusLabels,
   stepLabels,
   voiceStateLabels,
 } from './format'
@@ -87,6 +86,5 @@ describe('label maps', () => {
     expect(appStateLabels.running).toBe('屏幕上')
     expect(deviceStateLabels.registered).toBe('已准备好')
     expect(voiceStateLabels.listening).toBe('收听中')
-    expect(screenStatusLabels.showing_app).toBe('正在播放')
   })
 })

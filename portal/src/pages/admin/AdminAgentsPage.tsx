@@ -7,17 +7,26 @@ import {
   Select,
   Space,
   Table,
+  Tag,
 } from 'antd'
 import type { TableProps } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { ApiError, adminApi, type AdminAgent } from '../../api'
+import { ApiError, adminApi, type AdminAgent, type AdminDevice } from '../../api'
 import { adminAgentsQueryOptions } from '../../api/queries'
 import { DeviceStateTag } from '../../components/Tags'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { formatDate, stepLabels } from '../../lib/format'
 import { PageHeader } from '../portal/components/PageHeader'
+
+function deviceLabel(device: AdminDevice) {
+  return device.name || (device.kind === 'virtual' ? '虚拟设备' : '硬件')
+}
+
+function retryableDevice(agent: AdminAgent) {
+  return agent.devices.find((device) => device.kind === 'virtual' && device.state !== 'registered')
+}
 
 const stateOptions = [
   { value: 'all', label: '全部状态' },
@@ -77,10 +86,18 @@ export function AdminAgentsPage() {
       ),
     },
     {
-      title: 'MAC',
-      dataIndex: 'mac',
-      width: 160,
-      render: (value: string) => <code className="inline-code">{value}</code>,
+      title: '设备',
+      dataIndex: 'device_count',
+      render: (_value, agent) => (
+        <Space size={4} wrap>
+          <span>{agent.device_count} 台</span>
+          {agent.devices.map((device) => (
+            <Tag key={device.id}>
+              {deviceLabel(device)} <code className="inline-code">{device.mac}</code>
+            </Tag>
+          ))}
+        </Space>
+      ),
     },
     {
       title: '状态',
@@ -113,15 +130,21 @@ export function AdminAgentsPage() {
       title: '操作',
       key: 'actions',
       width: 110,
-      render: (_value, agent) => (
-        <Button
-          size="small"
-          loading={retry.isPending && retry.variables === agent.id}
-          onClick={() => retry.mutate(agent.id)}
-        >
-          重试开通
-        </Button>
-      ),
+      render: (_value, agent) => {
+        const device = retryableDevice(agent)
+        if (!device) {
+          return '—'
+        }
+        return (
+          <Button
+            size="small"
+            loading={retry.isPending && retry.variables === device.id}
+            onClick={() => retry.mutate(device.id)}
+          >
+            重试开通
+          </Button>
+        )
+      },
     },
   ]
 
@@ -130,7 +153,7 @@ export function AdminAgentsPage() {
       <PageHeader
         eyebrow="Admin"
         title="智能体"
-        description="所有用户的虚拟 Linx 设备与开通状态。开通失败时可以重试。"
+        description="每个用户一个灵矽智能体。虚拟设备和硬件都挂在这个智能体下面，开通失败时可以重试。"
         actions={
           <Button
             icon={<ReloadOutlined />}
@@ -168,7 +191,10 @@ export function AdminAgentsPage() {
           onChange={setState}
           options={stateOptions}
         />
-        <span className="toolbar-count">{agents.data?.agents.length ?? 0} 个智能体</span>
+        <span className="toolbar-count">
+          {agents.data?.agents.length ?? 0} 个智能体 ·{' '}
+          {agents.data?.agents.reduce((sum, agent) => sum + agent.device_count, 0) ?? 0} 台设备
+        </span>
       </div>
 
       <section className="surface surface-flush table-surface">

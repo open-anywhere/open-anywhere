@@ -61,7 +61,7 @@ func TestCallLogShowsDiscoveryOperationsAndCalls(t *testing.T) {
 	for _, call := range []sdk.CallToolParams{
 		{Name: "get-app-operations", Arguments: map[string]any{"app_id": "app_1"}},
 		{Name: "send-request", Arguments: map[string]any{"app_id": "app_1", "operation_id": "rollDice", "body": map[string]any{"count": 2}}},
-		{Name: "start-app", Arguments: map[string]any{"app_id": "app_1", "screen_id": "tv_1", "force": true}},
+		{Name: "start-app", Arguments: map[string]any{"app_id": "app_1"}},
 	} {
 		if _, err := session.CallTool(ctx, &call); err != nil {
 			t.Fatal(err)
@@ -74,7 +74,7 @@ func TestCallLogShowsDiscoveryOperationsAndCalls(t *testing.T) {
 		"get-app-operations",
 		"tools/call get-app-operations app=app_1 -> ok operations=1 [rollDice]",
 		`tools/call send-request app=app_1 op=rollDice body={"count":2} -> ok status=200`,
-		"tools/call start-app app=app_1 screen=tv_1 force=true -> ok",
+		"tools/call start-app app=app_1 -> ok",
 	} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log is missing %q:\n%s", want, log)

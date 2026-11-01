@@ -1,0 +1,36 @@
+# Open Anywhere Render 配置示例。
+# 复制为 render.yaml 后按需修改；render.yaml 不会提交到仓库。
+# 优先级：命令行 flag > 环境变量 > 本文件 > 内置默认值。
+# token 不接受命令行参数，避免出现在进程列表里。环境变量 RENDER_TOKEN 可以覆盖本文件。
+#
+#   cp render.example.yaml render.yaml
+#   go run ./cmd/render -config render.yaml
+
+# API 和媒体流共用这个监听地址。
+addr: ":8090"
+
+# 电视和 Gateway 都能访问的 HTTP 源。stream_url 的主机名来自这里。
+# 同网段写局域网地址；跨网段写 frp 或反代暴露的地址，例如 http://203.0.113.10:6005。
+public_url: "http://192.168.1.20:8090"
+
+# 应用业务端口的主机名，Gateway 用它调用 /api/*。留空则用 public_url 的主机名。
+# Gateway 与 Render 在同一台机器、业务端口不对外时，写成 127.0.0.1。
+app_host: ""
+
+work_dir: ".render-data"
+node: "node"
+chrome: ""
+ffmpeg: "ffmpeg"
+width: 1280
+height: 720
+fps: 10
+
+# 两个都留空则只有视频。要声音时成对填写，例如 pulse 和 render.monitor。
+audio_format: ""
+audio_input: ""
+
+# 与 Gateway 管理后台「屏幕服务 → Render Token」，或用户自建服务页的令牌，写成同一段。
+# 留空时 /v1 不校验，只适合本机调试。
+# 填上之后，/v1/apps 和 /v1/ports 必须带 Authorization: Bearer <token>。
+# /healthz 和 /streams 不校验。电视拉流不会带这个头。
+token: ""

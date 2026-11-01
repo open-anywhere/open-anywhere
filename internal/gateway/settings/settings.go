@@ -1,6 +1,6 @@
 // Package settings stores platform-level upstream configuration (AgentAPI,
-// Linx, default Render/Casting services and the registration switch) in the
-// database so an administrator can change it without editing gateway.yaml.
+// Linx, default Render, virtual-device casting NIC and the registration switch)
+// in the database so an administrator can change it without editing gateway.yaml.
 package settings
 
 import (
@@ -38,21 +38,21 @@ const (
 	KeyLinxMemModelID    = "linx.mem_model_id"
 	KeyLinxIntentModelID = "linx.intent_model_id"
 
-	KeyDefaultRenderURL    = "services.default_render_url"
-	KeyDefaultRenderToken  = "services.default_render_token"
-	KeyDefaultCastingURL   = "services.default_casting_url"
-	KeyDefaultCastingToken = "services.default_casting_token"
+	KeyDefaultRenderURL   = "services.default_render_url"
+	KeyDefaultRenderToken = "services.default_render_token"
+	// KeyCastingInterface is the host NIC virtual devices use for SSDP/DLNA.
+	// Values: "auto" (default), "off", or an interface name.
+	KeyCastingInterface = "services.casting_interface"
 
 	KeyRegistrationOpen = "registration.open"
 )
 
 // secretKeys marks settings whose value is encrypted at rest.
 var secretKeys = map[string]bool{
-	KeyAgentAPIKey:         true,
-	KeyLinxAPIKey:          true,
-	KeyLinxMCPToken:        true,
-	KeyDefaultRenderToken:  true,
-	KeyDefaultCastingToken: true,
+	KeyAgentAPIKey:        true,
+	KeyLinxAPIKey:         true,
+	KeyLinxMCPToken:       true,
+	KeyDefaultRenderToken: true,
 }
 
 // AgentAPI identifies the AgentAPI deployment used for builds.
@@ -118,16 +118,16 @@ func (l Linx) MCPReady() bool { return l.PublicMCPURL != "" && l.MCPToken != "" 
 // Ready reports whether provisioning can talk to Linx.
 func (l Linx) Ready() bool { return l.APIBase != "" && l.APIKey != "" }
 
-// ServiceDefaults are the platform-managed Render and Casting services.
+// ServiceDefaults are the platform-managed Render service settings and the
+// host casting NIC selection for embedded virtual devices.
 type ServiceDefaults struct {
-	RenderURL    string
-	RenderToken  string
-	CastingURL   string
-	CastingToken string
+	RenderURL         string
+	RenderToken       string
+	CastingInterface  string
 }
 
-// Ready reports whether both managed services are configured.
-func (s ServiceDefaults) Ready() bool { return s.RenderURL != "" && s.CastingURL != "" }
+// Ready reports whether the managed Render service is configured.
+func (s ServiceDefaults) Ready() bool { return s.RenderURL != "" }
 
 // Registration controls whether the public sign-up endpoint accepts requests.
 type Registration struct {
@@ -174,10 +174,9 @@ type LinxMasked struct {
 
 // ServicesMasked is the admin-visible default service configuration.
 type ServicesMasked struct {
-	RenderURL    string      `json:"render_url"`
-	CastingURL   string      `json:"casting_url"`
-	RenderToken  SecretState `json:"render_token"`
-	CastingToken SecretState `json:"casting_token"`
+	RenderURL        string      `json:"render_url"`
+	RenderToken      SecretState `json:"render_token"`
+	CastingInterface string      `json:"casting_interface"`
 }
 
 // ReadyFlags summarizes which upstream groups are usable.
@@ -312,8 +311,7 @@ func (p *Provider) Snapshot(ctx context.Context) (Snapshot, error) {
 		{KeyLinxIntentModelID, &snapshot.Linx.IntentModelID},
 		{KeyDefaultRenderURL, &snapshot.Services.RenderURL},
 		{KeyDefaultRenderToken, &snapshot.Services.RenderToken},
-		{KeyDefaultCastingURL, &snapshot.Services.CastingURL},
-		{KeyDefaultCastingToken, &snapshot.Services.CastingToken},
+		{KeyCastingInterface, &snapshot.Services.CastingInterface},
 	} {
 		value, err := read(item.key)
 		if err != nil {
@@ -321,6 +319,7 @@ func (p *Provider) Snapshot(ctx context.Context) (Snapshot, error) {
 		}
 		*item.target = value
 	}
+	snapshot.Services.CastingInterface = normalizeCastingInterface(snapshot.Services.CastingInterface)
 	snapshot.Linx = snapshot.Linx.withDefaults()
 	version, err := read(KeyAgentAPIAgentVersion)
 	if err != nil {
@@ -412,10 +411,9 @@ func (p *Provider) Masked(ctx context.Context) (Masked, error) {
 			IntentModelID: snapshot.Linx.IntentModelID,
 		},
 		Services: ServicesMasked{
-			RenderURL:    plain(KeyDefaultRenderURL),
-			CastingURL:   plain(KeyDefaultCastingURL),
-			RenderToken:  state(KeyDefaultRenderToken),
-			CastingToken: state(KeyDefaultCastingToken),
+			RenderURL:        plain(KeyDefaultRenderURL),
+			RenderToken:      state(KeyDefaultRenderToken),
+			CastingInterface: snapshot.Services.CastingInterface,
 		},
 		Registration: snapshot.Registration,
 		Ready: ReadyFlags{
@@ -459,12 +457,11 @@ type LinxPatch struct {
 	RotateMCPToken bool `json:"rotate_mcp_token"`
 }
 
-// ServicesPatch updates the platform default services.
+// ServicesPatch updates the platform default Render service and casting NIC.
 type ServicesPatch struct {
-	RenderURL    *string      `json:"render_url"`
-	CastingURL   *string      `json:"casting_url"`
-	RenderToken  *SecretValue `json:"render_token"`
-	CastingToken *SecretValue `json:"casting_token"`
+	RenderURL        *string      `json:"render_url"`
+	RenderToken      *SecretValue `json:"render_token"`
+	CastingInterface *string      `json:"casting_interface"`
 }
 
 // RegistrationPatch updates the registration switch.
@@ -487,8 +484,10 @@ var ErrInvalidURL = errors.New("settings: invalid service address")
 var ErrInvalidSetting = errors.New("settings: invalid setting value")
 
 // ServicesChanged reports whether a patch would change the saved default
-// Render/Casting configuration. An empty secret means "keep", so it only
-// counts as a change when it differs from the stored value or clears one.
+// Render configuration. Casting NIC edits are excluded: they only affect
+// virtual-device tools and do not require stopping running apps. An empty
+// secret means "keep", so it only counts as a change when it differs from the
+// stored value or clears one.
 func ServicesChanged(current Snapshot, patch *ServicesPatch) bool {
 	if patch == nil {
 		return false
@@ -496,11 +495,28 @@ func ServicesChanged(current Snapshot, patch *ServicesPatch) bool {
 	if patch.RenderURL != nil && strings.TrimSpace(*patch.RenderURL) != current.Services.RenderURL {
 		return true
 	}
-	if patch.CastingURL != nil && strings.TrimSpace(*patch.CastingURL) != current.Services.CastingURL {
-		return true
+	return secretChanged(current.Services.RenderToken, patch.RenderToken)
+}
+
+// CastingInterfaceChanged reports whether a patch changes the casting NIC.
+func CastingInterfaceChanged(current Snapshot, patch *ServicesPatch) bool {
+	if patch == nil || patch.CastingInterface == nil {
+		return false
 	}
-	return secretChanged(current.Services.RenderToken, patch.RenderToken) ||
-		secretChanged(current.Services.CastingToken, patch.CastingToken)
+	return normalizeCastingInterface(*patch.CastingInterface) !=
+		normalizeCastingInterface(current.Services.CastingInterface)
+}
+
+func normalizeCastingInterface(value string) string {
+	trimmed := strings.TrimSpace(value)
+	switch strings.ToLower(trimmed) {
+	case "", "auto":
+		return "auto"
+	case "off":
+		return "off"
+	default:
+		return trimmed
+	}
 }
 
 // linxCredentialsChanged reports whether a patch changes the Linx account
@@ -639,11 +655,10 @@ func (p *Provider) Preview(ctx context.Context, patch Patch) (Snapshot, error) {
 		if err := urlValue(KeyDefaultRenderURL, group.RenderURL, &snapshot.Services.RenderURL); err != nil {
 			return Snapshot{}, err
 		}
-		if err := urlValue(KeyDefaultCastingURL, group.CastingURL, &snapshot.Services.CastingURL); err != nil {
-			return Snapshot{}, err
-		}
 		secretValue(group.RenderToken, &snapshot.Services.RenderToken)
-		secretValue(group.CastingToken, &snapshot.Services.CastingToken)
+		if group.CastingInterface != nil {
+			snapshot.Services.CastingInterface = normalizeCastingInterface(*group.CastingInterface)
+		}
 	}
 	if group := patch.Registration; group != nil && group.Open != nil {
 		snapshot.Registration.Open = *group.Open
@@ -772,16 +787,11 @@ func (p *Provider) Update(ctx context.Context, patch Patch, actorID string) erro
 				return err
 			}
 		}
-		if group.CastingURL != nil {
-			if err := putURL(KeyDefaultCastingURL, *group.CastingURL); err != nil {
-				return err
-			}
-		}
 		if err := putSecret(KeyDefaultRenderToken, group.RenderToken); err != nil {
 			return err
 		}
-		if err := putSecret(KeyDefaultCastingToken, group.CastingToken); err != nil {
-			return err
+		if group.CastingInterface != nil {
+			put(KeyCastingInterface, normalizeCastingInterface(*group.CastingInterface))
 		}
 	}
 	if patch.Registration != nil && patch.Registration.Open != nil {

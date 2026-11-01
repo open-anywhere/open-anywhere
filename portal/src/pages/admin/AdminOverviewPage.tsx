@@ -1,8 +1,8 @@
 import {
   AppstoreOutlined,
   CheckCircleOutlined,
+  MobileOutlined,
   ReloadOutlined,
-  RobotOutlined,
   TeamOutlined,
 } from '@ant-design/icons'
 import { Alert, Button, Skeleton, Space, Steps, Tag } from 'antd'
@@ -33,7 +33,7 @@ export function AdminOverviewPage() {
       <PageHeader
         eyebrow="Admin"
         title="平台概览"
-        description="用户、智能体、应用和上游配置的当前状态。"
+        description="用户、设备、应用和上游配置的当前状态。"
         actions={
           <Space wrap>
             <Button
@@ -92,11 +92,11 @@ export function AdminOverviewPage() {
               tone="primary"
             />
             <StatTile
-              icon={<RobotOutlined />}
-              label="智能体"
-              value={data.agents.total}
-              note={`${data.agents.registered} 个已注册 · ${data.agents.provisioning} 个开通中`}
-              tone={data.agents.error ? 'warning' : 'neutral'}
+              icon={<MobileOutlined />}
+              label="设备"
+              value={data.devices.total}
+              note={`${data.devices.registered} 台已注册 · ${data.devices.provisioning} 台开通中`}
+              tone={data.devices.error ? 'warning' : 'neutral'}
             />
             <StatTile
               icon={<AppstoreOutlined />}
@@ -153,7 +153,7 @@ export function AdminOverviewPage() {
                   },
                   {
                     title: '默认屏幕服务',
-                    description: '填写平台托管用户使用的 Render 与 Casting 地址。',
+                    description: '填写平台托管用户使用的 Render 地址；虚拟设备投屏网卡可在设置里选择。',
                     status: data.platform.services ? 'finish' : 'wait',
                   },
                   {
@@ -197,7 +197,7 @@ export function AdminOverviewPage() {
                 管理员：<strong>{data.users.admins}</strong> 个
               </span>
               <span>
-                开通失败：<strong>{data.agents.error}</strong> 个
+                开通失败：<strong>{data.devices.error}</strong> 台
               </span>
             </Space>
           </section>

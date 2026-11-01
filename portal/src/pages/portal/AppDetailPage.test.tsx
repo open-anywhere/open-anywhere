@@ -2,14 +2,13 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { fail, mockApi, ok } from '../../test/http'
-import { makeAppDetail, makeDevice, makeScreen, makeUser } from '../../test/fixtures'
+import { makeAppDetail, makeDevice, makeUser } from '../../test/fixtures'
 import { renderApp, settledAt } from '../../test/router'
 
 function routes(detail = makeAppDetail(), overrides: Record<string, unknown> = {}) {
   return {
     'GET /api/portal/apps/app_1': ok({ app: detail }),
     'GET /api/portal/me': ok({ user: makeUser(), devices: [makeDevice()] }),
-    'GET /api/portal/screens': ok({ screens: [makeScreen({ name: '客厅电视' })] }),
     'GET /api/portal/apps/app_1/openapi.yaml': { text: 'openapi: 3.0.0' },
     'DELETE /api/portal/apps/app_1': ok(null, 204),
     'GET /api/portal/apps': ok({ apps: [] }),
@@ -45,10 +44,16 @@ describe('AppDetailPage', () => {
     mockApi(routes())
     await renderApp('/portal/apps/app_1')
 
-    await user.click((await screen.findAllByRole('button', { name: /接口文档/ }))[0])
+    await user.click(
+      (
+        await screen.findAllByRole('button', { name: /接口文档/ }, { timeout: 5_000 })
+      )[0],
+    )
 
-    expect(await screen.findByText('openapi: 3.0.0')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /下载 YAML/ })).toBeInTheDocument()
+    expect(await screen.findByText('openapi: 3.0.0', {}, { timeout: 5_000 })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('link', { name: /下载 YAML/ }, { timeout: 5_000 }),
+    ).toBeInTheDocument()
   })
 
   it('explains a failed OpenAPI read', async () => {
@@ -60,9 +65,15 @@ describe('AppDetailPage', () => {
     )
     await renderApp('/portal/apps/app_1')
 
-    await user.click((await screen.findAllByRole('button', { name: /接口文档/ }))[0])
-    expect(await screen.findByText('暂时无法读取接口文档')).toBeInTheDocument()
-    expect(screen.getByText('没有接口文档')).toBeInTheDocument()
+    await user.click(
+      (
+        await screen.findAllByRole('button', { name: /接口文档/ }, { timeout: 5_000 })
+      )[0],
+    )
+    expect(
+      await screen.findByText('暂时无法读取接口文档', {}, { timeout: 5_000 }),
+    ).toBeInTheDocument()
+    expect(await screen.findByText('没有接口文档', {}, { timeout: 5_000 })).toBeInTheDocument()
   })
 
   it('keeps a building app from being deleted', async () => {

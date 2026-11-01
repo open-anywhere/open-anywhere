@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -16,7 +14,6 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/build"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/openapi"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/render"
-	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
 	"github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
@@ -153,82 +150,6 @@ func (f *fakeRender) deletedIDs() []string {
 	return append([]string(nil), f.deleted...)
 }
 
-type fakeCasting struct {
-	mu        sync.Mutex
-	targets   []casting.Target
-	listErr   error
-	target    casting.Target
-	targetErr error
-	session   casting.Session
-	states    []casting.SessionState
-	createErr error
-	getErr    error
-	stopErr   error
-	created   []casting.CreateSessionRequest
-	stopped   []string
-}
-
-func (f *fakeCasting) ListTargets(_ context.Context) ([]casting.Target, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.targets, f.listErr
-}
-
-func (f *fakeCasting) GetTarget(_ context.Context, _ string) (casting.Target, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.target, f.targetErr
-}
-
-func (f *fakeCasting) CreateSession(_ context.Context, request casting.CreateSessionRequest) (casting.Session, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.created = append(f.created, request)
-	if f.createErr != nil {
-		return casting.Session{}, f.createErr
-	}
-	return f.session, nil
-}
-
-func (f *fakeCasting) GetSession(_ context.Context, id string) (casting.Session, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.getErr != nil {
-		return casting.Session{}, f.getErr
-	}
-	state := f.session.State
-	if len(f.states) > 0 {
-		state = f.states[0]
-		f.states = f.states[1:]
-	}
-	copy := f.session
-	copy.ID = id
-	copy.State = state
-	return copy, nil
-}
-
-func (f *fakeCasting) StopSession(_ context.Context, id string) (casting.Session, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.stopped = append(f.stopped, id)
-	if f.stopErr != nil {
-		return casting.Session{}, f.stopErr
-	}
-	return casting.Session{ID: id, State: casting.SessionStopped}, nil
-}
-
-func (f *fakeCasting) requests() []casting.CreateSessionRequest {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]casting.CreateSessionRequest(nil), f.created...)
-}
-
-func (f *fakeCasting) stoppedIDs() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.stopped...)
-}
-
 type fakeNotifier struct {
 	mu    sync.Mutex
 	notes []app.Notification
@@ -251,19 +172,11 @@ type testEnv struct {
 	registry *app.Registry
 	builder  *fakeBuilder
 	render   *fakeRender
-	casting  *fakeCasting
 	notifier *fakeNotifier
 }
 
-func newTestEnv(t *testing.T, catalog *screen.Catalog) *testEnv {
+func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
-	if catalog == nil {
-		var err error
-		catalog, err = screen.LoadCatalog("")
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
 	env := &testEnv{
 		registry: app.NewRegistry(),
 		builder:  &fakeBuilder{},
@@ -271,13 +184,9 @@ func newTestEnv(t *testing.T, catalog *screen.Catalog) *testEnv {
 			instance:    readyApp(),
 			getInstance: readyApp(),
 		},
-		casting: &fakeCasting{
-			target:  testTarget(),
-			session: casting.Session{ID: "ps_1", State: casting.SessionPlaying},
-		},
 		notifier: &fakeNotifier{},
 	}
-	env.svc = New(env.registry, env.builder, env.render, env.casting, catalog, env.notifier, Config{
+	env.svc = New(env.registry, env.builder, env.render, env.notifier, Config{
 		StartTimeout:      2 * time.Second,
 		ProjectionTimeout: time.Nanosecond,
 		OperationsTimeout: time.Second,
@@ -302,24 +211,6 @@ func readyApp() render.App {
 			VideoCodec: "h264",
 			AudioCodec: "aac",
 		},
-	}
-}
-
-func testTarget() casting.Target {
-	return casting.Target{
-		ID:    "tv_1",
-		Name:  "客厅",
-		State: casting.TargetOnline,
-		Endpoints: []casting.Endpoint{{
-			ID:       "ep_1",
-			Protocol: "dlna",
-			Capabilities: casting.Capabilities{
-				Formats:     []string{"mpegts"},
-				VideoCodecs: []string{"h264"},
-				AudioCodecs: []string{"aac"},
-				Streaming:   true,
-			},
-		}},
 	}
 }
 
@@ -352,13 +243,9 @@ func runningApp(owner app.Identity) app.App {
 		Owner:               owner,
 		Name:                "quiz",
 		State:               app.StateRunning,
-		ScreenID:            "tv_1",
 		InstanceID:          "inst_1",
 		Port:                39000,
 		AppBaseURL:          "http://127.0.0.1:39000",
-		TargetID:            "tv_1",
-		EndpointID:          "ep_1",
-		ProjectionSessionID: "ps_1",
 		StartedAt:           time.Now().Add(-time.Minute),
 	}
 }
@@ -373,7 +260,7 @@ func toolCode(t *testing.T, err error) string {
 }
 
 func TestCreateApp(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	ctx := context.Background()
 
@@ -437,7 +324,7 @@ func TestCreateApp(t *testing.T) {
 }
 
 func TestUpdateApp(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	ctx := context.Background()
 
@@ -469,7 +356,7 @@ func TestUpdateApp(t *testing.T) {
 		t.Fatal("building app should reject update")
 	}
 
-	env.registry.Add(app.App{ID: "app_running", Owner: owner, State: app.StateRunning, SessionID: "ses_r", ScreenID: "tv_1"})
+	env.registry.Add(app.App{ID: "app_running", Owner: owner, State: app.StateRunning, SessionID: "ses_r"})
 	if _, err := env.svc.UpdateApp(ctx, owner, "app_running", "再改"); toolCode(t, err) != "APP_RUNNING" {
 		t.Fatal("running app should reject update")
 	}
@@ -518,7 +405,7 @@ func mustGet(t *testing.T, env *testEnv, id string) app.App {
 }
 
 func TestGetAppStatusStates(t *testing.T) {
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	env.svc.now = func() time.Time { return now }
@@ -526,8 +413,8 @@ func TestGetAppStatusStates(t *testing.T) {
 
 	env.registry.Add(app.App{ID: "build", Owner: owner, State: app.StateBuilding, BuildStartedAt: now.Add(-90 * time.Second), LastAgentMessage: "正在实现页面"})
 	env.registry.Add(app.App{ID: "idle", Owner: owner, State: app.StateIdle, Name: "quiz", BuildDuration: 2 * time.Minute})
-	env.registry.Add(app.App{ID: "running", Owner: owner, State: app.StateRunning, Name: "quiz", ScreenID: "tv_1", StartedAt: now.Add(-30 * time.Second)})
-	env.registry.Add(app.App{ID: "error", Owner: owner, State: app.StateError, ScreenID: "tv_1"})
+	env.registry.Add(app.App{ID: "running", Owner: owner, State: app.StateRunning, Name: "quiz", StartedAt: now.Add(-30 * time.Second)})
+	env.registry.Add(app.App{ID: "error", Owner: owner, State: app.StateError})
 
 	building, err := env.svc.GetAppStatus(ctx, owner, "build")
 	if err != nil {
@@ -547,14 +434,14 @@ func TestGetAppStatusStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if running.State != app.StateRunning || running.ScreenID != "tv_1" || running.UptimeSeconds != 30 || running.StartedAt == nil {
+	if running.State != app.StateRunning || running.UptimeSeconds != 30 || running.StartedAt == nil {
 		t.Fatalf("running = %+v", running)
 	}
 	failed, err := env.svc.GetAppStatus(ctx, owner, "error")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.Error == nil || failed.Error.Code != "APP_EXITED" || failed.Error.Stage != app.StageRunning || failed.ScreenID != "tv_1" {
+	if failed.Error == nil || failed.Error.Code != "APP_EXITED" || failed.Error.Stage != app.StageRunning {
 		t.Fatalf("error = %+v", failed)
 	}
 	if _, err := env.svc.GetAppStatus(ctx, app.Identity{DeviceID: "other-device", SessionID: "other"}, "idle"); toolCode(t, err) != "APP_NOT_FOUND" {
@@ -565,183 +452,10 @@ func TestGetAppStatusStates(t *testing.T) {
 	}
 }
 
-func TestStartAppSuccess(t *testing.T) {
-	env := newTestEnv(t, nil)
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	entry := env.registry.Add(idleApp(t, owner))
-	ctx := context.Background()
-
-	view, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false)
-	if err != nil {
-		t.Fatalf("StartApp: %v", err)
-	}
-	if view.State != app.StateRunning || view.ScreenID != "tv_1" || view.Name != "quiz" {
-		t.Fatalf("view = %+v", view)
-	}
-	snapshot := entry.Snapshot()
-	if snapshot.State != app.StateRunning || snapshot.ScreenID != "tv_1" || snapshot.InstanceID != "inst_1" {
-		t.Fatalf("snapshot = %+v", snapshot)
-	}
-	if snapshot.Port != 39000 || snapshot.AppBaseURL != "http://127.0.0.1:39000" {
-		t.Fatalf("runtime = %+v", snapshot)
-	}
-	if snapshot.TargetID != "tv_1" || snapshot.EndpointID != "ep_1" || snapshot.ProjectionSessionID != "ps_1" {
-		t.Fatalf("projection = %+v", snapshot)
-	}
-	if snapshot.Source.Format != "mpegts" || snapshot.StartedAt.IsZero() {
-		t.Fatalf("source = %+v, started = %v", snapshot.Source, snapshot.StartedAt)
-	}
-	created := env.render.requests()
-	if len(created) != 1 || created[0].AppID != "app_1" || created[0].Port != 39000 {
-		t.Fatalf("render requests = %+v", created)
-	}
-	if created[0].ArtifactURL != snapshot.Artifact.DownloadURL {
-		t.Fatalf("artifact url = %q", created[0].ArtifactURL)
-	}
-	sessions := env.casting.requests()
-	if len(sessions) != 1 || sessions[0].TargetID != "tv_1" || sessions[0].EndpointID != "ep_1" || sessions[0].Source.VideoCodec != "h264" {
-		t.Fatalf("casting requests = %+v", sessions)
-	}
-
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); err != nil {
-		t.Fatalf("idempotent start: %v", err)
-	}
-	if len(env.render.requests()) != 1 {
-		t.Fatal("idempotent start created another instance")
-	}
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_2", false); toolCode(t, err) != "APP_ALREADY_RUNNING" {
-		t.Fatal("running on another screen should be rejected")
-	}
-}
-
-func TestStartAppStateFailures(t *testing.T) {
-	env := newTestEnv(t, nil)
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	env.registry.Add(app.App{ID: "building", Owner: owner, State: app.StateBuilding})
-	env.registry.Add(app.App{ID: "error", Owner: owner, State: app.StateError})
-	ctx := context.Background()
-
-	if _, err := env.svc.StartApp(ctx, owner, "missing", "tv_1", false); toolCode(t, err) != "APP_NOT_FOUND" {
-		t.Fatal("missing app should not start")
-	}
-	if _, err := env.svc.StartApp(ctx, owner, "building", "tv_1", false); toolCode(t, err) != "APP_BUILDING" {
-		t.Fatal("building app should not start")
-	}
-	if _, err := env.svc.StartApp(ctx, owner, "error", "tv_1", false); toolCode(t, err) != "APP_IN_ERROR" {
-		t.Fatal("error app should not start")
-	}
-	if _, err := env.svc.StartApp(ctx, owner, "missing", "", false); toolCode(t, err) != "INVALID_ARGUMENT" {
-		t.Fatal("empty screen should be rejected")
-	}
-}
-
-func TestStartAppTargetFailures(t *testing.T) {
-	ctx := context.Background()
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-
-	t.Run("offline target", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		env.casting.target = testTarget()
-		env.casting.target.State = casting.TargetOffline
-		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_UNREACHABLE" {
-			t.Fatal("offline target should fail")
-		}
-		snapshot := entry.Snapshot()
-		if snapshot.State != app.StateError || snapshot.Error == nil || snapshot.Error.Stage != app.StageStarting || snapshot.Error.Code != "TARGET_UNREACHABLE" {
-			t.Fatalf("snapshot = %+v", snapshot)
-		}
-		// No downstream POST occurred; an offline target must not leave a
-		// phantom reservation that reconciliation can never identify.
-		if snapshot.ScreenID != "" || snapshot.PendingRuntime || snapshot.CleanupPending {
-			t.Fatalf("screen = %q", snapshot.ScreenID)
-		}
-	})
-
-	t.Run("screen busy", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		other := runningApp(app.Identity{DeviceID: "device", SessionID: "other"})
-		other.ID = "app_other"
-		env.registry.Add(other)
-		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_BUSY" {
-			t.Fatal("busy screen should fail")
-		}
-		if entry.Snapshot().State != app.StateIdle {
-			t.Fatal("app state changed on TARGET_BUSY")
-		}
-	})
-
-	t.Run("unknown configured screen", func(t *testing.T) {
-		catalog := writeCatalog(t, `[{"screen_id":"living","name":"客厅","target_id":"tv_1"}]`)
-		env := newTestEnv(t, catalog)
-		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "kitchen", false); toolCode(t, err) != "TARGET_UNREACHABLE" {
-			t.Fatal("unknown screen should fail")
-		}
-		if entry.Snapshot().State != app.StateIdle {
-			t.Fatal("app state changed on unknown screen")
-		}
-	})
-
-	t.Run("projection timeout", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		env.casting.session = casting.Session{ID: "ps_1", State: casting.SessionStarting}
-		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "PROJECTION_TIMEOUT" {
-			t.Fatal("projection timeout should fail")
-		}
-		snapshot := entry.Snapshot()
-		if snapshot.State != app.StateError || snapshot.Error == nil || snapshot.Error.Stage != app.StageStarting || snapshot.Error.Code != "PROJECTION_TIMEOUT" {
-			t.Fatalf("snapshot = %+v", snapshot)
-		}
-		deleted := env.render.deletedIDs()
-		if len(deleted) != 1 || deleted[0] != "inst_1" {
-			t.Fatalf("deleted = %+v", deleted)
-		}
-		stopped := env.casting.stoppedIDs()
-		if len(stopped) != 1 || stopped[0] != "ps_1" {
-			t.Fatalf("stopped = %+v", stopped)
-		}
-		if notes := env.notifier.notifications(); len(notes) != 1 || notes[0].State != app.StateError {
-			t.Fatalf("notifications = %+v", notes)
-		}
-	})
-
-	t.Run("port in use retries", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		env.render.ports = []render.Port{{Port: 39000, Occupied: true}}
-		env.render.errs = []error{&render.HTTPError{Status: http.StatusConflict, Code: "PORT_IN_USE", Message: "busy"}}
-		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); err != nil {
-			t.Fatalf("StartApp: %v", err)
-		}
-		created := env.render.requests()
-		if len(created) != 2 || created[0].Port != 39001 || created[1].Port != 39002 {
-			t.Fatalf("created = %+v", created)
-		}
-		if entry.Snapshot().Port != 39002 {
-			t.Fatalf("port = %d", entry.Snapshot().Port)
-		}
-	})
-
-	t.Run("render already running", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		env.render.errs = []error{&render.HTTPError{Status: http.StatusConflict, Code: "APP_ALREADY_RUNNING", Message: "running"}}
-		entry := env.registry.Add(idleApp(t, owner))
-		if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "APP_ALREADY_RUNNING" {
-			t.Fatal("render conflict should be reported")
-		}
-		if entry.Snapshot().State != app.StateIdle {
-			t.Fatal("app state changed on render conflict")
-		}
-	})
-}
-
 func TestStopApp(t *testing.T) {
 	ctx := context.Background()
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	entry := env.registry.Add(runningApp(owner))
 
 	view, err := env.svc.StopApp(ctx, owner, "app_1")
@@ -755,33 +469,27 @@ func TestStopApp(t *testing.T) {
 		t.Fatalf("stop response is missing stopped_at: %+v", view)
 	}
 	snapshot := entry.Snapshot()
-	if snapshot.State != app.StateIdle || snapshot.ScreenID != "" || snapshot.InstanceID != "" || snapshot.ProjectionSessionID != "" || snapshot.StoppedAt.IsZero() {
+	if snapshot.State != app.StateIdle || snapshot.InstanceID != "" || snapshot.StoppedAt.IsZero() {
 		t.Fatalf("snapshot = %+v", snapshot)
-	}
-	if stopped := env.casting.stoppedIDs(); len(stopped) != 1 || stopped[0] != "ps_1" {
-		t.Fatalf("stopped = %+v", stopped)
 	}
 	if deleted := env.render.deletedIDs(); len(deleted) != 1 || deleted[0] != "inst_1" {
 		t.Fatalf("deleted = %+v", deleted)
 	}
 
 	t.Run("stop failure", func(t *testing.T) {
-		env := newTestEnv(t, nil)
+		env := newTestEnv(t)
 		entry := env.registry.Add(runningApp(owner))
-		env.casting.stopErr = errors.New("casting down")
+		env.render.deleteErr = errors.New("render down")
 		if _, err := env.svc.StopApp(ctx, owner, "app_1"); toolCode(t, err) != "STOP_FAILED" {
 			t.Fatal("stop failure should be reported")
 		}
 		if entry.Snapshot().State != app.StateRunning {
 			t.Fatal("running app changed state on stop failure")
 		}
-		if len(env.render.deletedIDs()) != 0 {
-			t.Fatal("render instance deleted after projection failure")
-		}
 	})
 
 	t.Run("idempotent and building", func(t *testing.T) {
-		env := newTestEnv(t, nil)
+		env := newTestEnv(t)
 		env.registry.Add(app.App{ID: "idle", Owner: owner, State: app.StateIdle})
 		env.registry.Add(app.App{ID: "building", Owner: owner, State: app.StateBuilding})
 		if _, err := env.svc.StopApp(ctx, owner, "idle"); err != nil {
@@ -790,7 +498,7 @@ func TestStopApp(t *testing.T) {
 		if _, err := env.svc.StopApp(ctx, owner, "building"); toolCode(t, err) != "APP_BUILDING" {
 			t.Fatal("building app should not stop")
 		}
-		if len(env.casting.stoppedIDs()) != 0 || len(env.render.deletedIDs()) != 0 {
+		if len(env.render.deletedIDs()) != 0 {
 			t.Fatal("no-op stop touched runtime")
 		}
 	})
@@ -827,7 +535,7 @@ func TestSendRequest(t *testing.T) {
 	defer appServer.Close()
 
 	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	env := newTestEnv(t, nil)
+	env := newTestEnv(t)
 	env.registry.Add(app.App{ID: "app_1", Owner: owner, State: app.StateRunning, AppBaseURL: appServer.URL, OpenAPI: mustSpec(t)})
 	env.registry.Add(app.App{ID: "idle", Owner: owner, State: app.StateIdle, OpenAPI: mustSpec(t)})
 	ctx := context.Background()
@@ -864,253 +572,5 @@ func TestSendRequest(t *testing.T) {
 	}
 	if _, err := env.svc.SendRequest(ctx, app.Identity{DeviceID: "other-device", SessionID: "other"}, "app_1", "updateItem", nil, nil); toolCode(t, err) != "APP_NOT_FOUND" {
 		t.Fatal("owner isolation failed")
-	}
-}
-
-func TestGetScreens(t *testing.T) {
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	ctx := context.Background()
-
-	t.Run("configured catalog", func(t *testing.T) {
-		catalog := writeCatalog(t, `[{"screen_id":"living","name":"客厅","target_id":"tv_1"}]`)
-		env := newTestEnv(t, catalog)
-		env.casting.targets = []casting.Target{testTarget()}
-		env.registry.Add(app.App{ID: "app_1", Owner: owner, Name: "quiz", State: app.StateRunning, ScreenID: "living"})
-		views, err := env.svc.GetScreens(ctx, owner)
-		if err != nil {
-			t.Fatalf("GetScreens: %v", err)
-		}
-		if len(views) != 1 {
-			t.Fatalf("views = %+v", views)
-		}
-		if views[0].ScreenID != "living" || views[0].Name != "客厅" || views[0].Status != ScreenShowingApp {
-			t.Fatalf("view = %+v", views[0])
-		}
-		if views[0].CurrentApp == nil || views[0].CurrentApp.AppID != "app_1" || views[0].CurrentApp.Name != "quiz" {
-			t.Fatalf("current = %+v", views[0].CurrentApp)
-		}
-	})
-
-	t.Run("casting discovery fallback", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		offline := testTarget()
-		offline.ID = "tv_2"
-		offline.State = casting.TargetOffline
-		incompatible := testTarget()
-		incompatible.ID = "tv_3"
-		incompatible.Endpoints[0].Capabilities.Formats = []string{"mp4"}
-		env.casting.targets = []casting.Target{testTarget(), offline, incompatible}
-		views, err := env.svc.GetScreens(ctx, owner)
-		if err != nil {
-			t.Fatalf("GetScreens: %v", err)
-		}
-		if len(views) != 3 {
-			t.Fatalf("views = %+v", views)
-		}
-		if views[0].Status != ScreenFree || views[1].Status != ScreenUnavailable || views[2].Status != ScreenUnavailable {
-			t.Fatalf("views = %+v", views)
-		}
-	})
-
-	t.Run("discovery failure", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		env.casting.listErr = errors.New("casting down")
-		if _, err := env.svc.GetScreens(ctx, owner); toolCode(t, err) != "SCREEN_DISCOVERY_FAILED" {
-			t.Fatal("discovery failure should be reported")
-		}
-	})
-}
-
-func TestCheckRunning(t *testing.T) {
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	ctx := context.Background()
-
-	t.Run("healthy", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		entry := env.registry.Add(runningApp(owner))
-		env.render.getInstance = render.App{InstanceID: "inst_1", State: render.StateReady}
-		env.casting.states = []casting.SessionState{casting.SessionPlaying}
-		env.svc.checkRunning(ctx)
-		if entry.Snapshot().State != app.StateRunning {
-			t.Fatal("healthy app changed state")
-		}
-		if len(env.render.deletedIDs()) != 0 || len(env.casting.stoppedIDs()) != 0 || len(env.notifier.notifications()) != 0 {
-			t.Fatal("healthy app triggered cleanup")
-		}
-	})
-
-	t.Run("render error", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		entry := env.registry.Add(runningApp(owner))
-		env.render.getInstance = render.App{InstanceID: "inst_1", State: render.StateError, Error: &render.Error{Code: "APP_CRASHED", Message: "boom"}}
-		env.svc.checkRunning(ctx)
-		snapshot := entry.Snapshot()
-		if snapshot.State != app.StateError || snapshot.Error == nil || snapshot.Error.Stage != app.StageRunning || snapshot.Error.Code != "APP_CRASHED" || snapshot.Error.Message != "boom" {
-			t.Fatalf("snapshot = %+v", snapshot)
-		}
-		if deleted := env.render.deletedIDs(); len(deleted) != 1 || deleted[0] != "inst_1" {
-			t.Fatalf("deleted = %+v", deleted)
-		}
-		if stopped := env.casting.stoppedIDs(); len(stopped) != 1 || stopped[0] != "ps_1" {
-			t.Fatalf("stopped = %+v", stopped)
-		}
-		notes := env.notifier.notifications()
-		if len(notes) != 1 || notes[0].AppID != "app_1" || notes[0].State != app.StateError || notes[0].Error == nil {
-			t.Fatalf("notes = %+v", notes)
-		}
-	})
-
-	t.Run("render missing", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		entry := env.registry.Add(runningApp(owner))
-		env.render.getErr = &render.HTTPError{Status: http.StatusNotFound, Code: "NOT_FOUND"}
-		env.svc.checkRunning(ctx)
-		snapshot := entry.Snapshot()
-		if snapshot.State != app.StateError || snapshot.Error == nil || snapshot.Error.Code != "APP_EXITED" {
-			t.Fatalf("snapshot = %+v", snapshot)
-		}
-	})
-
-	t.Run("projection failed", func(t *testing.T) {
-		env := newTestEnv(t, nil)
-		entry := env.registry.Add(runningApp(owner))
-		env.render.getInstance = render.App{InstanceID: "inst_1", State: render.StateReady}
-		env.casting.states = []casting.SessionState{casting.SessionFailed}
-		env.svc.checkRunning(ctx)
-		snapshot := entry.Snapshot()
-		if snapshot.State != app.StateError || snapshot.Error == nil || snapshot.Error.Code != "PROJECTION_DISCONNECTED" {
-			t.Fatalf("snapshot = %+v", snapshot)
-		}
-	})
-}
-
-func TestStartAppMapsConfiguredScreen(t *testing.T) {
-	catalog := writeCatalog(t, `[{"screen_id":"living","name":"客厅","target_id":"tv_1"}]`)
-	env := newTestEnv(t, catalog)
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	entry := env.registry.Add(idleApp(t, owner))
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "living", false); err != nil {
-		t.Fatalf("StartApp: %v", err)
-	}
-	snapshot := entry.Snapshot()
-	if snapshot.ScreenID != "living" || snapshot.TargetID != "tv_1" {
-		t.Fatalf("snapshot = %+v", snapshot)
-	}
-	if sessions := env.casting.requests(); len(sessions) != 1 || sessions[0].TargetID != "tv_1" {
-		t.Fatalf("sessions = %+v", sessions)
-	}
-}
-
-func writeCatalog(t *testing.T, data string) *screen.Catalog {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "screens.json")
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	catalog, err := screen.LoadCatalog(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return catalog
-}
-
-func occupiedScreenEnv(t *testing.T) (*testEnv, app.Identity, *app.Record) {
-	t.Helper()
-	env := newTestEnv(t, nil)
-	other := runningApp(app.Identity{DeviceID: "device", SessionID: "other"})
-	other.ID = "app_other"
-	other.InstanceID = "inst_old"
-	other.ProjectionSessionID = "ps_old"
-	env.registry.Add(other)
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	return env, owner, env.registry.Add(idleApp(t, owner))
-}
-
-func TestStartAppForceKeepsTheAppWhenTheScreenIsOffline(t *testing.T) {
-	env, owner, _ := occupiedScreenEnv(t)
-	env.casting.target.State = casting.TargetOffline
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", true); toolCode(t, err) != "TARGET_UNREACHABLE" {
-		t.Fatalf("err = %v", err)
-	}
-	if len(env.casting.stoppedIDs()) != 0 || len(env.render.deletedIDs()) != 0 {
-		t.Fatal("force takeover must not stop anything before the target is validated")
-	}
-	other, ok := env.registry.Get("app_other")
-	if !ok || other.Snapshot().State != app.StateRunning {
-		t.Fatalf("the app on the offline screen was changed: %+v", other.Snapshot())
-	}
-}
-
-func TestVerifyRunningAcceptsPausedProjection(t *testing.T) {
-	env := newTestEnv(t, nil)
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	value := runningApp(owner)
-	env.casting.session = casting.Session{ID: "ps_1", State: casting.SessionPaused}
-	if err := env.svc.verifyRunning(context.Background(), value); err != nil {
-		t.Fatalf("paused projection must stay addressable: %v", err)
-	}
-}
-
-func TestStartAppForceReplacesTheAppOnTheScreen(t *testing.T) {
-	env, owner, entry := occupiedScreenEnv(t)
-	ctx := context.Background()
-
-	if _, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", false); toolCode(t, err) != "TARGET_BUSY" {
-		t.Fatalf("without force the screen must stay busy, err=%v", err)
-	}
-	if len(env.casting.stoppedIDs()) != 0 {
-		t.Fatal("the other app was stopped without force")
-	}
-
-	view, err := env.svc.StartApp(ctx, owner, "app_1", "tv_1", true)
-	if err != nil {
-		t.Fatalf("forced start: %v", err)
-	}
-	if view.State != app.StateRunning || view.ScreenID != "tv_1" || view.ReplacedAppID != "app_other" {
-		t.Fatalf("view=%+v", view)
-	}
-	if got := env.casting.stoppedIDs(); len(got) != 1 || got[0] != "ps_old" {
-		t.Fatalf("stopped projections=%v", got)
-	}
-	if got := env.render.deletedIDs(); len(got) != 1 || got[0] != "inst_old" {
-		t.Fatalf("deleted instances=%v", got)
-	}
-	replaced, ok := env.registry.Get("app_other")
-	if !ok || replaced.Snapshot().State != app.StateIdle || replaced.Snapshot().ScreenID != "" {
-		t.Fatalf("replaced app=%+v", replaced.Snapshot())
-	}
-	if entry.Snapshot().State != app.StateRunning {
-		t.Fatalf("new app state=%s", entry.Snapshot().State)
-	}
-	var told bool
-	for _, n := range env.notifier.notifications() {
-		told = told || (n.AppID == "app_other" && n.State == app.StateIdle && n.Message != "")
-	}
-	if !told {
-		t.Fatalf("the replaced app's owner was not notified: %+v", env.notifier.notifications())
-	}
-}
-
-func TestStartAppForceDoesNotOverrideAnAppThatCannotBeStopped(t *testing.T) {
-	env, owner, entry := occupiedScreenEnv(t)
-	env.casting.stopErr = errors.New("casting down")
-	if _, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", true); toolCode(t, err) != "STOP_FAILED" {
-		t.Fatalf("err=%v", err)
-	}
-	if other, _ := env.registry.Get("app_other"); other.Snapshot().State != app.StateRunning {
-		t.Fatalf("the other app was changed: %+v", other.Snapshot())
-	}
-	if entry.Snapshot().State != app.StateIdle || len(env.render.requests()) != 0 {
-		t.Fatal("the new app started although the screen was not freed")
-	}
-}
-
-func TestStartAppForceOnAFreeScreenReplacesNothing(t *testing.T) {
-	env := newTestEnv(t, nil)
-	owner := app.Identity{DeviceID: "device", SessionID: "session"}
-	env.registry.Add(idleApp(t, owner))
-	view, err := env.svc.StartApp(context.Background(), owner, "app_1", "tv_1", true)
-	if err != nil || view.State != app.StateRunning || view.ReplacedAppID != "" {
-		t.Fatalf("view=%+v err=%v", view, err)
 	}
 }

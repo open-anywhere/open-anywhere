@@ -28,17 +28,20 @@ import (
 // host capture device (for example pulse/render.monitor or avfoundation/:6);
 // both must be set to enable audio, while an empty pair keeps video-only mode.
 type Config struct {
-	WorkDir        string
-	PublicURL      string
-	AppHost        string
-	Node           string
-	Chrome         string
-	FFmpeg         string
-	Width          int
-	Height         int
-	FPS            int
-	AudioFormat    string
-	AudioInput     string
+	WorkDir     string
+	PublicURL   string
+	AppHost     string
+	Node        string
+	Chrome      string
+	FFmpeg      string
+	Width       int
+	Height      int
+	FPS         int
+	AudioFormat string
+	AudioInput  string
+	// Token is the bearer secret for /v1/*. Empty leaves those routes open.
+	// /healthz and /streams are never checked, because a TV cannot send a header.
+	Token          string
 	StartupTimeout time.Duration
 	ServicePorts   []int
 	Logger         *log.Logger

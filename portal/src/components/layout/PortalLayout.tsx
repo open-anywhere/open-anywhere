@@ -1,7 +1,6 @@
 import {
   AppstoreOutlined,
   DashboardOutlined,
-  DesktopOutlined,
   HistoryOutlined,
   HomeOutlined,
   MobileOutlined,
@@ -19,8 +18,7 @@ const portalNavItems: readonly ConsoleNavItem[] = [
   { to: '/portal/agents', label: '智能体', icon: <RobotOutlined />, exact: false },
   { to: '/portal/devices', label: '设备', icon: <MobileOutlined />, exact: false },
   { to: '/portal/apps', label: '应用', icon: <AppstoreOutlined />, exact: false },
-  { to: '/portal/screens', label: '屏幕', icon: <DesktopOutlined />, exact: false },
-  { to: '/portal/services', label: '屏幕连接', icon: <ThunderboltOutlined />, exact: false },
+  { to: '/portal/services', label: '服务', icon: <ThunderboltOutlined />, exact: false },
   { to: '/portal/activity', label: '动态', icon: <HistoryOutlined />, exact: false },
   { to: '/portal/settings', label: '设置', icon: <SettingOutlined />, exact: false },
 ]

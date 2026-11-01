@@ -13,17 +13,15 @@ const (
 	ServiceModeCustom  = "custom"
 )
 
-// PortalServiceBinding is a user's Render/Casting choice. Tokens are stored
-// encrypted by the settings layer; nothing here ever decrypts them.
+// PortalServiceBinding is a user's Render choice. Tokens are stored encrypted
+// by the settings layer; nothing here ever decrypts them.
 type PortalServiceBinding struct {
-	UserID          string    `json:"user_id"`
-	Mode            string    `json:"mode"`
-	RenderURL       string    `json:"render_url"`
-	CastingURL      string    `json:"casting_url"`
-	RenderTokenEnc  string    `json:"-"`
-	CastingTokenEnc string    `json:"-"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	UserID         string    `json:"user_id"`
+	Mode           string    `json:"mode"`
+	RenderURL      string    `json:"render_url"`
+	RenderTokenEnc string    `json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // ServiceBindingByUser returns the user's binding. A user without a row has
@@ -37,11 +35,11 @@ func (d *DB) ServiceBindingByUser(ctx context.Context, userID string) (PortalSer
 		binding              PortalServiceBinding
 		createdAt, updatedAt string
 	)
-	err := d.sql.QueryRowContext(ctx, `SELECT user_id, mode, render_url, casting_url,
-		render_token_enc, casting_token_enc, created_at, updated_at
+	err := d.sql.QueryRowContext(ctx, `SELECT user_id, mode, render_url,
+		render_token_enc, created_at, updated_at
 		FROM portal_service_bindings WHERE user_id = ?`, userID).
-		Scan(&binding.UserID, &binding.Mode, &binding.RenderURL, &binding.CastingURL,
-			&binding.RenderTokenEnc, &binding.CastingTokenEnc, &createdAt, &updatedAt)
+		Scan(&binding.UserID, &binding.Mode, &binding.RenderURL,
+			&binding.RenderTokenEnc, &createdAt, &updatedAt)
 	if err != nil {
 		return PortalServiceBinding{}, err
 	}
@@ -63,7 +61,7 @@ func (d *DB) HasEncryptedSecrets(ctx context.Context) (bool, error) {
 		SELECT 1 FROM platform_settings WHERE is_secret = 1 AND value LIKE 'enc:v1:%'
 		UNION ALL
 		SELECT 1 FROM portal_service_bindings
-		WHERE render_token_enc LIKE 'enc:v1:%' OR casting_token_enc LIKE 'enc:v1:%'
+		WHERE render_token_enc LIKE 'enc:v1:%'
 	)`).Scan(&found)
 	if err != nil {
 		return false, fmt.Errorf("store: check encrypted secrets: %w", err)
@@ -75,9 +73,9 @@ func (d *DB) HasEncryptedSecrets(ctx context.Context) (bool, error) {
 // Startup validation uses it to prove the configured master key can open every
 // stored credential, without loading addresses or plaintext.
 func (d *DB) ServiceBindingSecrets(ctx context.Context) ([]PortalServiceBinding, error) {
-	rows, err := d.sql.QueryContext(ctx, `SELECT user_id, render_token_enc, casting_token_enc
+	rows, err := d.sql.QueryContext(ctx, `SELECT user_id, render_token_enc
 		FROM portal_service_bindings
-		WHERE render_token_enc <> '' OR casting_token_enc <> ''`)
+		WHERE render_token_enc <> ''`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list service binding secrets: %w", err)
 	}
@@ -85,7 +83,7 @@ func (d *DB) ServiceBindingSecrets(ctx context.Context) ([]PortalServiceBinding,
 	var out []PortalServiceBinding
 	for rows.Next() {
 		var binding PortalServiceBinding
-		if err := rows.Scan(&binding.UserID, &binding.RenderTokenEnc, &binding.CastingTokenEnc); err != nil {
+		if err := rows.Scan(&binding.UserID, &binding.RenderTokenEnc); err != nil {
 			return nil, fmt.Errorf("store: scan service binding secret: %w", err)
 		}
 		out = append(out, binding)
@@ -109,17 +107,15 @@ func (d *DB) UpsertServiceBinding(ctx context.Context, binding PortalServiceBind
 		return fmt.Errorf("store: invalid service binding mode %q", mode)
 	}
 	_, err := d.sql.ExecContext(ctx, `INSERT INTO portal_service_bindings
-		(user_id, mode, render_url, casting_url, render_token_enc, casting_token_enc, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		(user_id, mode, render_url, render_token_enc, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
 			mode = excluded.mode,
 			render_url = excluded.render_url,
-			casting_url = excluded.casting_url,
 			render_token_enc = excluded.render_token_enc,
-			casting_token_enc = excluded.casting_token_enc,
 			updated_at = excluded.updated_at`,
-		binding.UserID, mode, binding.RenderURL, binding.CastingURL,
-		binding.RenderTokenEnc, binding.CastingTokenEnc,
+		binding.UserID, mode, binding.RenderURL,
+		binding.RenderTokenEnc,
 		formatTime(binding.CreatedAt), formatTime(binding.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("store: save service binding: %w", err)

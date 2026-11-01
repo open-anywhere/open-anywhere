@@ -12,8 +12,7 @@
 | --- | --- | --- | --- |
 | 控制面 Gateway | `cmd/gateway`、`internal/gateway` | 对灵矽暴露 MCP，编排构建，转发应用请求 | 邓军辉 |
 | 应用运行时 Render | `cmd/render`、`internal/render` | 启动应用、采集画面、输出媒体流 | 张之阳 |
-| 投屏服务 Casting | `cmd/casting`、`internal/casting` | 发现设备、维护投屏会话 | 张之阳 |
-| 现场语音入口 | `cmd/voiceentry`、`internal/voiceentry` | 以设备身份接入灵矽，收发语音 | 韩鲁鹏 |
+| 现场语音入口 | `internal/voiceentry` | 以设备身份接入灵矽，收发语音；运行时嵌在 Gateway 进程里，由 Portal 托管 | 韩鲁鹏 |
 | Portal | `portal/`、`internal/gateway/portal` | 多租户控制台与自助开通 | 邓军辉 |
 | AgentAPI 适配 | `pkg/agentapi`、`internal/gateway/build` | 把构建抽象成会话，不暴露沙箱细节 | 邓军辉 |
 
@@ -35,7 +34,7 @@
 
 - MCP 工具面固定，不随应用数量增长；新应用只改变 `get-app-operations` 的返回值。
 - 一次语音回合不等待构建；构建是异步任务。
-- 跨 owner 的资源不可见：Portal HTTP API 统一返回 404；MCP 工具返回 `APP_NOT_FOUND` / `TARGET_BUSY`，不泄露资源是否存在。
+- 跨 owner 的资源不可见：Portal HTTP API 统一返回 404；MCP 工具返回 `APP_NOT_FOUND` / `APP_BUILDING`，不泄露资源是否存在。
 
 **内部子模块**
 
@@ -43,14 +42,14 @@
 | --- | --- | --- |
 | `httpapi` | OpenAPI 操作执行与转发 | 操作调用与响应映射 |
 | `mcp` | MCP Server 与工具路由 | Tool 定义与调用 |
-| `service` | 编排、归属校验、屏幕占用 | 面向 MCP 的用例方法 |
+| `service` | 编排、归属校验、运行实例与兼容屏幕视图 | 面向 MCP 的用例方法 |
 | `build` | 构建会话生命周期 | `Create` / `Update` / `Status` |
 | `artifact` | 产物下载与二次校验 | artifact 读取 |
 | `openapi` | 解析、校验 OpenAPI，转发 HTTP | `SendRequest` |
 | `app` | 应用注册表 | 应用 CRUD |
-| `screen` | 屏幕发现与占用 | 屏幕状态迁移 |
+| `screen` | 控制面兼容的屏幕视图与旧版占用（生产投屏由设备完成） | 屏幕状态迁移 |
 | `render` | Render HTTP 客户端 | 启动/停止/状态 |
-| `endpoints` | 按 owner 解析 Render/Casting | `Resolve` / `ValidateOwner` |
+| `endpoints` | 按 owner 解析 Render 端点 | `BindingFor` / `ValidateOwner` |
 | `portal` | 注册、登录、角色、开通 | `/api/*` handler |
 | `settings` | 平台设置与密钥 | 读写设置、加解密 |
 | `secret` | 主密钥加载与 AES-256-GCM 密文封装 | 加解密、AAD 绑定 |
@@ -73,23 +72,17 @@
 
 **子模块**：`artifact`（解包与校验）、`ports`（端口分配）、`service`（进程生命周期）、`media`（采集、编码、推流）、`http`（控制面接口）。
 
-## 4. 投屏服务 Casting
+## 4. 投屏协议实现（设备侧）
 
-**职责**：发现局域网设备，并按目标支持的协议建立、维持、结束投屏会话。它不生产内容。
+> 真机生产链路的投屏在小智云聊 S3 MAX 固件里完成（SSDP 发现 + DLNA SOAP），见 [固件投屏工具](../operations/yunliao-s3-max-firmware-mcp.md)。仓库保留 `internal/casting/dlna`，供设备运行时在本地模拟与调试时使用；没有独立的 Casting 服务进程，控制面也不依赖它。
 
-**对外接口**：`GET /v1/targets`、`POST /v1/projection-sessions`、`GET/DELETE /v1/projection-sessions/{id}`、`GET /healthz`。
-
-**不变量**
-
-- 会话是会话级通道，应用是通道里的内容。**当前切换应用会先停止旧会话再创建新会话**；在会话内更换 source 是后续目标，不要把它当成已实现能力。
-- 只负责协议控制与生命周期，不负责媒体内容。
-- 设备失联时释放占用，避免目标被永久占住。
+**职责**：发现局域网渲染器，按 DLNA/AVTransport 控制播放与停止。它不生产内容，也不保存跨请求的会话表。
 
 ## 5. 现场语音入口
 
 **职责**：扮演一台灵矽硬件，维持设备会话，收发语音与字幕，回应设备端 MCP。
 
-**对外接口**：灵矽设备协议（WebSocket）；本地 Web 控制台。
+**对外接口**：灵矽设备协议（WebSocket）；Portal 挂载的对话接口。
 
 **不变量**
 
@@ -116,10 +109,11 @@
 | 灵矽云 | 控制面 | MCP |
 | 控制面 | AgentAPI | HTTP（构建会话） |
 | 控制面 | Render | HTTP |
-| 控制面 | Casting | HTTP |
+| 现场语音入口 | 电视（DLNA） | SSDP + SOAP（同一局域网；真机固件直连） |
+| 现场语音入口（模拟硬件） | 电视 | DLNA/UPnP（同一局域网） |
 | Portal | 控制面 | 同进程 HTTP API |
 
-禁止的方向：应用不得直接访问灵矽或 Casting；Render 不得理解应用业务；Casting 不得知道应用是谁生成的。Render 不调用 Casting：媒体流由电视直接拉取，投屏控制由控制面发起。
+禁止的方向：应用不得直接访问灵矽或电视；Render 不得理解应用业务；投屏实现不得知道应用是谁生成的。控制面不在 `start-app` / `stop-app` 中控制电视：它只负责启动应用并返回 `stream_url`，投屏控制由现场语音设备发起，媒体流由电视直接拉取。控制面不提供屏幕查询，Portal 也没有屏幕页；屏幕状态只存在于设备与电视上。
 
 ## 8. 全局不变量
 
@@ -127,10 +121,10 @@
 
 1. **MCP 面稳定，应用能力动态。** 不为每个应用注册工具。
 2. **构建慢而异步，控制快而同步。** 语音回合永不等待构建。
-3. **投屏是会话，应用是内容。** 会话承载应用；当前换应用会重建会话，复用会话是后续目标。
+3. **投屏由现场设备发起，应用是屏幕上的内容。** 同一块屏重复 `cast` 覆盖 URI；换屏时新屏接受流后停止旧屏。控制面新路径不持有投屏会话。
 4. **屏幕是显示器，不是运行时。** 应用逻辑不进显示面。
 5. **产物是不可信输入。** 结构、启动契约、OpenAPI 都要校验，Render 再校验一次。
-6. **状态属于它的所有者。** 控制面状态在 SQLite，应用状态在应用，投屏状态在会话。
+6. **状态属于它的所有者。** 控制面状态在 SQLite，应用状态在应用，投屏状态在设备固件与电视；控制面不保留。
 
 ---
 

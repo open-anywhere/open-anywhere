@@ -523,6 +523,28 @@ func (d *DB) PortalDevicesAll(ctx context.Context, state, query string, limit in
 	return devices, nil
 }
 
+// ListPortalDevices returns every device, oldest first. The admin console
+// groups these by Linx agent, so the list is not truncated.
+func (d *DB) ListPortalDevices(ctx context.Context) ([]PortalDevice, error) {
+	rows, err := d.sql.QueryContext(ctx, selectPortalDevice+` ORDER BY created_at ASC, id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list portal devices: %w", err)
+	}
+	defer rows.Close()
+	var devices []PortalDevice
+	for rows.Next() {
+		device, err := scanPortalDevice(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan portal device: %w", err)
+		}
+		devices = append(devices, device)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list portal devices: %w", err)
+	}
+	return devices, nil
+}
+
 // PortalDeviceByIdentity resolves the device behind an MCP identity. The
 // agent ID must match, so a MAC alone cannot claim another user's agent.
 func (d *DB) PortalDeviceByIdentity(ctx context.Context, mac, agentID string) (PortalDevice, error) {

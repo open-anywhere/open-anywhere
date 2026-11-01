@@ -223,8 +223,8 @@ func TestServiceBindingPersistence(t *testing.T) {
 	}
 	binding := PortalServiceBinding{
 		UserID: "usr_1", Mode: ServiceModeCustom,
-		RenderURL: "https://render.example.com", CastingURL: "https://casting.example.com",
-		RenderTokenEnc: "enc:v1:r", CastingTokenEnc: "enc:v1:c",
+		RenderURL: "https://render.example.com",
+		RenderTokenEnc: "enc:v1:r",
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.UpsertServiceBinding(ctx, binding); err != nil {

@@ -5,10 +5,27 @@ import { fail, mockApi, ok } from '../../test/http'
 import { makeMcp, makePlatformSettings, makeUser } from '../../test/fixtures'
 import { renderApp } from '../../test/router'
 
+function settingsPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    settings: makePlatformSettings(),
+    casting: {
+      selection: 'auto',
+      active: true,
+      name: 'Ethernet',
+      ipv4: '192.168.1.10',
+    },
+    casting_interfaces: [
+      { name: 'Ethernet', ipv4: '192.168.1.10' },
+      { name: 'WLAN', ipv4: '10.0.0.5' },
+    ],
+    ...overrides,
+  }
+}
+
 function settingsPage(overrides: Record<string, unknown> = {}) {
   return {
     'GET /api/portal/me': ok({ user: makeUser({ role: 'admin' }), devices: [] }),
-    'GET /api/admin/settings': ok({ settings: makePlatformSettings() }),
+    'GET /api/admin/settings': ok(settingsPayload()),
     'GET /api/admin/mcp': ok({
       provisioned: true,
       services: [
@@ -16,13 +33,8 @@ function settingsPage(overrides: Record<string, unknown> = {}) {
         makeMcp({ id: 'mcp_2', name: '网关', desc: '控制屏幕', required: true, shared: true }),
       ],
     }),
-    'PUT /api/admin/settings': ok({ settings: makePlatformSettings() }),
-    'POST /api/admin/settings/test': ok({
-      linx: { ok: true },
-      render: { ok: true },
-      casting: { ok: true },
-      screens: 2,
-    }),
+    'PUT /api/admin/settings': ok(settingsPayload()),
+    'POST /api/admin/settings/test': ok({ linx: { ok: true }, render: { ok: true } }),
     'PUT /api/admin/mcp/shared': ok({ ids: ['mcp_1'] }),
     'POST /api/admin/mcp/sync': ok({ synced: true }),
     ...overrides,
@@ -48,7 +60,6 @@ describe('AdminSettingsPage', () => {
     expect(screen.getByDisplayValue('https://gateway.example.com/mcp')).toBeInTheDocument()
     expect(screen.getByDisplayValue('小灵')).toBeInTheDocument()
     expect(screen.getByDisplayValue('https://render.example.com')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('https://casting.example.com')).toBeInTheDocument()
     // Every group is configured, so the status tags all read 已配置.
     expect(screen.getAllByText('已配置').length).toBeGreaterThanOrEqual(4)
   })
@@ -106,7 +117,6 @@ describe('AdminSettingsPage', () => {
 
     await waitFor(() => expect(http.callsFor('POST', '/api/admin/settings/test')).toHaveLength(1))
     expect(http.callsFor('POST', '/api/admin/settings/test')[0].body).toEqual({})
-    expect(await screen.findByText(/发现 2 块屏幕/)).toBeInTheDocument()
     expect(http.callsFor('PUT', '/api/admin/settings')).toHaveLength(0)
   })
 
@@ -127,8 +137,7 @@ describe('AdminSettingsPage', () => {
     await user.click(screen.getByRole('button', { name: /测试连接/ }))
 
     expect(await screen.findByText(/Linx：API Key 无效/)).toBeInTheDocument()
-    expect(screen.getByText(/Casting：地址不可达/)).toBeInTheDocument()
-    expect(screen.queryByText(/块屏幕/)).toBeNull()
+    expect(screen.getByText(/Render：/)).toBeInTheDocument()
   })
 
   it('shows the warning returned after saving', async () => {

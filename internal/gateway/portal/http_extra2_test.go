@@ -11,10 +11,10 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/store"
 )
 
-func TestNewAPIInstallsTheApplicationScreenService(t *testing.T) {
+func TestNewAPIWiresTheApplicationService(t *testing.T) {
 	api := NewAPI(openPortalTestDB(t), nil, portalTestService(t), nil, nil, "")
-	if api.screens == nil {
-		t.Fatal("a configured application service was not used for screens")
+	if api.apps == nil {
+		t.Fatal("a configured application service was not installed")
 	}
 	if api.web == nil || api.now == nil || api.serviceTest == nil || api.adminTest == nil {
 		t.Fatalf("api=%+v", api)
@@ -79,7 +79,6 @@ func TestHTTPLogoutToleratesASessionStorageFailure(t *testing.T) {
 func TestHTTPDeviceAndAppHandlersReportStorageFailuresWithoutLosingSessions(t *testing.T) {
 	env := newPortalHTTPEnv(t)
 	env.login(t)
-	env.api.screens = &fakeScreens{}
 	execRaw(t, env.dbPath, "ALTER TABLE portal_devices RENAME TO portal_devices_hidden")
 	origin := map[string]string{"Origin": env.server.URL}
 
@@ -91,8 +90,6 @@ func TestHTTPDeviceAndAppHandlersReportStorageFailuresWithoutLosingSessions(t *t
 		{http.MethodGet, "/api/portal/me", ""},
 		{http.MethodGet, "/api/portal/devices", ""},
 		{http.MethodPost, "/api/portal/devices", `{}`},
-		{http.MethodGet, "/api/portal/screens", ""},
-		{http.MethodPost, "/api/portal/screens/tv_1/stop", `{}`},
 		{http.MethodGet, "/api/portal/apps", ""},
 		{http.MethodGet, "/api/portal/apps/app_x", ""},
 	}

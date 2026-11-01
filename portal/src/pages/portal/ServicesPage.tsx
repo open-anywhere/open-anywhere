@@ -14,7 +14,6 @@ import {
 } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Link } from '@tanstack/react-router'
 import {
   ApiError,
   api,
@@ -29,35 +28,24 @@ import { PageHeader } from './components/PageHeader'
 interface FormValues {
   mode: ServiceMode
   render_url?: string
-  casting_url?: string
   render_token?: string
-  casting_token?: string
   clear_render_token?: boolean
-  clear_casting_token?: boolean
 }
 
 function toInput(values: FormValues): ServiceBindingInput {
   const input: ServiceBindingInput = { mode: values.mode }
   if (values.mode === 'custom') {
     input.render_url = (values.render_url ?? '').trim()
-    input.casting_url = (values.casting_url ?? '').trim()
     if (values.render_token?.trim()) input.render_token = values.render_token.trim()
-    if (values.casting_token?.trim()) input.casting_token = values.casting_token.trim()
   }
   if (values.clear_render_token) input.clear_render_token = true
-  if (values.clear_casting_token) input.clear_casting_token = true
   return input
 }
 
 function checkText(result: ServiceTestResult): string {
-  const parts = [
-    result.render.ok ? '运行服务可用' : `运行服务：${result.render.message ?? '不可用'}`,
-    result.casting.ok ? '投屏服务可用' : `投屏服务：${result.casting.message ?? '不可用'}`,
-  ]
-  if (result.casting.ok) {
-    parts.push(`发现 ${result.screens} 块屏幕`)
-  }
-  return parts.join(' · ')
+  return result.render.ok
+    ? '运行服务可用'
+    : `运行服务：${result.render.message ?? '不可用'}`
 }
 
 export function ServicesPage() {
@@ -75,11 +63,8 @@ export function ServicesPage() {
     form.setFieldsValue({
       mode: services.data.mode,
       render_url: services.data.custom.render_url,
-      casting_url: services.data.custom.casting_url,
       render_token: '',
-      casting_token: '',
       clear_render_token: false,
-      clear_casting_token: false,
     })
   }, [services.data, form])
 
@@ -102,7 +87,7 @@ export function ServicesPage() {
     onSuccess: (result) => {
       setError(undefined)
       setTestResult(result)
-      message[result.render.ok && result.casting.ok ? 'success' : 'warning']('连接测试完成')
+      message[result.render.ok ? 'success' : 'warning']('连接测试完成')
     },
     onError: (err) => {
       setError(err instanceof ApiError ? err.message : '暂时无法完成连接测试')
@@ -115,7 +100,7 @@ export function ServicesPage() {
     const values = await form
       .validateFields(
         mode === 'custom'
-          ? ['mode', 'render_url', 'casting_url', 'render_token', 'casting_token']
+          ? ['mode', 'render_url', 'render_token']
           : ['mode'],
       )
       .catch(() => undefined)
@@ -127,7 +112,7 @@ export function ServicesPage() {
     const values = await form
       .validateFields(
         mode === 'custom'
-          ? ['mode', 'render_url', 'casting_url', 'render_token', 'casting_token']
+          ? ['mode', 'render_url', 'render_token']
           : ['mode'],
       )
       .catch(() => undefined)
@@ -141,8 +126,8 @@ export function ServicesPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="屏幕连接"
-        title="屏幕连接"
+        eyebrow="服务连接"
+        title="服务连接"
         description="默认使用平台提供的服务。如果你有自己的运行与投屏服务，也可以在这里接入。"
         actions={
           <Button
@@ -171,7 +156,7 @@ export function ServicesPage() {
           type={data.ready ? 'success' : 'warning'}
           showIcon
           className="panel-alert"
-          message={data.ready ? '屏幕连接已就绪' : '屏幕连接还不可用'}
+          message={data.ready ? '服务连接已就绪' : '服务连接还不可用'}
           description={
             data.ready
               ? '应用会通过这套服务出现在屏幕上。'
@@ -182,7 +167,7 @@ export function ServicesPage() {
 
       {testResult ? (
         <Alert
-          type={testResult.render.ok && testResult.casting.ok ? 'success' : 'warning'}
+          type={testResult.render.ok ? 'success' : 'warning'}
           showIcon
           className="panel-alert"
           message="连接测试"
@@ -200,7 +185,7 @@ export function ServicesPage() {
         <Alert
           type="error"
           showIcon
-          message="暂时无法读取屏幕连接"
+          message="暂时无法读取服务连接"
           description={
             services.error instanceof ApiError ? services.error.message : String(services.error)
           }
@@ -249,15 +234,6 @@ export function ServicesPage() {
                         '—'
                       ),
                     },
-                    {
-                      key: 'casting',
-                      label: '投屏服务地址',
-                      children: data?.managed.casting_url ? (
-                        <code className="inline-code">{data.managed.casting_url}</code>
-                      ) : (
-                        '—'
-                      ),
-                    },
                   ]}
                 />
                 {!data?.managed.available ? (
@@ -299,34 +275,6 @@ export function ServicesPage() {
                     <Checkbox>清除已保存的运行服务令牌</Checkbox>
                   </Form.Item>
                 ) : null}
-                <Form.Item
-                  label="投屏服务地址"
-                  name="casting_url"
-                  rules={[{ required: true, message: '请输入投屏服务地址' }]}
-                >
-                  <Input placeholder="https://casting.example.com" autoComplete="off" />
-                </Form.Item>
-                <Form.Item
-                  label="投屏服务访问令牌"
-                  name="casting_token"
-                  extra={
-                    data?.custom.casting_token_configured
-                      ? '已保存令牌；留空保持不变，勾选下方选项可清除。'
-                      : '可选。保存后不会再次显示。'
-                  }
-                >
-                  <Input.Password
-                    placeholder={
-                      data?.custom.casting_token_configured ? '已保存，留空保持不变' : '可选'
-                    }
-                    autoComplete="new-password"
-                  />
-                </Form.Item>
-                {data?.custom.casting_token_configured ? (
-                  <Form.Item name="clear_casting_token" valuePropName="checked">
-                    <Checkbox>清除已保存的投屏服务令牌</Checkbox>
-                  </Form.Item>
-                ) : null}
               </>
             )}
 
@@ -342,14 +290,9 @@ export function ServicesPage() {
               <Button loading={test.isPending} onClick={runTest}>
                 测试连接
               </Button>
-              <Link to="/portal/screens" className="text-link">
-                查看屏幕
-              </Link>
             </Space>
             <p className="muted-text" style={{ marginTop: 12 }}>
-              屏幕正在播放内容时不能修改连接，请先到
-              <Link to="/portal/screens"> 屏幕页 </Link>
-              停止播放。地址不能指向本机或内网。
+              有应用正在运行时不能修改连接，请先在应用页停止。地址不能指向本机或内网。
             </p>
           </section>
         </Form>

@@ -2,31 +2,30 @@
 # 复制为 gateway.yaml 后按需修改；gateway.yaml 不会提交到仓库。
 # 优先级：命令行 flag > 环境变量 > 本文件 > 内置默认值。
 #
-# 本文件分三部分：
+# 本文件分两部分：
 #   1. 部署项：每次启动都读取，门户模式和独立模式都需要关注。
-#   2. 平台配置：AgentAPI、灵矽、MCP、Render、Casting。门户模式下在管理后台
+#   2. 平台配置：AgentAPI、灵矽、MCP、Render。门户模式下在管理后台
 #      /admin/settings 填写即可，下面默认全部注释掉；想用文件做首次初始化时再取消注释，
 #      这些值只在数据库对应设置还没有值时写入一次，之后改这里不再生效。
-#      独立模式（portal.enabled: false）没有管理后台，必须在这里填 AgentAPI、Render、Casting。
+#      独立模式（portal.enabled: false）没有管理后台，必须在这里填 AgentAPI、Render。
+#      虚拟设备投屏网卡见下方 casting.interface；门户模式也可在管理后台选择。
 
 # ---------------------------------------------------------------------------
 # 1. 部署项
 # ---------------------------------------------------------------------------
 
-# 端口分工见 README 的“端口”表：Gateway 8091、Render 8090、Casting 8080。
+# 端口分工见 README 的“端口”表：Gateway 8091、Render 8090。
 # 内置默认值仍是 ":8090"，与 Render 示例端口冲突，所以示例显式改成 8091。
+# 仓库里已经没有独立的 Casting 服务进程；投屏由设备端 self.cast.* 在局域网完成。
 addr: ":8091"
 
 services:
   # 仅本地调试或受信单租户部署使用。设为 true 后允许用户填写 127.0.0.1、局域网等内网
-  # Render/Casting 地址；生产环境保持 false，否则用户可以借服务绑定探测部署所在内网。
+  # Render 地址；生产环境保持 false，否则用户可以借服务绑定探测部署所在内网。
   # 门户模式下管理员保存的平台默认服务也受同一策略约束；本地使用 127.0.0.1
   # 默认地址调试时，需要设为 true。该开关同时放宽 custom 用户的地址校验，
   # 只应在自己信任的单租户环境打开。
   allow_private_targets: false
-
-# 屏幕映射 JSON 文件；留空时直接使用投屏服务发现的目标。
-screens: ""
 
 artifacts:
   dir: "artifacts"
@@ -89,6 +88,13 @@ linx:
   token_poll_interval: "2s"
   token_poll_attempts: 10
 
+# 虚拟设备投屏网卡（进程内 SSDP + DLNA，不连云端、没有独立 Casting 服务）。
+# auto：恰好一张非回环 IPv4 网卡时自动启用 self.cast.*；多网卡则保持关闭并打日志。
+# off：强制关闭。也可写成具体网卡名（macOS 常见 en0，Windows 常见 Ethernet / WLAN）。
+# 门户模式下该值只在空库首次启动时写入管理设置；之后以 /admin/settings 为准。
+casting:
+  interface: "auto"
+
 # ---------------------------------------------------------------------------
 # 2. 平台配置
 #    门户模式：默认在 /admin/settings 填写，保持注释即可；文件里的值只在空库首次启动时导入。
@@ -107,8 +113,6 @@ linx:
 # render:
 #   base_url: ""        # 平台托管用户使用的默认渲染服务，本机调试例如 http://127.0.0.1:8090
 #
-# casting:
-#   base_url: ""        # 平台托管用户使用的默认投屏服务，本机调试例如 http://127.0.0.1:8080
 #
 # 灵矽的平台项加到上面第 1 部分已有的 linx: 块里，不要再写一个 linx:
 #   api_base: "https://xrobo.qiniu.com"

@@ -24,17 +24,16 @@ import (
 	"github.com/open-anywhere/open-anywhere/internal/gateway/build"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/config"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/endpoints"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/hostiface"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/mcp"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/netguard"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/portal"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/render"
-	"github.com/open-anywhere/open-anywhere/internal/gateway/screen"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/secret"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/settings"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/store"
 	"github.com/open-anywhere/open-anywhere/pkg/agentapi"
-	"github.com/open-anywhere/open-anywhere/pkg/casting"
 )
 
 func main() {
@@ -58,10 +57,6 @@ func run(args []string) error {
 }
 
 func serve(ctx context.Context, cfg config.Config) error {
-	catalog, err := screen.LoadCatalog(cfg.ScreensPath)
-	if err != nil {
-		return err
-	}
 	database, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return err
@@ -112,7 +107,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 		if _, err := platform.Snapshot(ctx); err != nil {
 			return credentialError(cfg, "platform settings", err)
 		}
-		resolver = endpoints.NewResolver(database, platform, box, guard, catalog)
+		resolver = endpoints.NewResolver(database, platform, box, guard)
 		if err := resolver.ValidateSecrets(ctx); err != nil {
 			return credentialError(cfg, "service bindings", err)
 		}
@@ -194,8 +189,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 		// client's per-request deadline must not cut it short at the ordinary
 		// HTTP timeout (30s by default) while Render is still starting the app.
 		renderClient := render.New(cfg.RenderURL, cfg.StartTimeout+cfg.HTTPTimeout)
-		castingClient := casting.NewClient(cfg.CastingURL, cfg.HTTPTimeout)
-		apps = service.New(registry, builder, renderClient, castingClient, catalog, server, serviceConfig)
+		apps = service.New(registry, builder, renderClient, server, serviceConfig)
 	}
 	apps.SetArtifactStore(artifactStore)
 	if err := apps.RecoverRuntime(); err != nil {
@@ -224,6 +218,10 @@ func serve(ctx context.Context, cfg config.Config) error {
 	mux.HandleFunc("GET /healthz", healthHandler(database))
 
 	if cfg.PortalEnabled {
+		castingIP, err := resolvePortalCastingIP(ctx, platform)
+		if err != nil {
+			return fmt.Errorf("casting-interface: %w", err)
+		}
 		portalService, err := portal.NewService(ctx, portal.BuildConfig{
 			DataDir:           cfg.PortalDataDir,
 			WebDir:            cfg.PortalWebDir,
@@ -236,6 +234,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 			ProvisionTimeout:  cfg.LinxProvisionTimeout,
 			TokenPollInterval: cfg.LinxTokenPollInterval,
 			TokenPollAttempts: cfg.LinxTokenPollAttempts,
+			CastingIP:         castingIP,
 		}, database, apps, platform, resolver, clientPool)
 		if err != nil {
 			return err
@@ -297,7 +296,7 @@ func seedPlatformSettings(ctx context.Context, provider *settings.Provider, cfg 
 		{Key: settings.KeyLinxOTAURL, Value: cfg.LinxOTAURL},
 		{Key: settings.KeyLinxAPIKey, Value: cfg.LinxAPIKey},
 		{Key: settings.KeyDefaultRenderURL, Value: cfg.RenderURL},
-		{Key: settings.KeyDefaultCastingURL, Value: cfg.CastingURL},
+		{Key: settings.KeyCastingInterface, Value: hostiface.Normalize(cfg.CastingInterface)},
 		// Agent template and MCP address are managed in the admin page; these
 		// legacy gateway.yaml values only seed a database that has none yet.
 		{Key: settings.KeyLinxPublicMCPURL, Value: cfg.LinxPublicMCPURL},
@@ -396,6 +395,30 @@ func mcpTokenSource(cfg config.Config, platform *settings.Provider) func(context
 		return platform.MCPToken
 	}
 	return func(context.Context) (string, error) { return cfg.MCPToken, nil }
+}
+
+// resolvePortalCastingIP picks the SSDP bind address for virtual devices from
+// platform settings (seeded once from flag / env / yaml). "auto" only enables
+// casting when exactly one LAN NIC is present.
+func resolvePortalCastingIP(ctx context.Context, platform *settings.Provider) (net.IP, error) {
+	selection := hostiface.Auto
+	if platform != nil {
+		snapshot, err := platform.Snapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		selection = snapshot.Services.CastingInterface
+	}
+	ip, status, err := hostiface.Resolve(selection)
+	if err != nil {
+		return nil, err
+	}
+	if status.Active {
+		log.Printf("casting: using %s (%s)", status.Name, status.IPv4)
+	} else if status.Message != "" {
+		log.Printf("casting: %s", status.Message)
+	}
+	return ip, nil
 }
 
 // awaitShutdown waits for cancellation or a serve failure and drains cleanly.

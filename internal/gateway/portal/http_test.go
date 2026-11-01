@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/store"
 )
@@ -200,7 +199,6 @@ func TestHTTPRequiresASessionForEveryOwnedResource(t *testing.T) {
 		"/api/portal/devices/dev_missing",
 		"/api/portal/apps",
 		"/api/portal/apps/app_missing",
-		"/api/portal/screens",
 	} {
 		response, payload := env.do(t, http.MethodGet, path, "", nil)
 		if response.StatusCode != http.StatusUnauthorized || errorCode(t, payload) != "UNAUTHORIZED" {
@@ -398,8 +396,6 @@ func TestVoiceHandlerOnlyExposesCallControlEndpoints(t *testing.T) {
 		"/voice/dev_voice/device/register",
 		"/voice/dev_voice/disconnect",
 		"/voice/dev_voice/reconnect",
-		"/voice/dev_voice/announce",
-		"/voice/dev_voice/say",
 	} {
 		response, payload := env.do(t, http.MethodGet, path, "", nil)
 		if response.StatusCode != http.StatusNotFound {
@@ -409,90 +405,6 @@ func TestVoiceHandlerOnlyExposesCallControlEndpoints(t *testing.T) {
 
 	response, payload := env.do(t, http.MethodGet, "/voice/dev_voice/status", "", nil)
 	if response.StatusCode != http.StatusServiceUnavailable || errorCode(t, payload) != "VOICE_UNAVAILABLE" {
-		t.Fatalf("status=%d body=%s", response.StatusCode, payload)
-	}
-}
-
-type fakeScreens struct {
-	views      []service.ScreenView
-	viewErr    error
-	stopStatus service.StatusView
-	stopErr    error
-	owners     []app.Identity
-	screenID   string
-	stopCalls  int
-}
-
-func (f *fakeScreens) GetScreensFor(_ context.Context, owners []app.Identity) ([]service.ScreenView, error) {
-	f.owners = owners
-	return f.views, f.viewErr
-}
-
-func (f *fakeScreens) StopAppOnScreen(_ context.Context, owners []app.Identity, screenID string) (service.StatusView, error) {
-	f.owners = owners
-	f.screenID = screenID
-	f.stopCalls++
-	return f.stopStatus, f.stopErr
-}
-
-func TestHTTPScreensExposeOnlyPortalFields(t *testing.T) {
-	env := newPortalHTTPEnv(t)
-	env.login(t)
-	env.api.screens = &fakeScreens{views: []service.ScreenView{{
-		ScreenID:   "tv_1",
-		Name:       "客厅",
-		Online:     true,
-		Status:     service.ScreenShowingApp,
-		CurrentApp: &service.AppRef{AppID: "app_1", Name: "quiz"},
-	}}}
-	response, payload := env.do(t, http.MethodGet, "/api/portal/screens", "", nil)
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", response.StatusCode, payload)
-	}
-	text := string(payload)
-	for _, field := range []string{"target_id", "projection_session_id", "active_session_id", "endpoint_id", "instance_id"} {
-		if strings.Contains(text, field) {
-			t.Fatalf("response leaks %s: %s", field, payload)
-		}
-	}
-	if !strings.Contains(text, `"online":true`) || !strings.Contains(text, `"current_app"`) || !strings.Contains(text, `"app_1"`) {
-		t.Fatalf("body=%s", payload)
-	}
-}
-
-func TestHTTPStopScreenUsesTheScreenService(t *testing.T) {
-	env := newPortalHTTPEnv(t)
-	env.login(t)
-	fake := &fakeScreens{stopStatus: service.StatusView{AppID: "app_1", State: app.StateIdle}}
-	env.api.screens = fake
-	response, payload := env.do(t, http.MethodPost, "/api/portal/screens/tv_1/stop", `{}`, map[string]string{"Origin": env.server.URL})
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", response.StatusCode, payload)
-	}
-	var out struct {
-		ScreenID string `json:"screen_id"`
-		App      struct {
-			AppID string    `json:"app_id"`
-			State app.State `json:"state"`
-		} `json:"app"`
-	}
-	if err := json.Unmarshal(payload, &out); err != nil {
-		t.Fatal(err)
-	}
-	if out.ScreenID != "tv_1" || out.App.AppID != "app_1" || out.App.State != app.StateIdle {
-		t.Fatalf("out=%+v", out)
-	}
-	if fake.stopCalls != 1 || fake.screenID != "tv_1" {
-		t.Fatalf("fake=%+v", fake)
-	}
-}
-
-func TestHTTPStopScreenMapsAMissingOwnedAppTo404(t *testing.T) {
-	env := newPortalHTTPEnv(t)
-	env.login(t)
-	env.api.screens = &fakeScreens{stopErr: &service.ToolError{Code: "SCREEN_APP_NOT_FOUND"}}
-	response, payload := env.do(t, http.MethodPost, "/api/portal/screens/tv_1/stop", `{}`, map[string]string{"Origin": env.server.URL})
-	if response.StatusCode != http.StatusNotFound || errorCode(t, payload) != "SCREEN_APP_NOT_FOUND" {
 		t.Fatalf("status=%d body=%s", response.StatusCode, payload)
 	}
 }

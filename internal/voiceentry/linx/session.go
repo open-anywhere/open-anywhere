@@ -49,6 +49,7 @@ type Session struct {
 	conn        *websocket.Conn
 	mu          sync.Mutex
 	sessionID   string
+	agentID     string
 	audioParams AudioParams
 	events      chan Event
 	done        chan struct{}
@@ -109,6 +110,9 @@ func NewSession(cfg Config) (*Session, error) {
 		if raw, ok := msg["audio_params"].(map[string]any); ok {
 			s.audioParams = parseAudioParams(raw)
 		}
+		if raw, ok := msg["agent_id"].(string); ok {
+			s.agentID = raw
+		}
 		if s.audioParams.SampleRate == 0 {
 			s.audioParams = AudioParams{Format: "opus", SampleRate: DefaultSampleRate, Channels: 1, FrameDuration: DefaultFrameMS, PlayBufferDuration: 1000}
 		}
@@ -120,6 +124,11 @@ func NewSession(cfg Config) (*Session, error) {
 // AudioParams returns the negotiated server audio settings.
 func (s *Session) AudioParams() AudioParams { return s.audioParams }
 func (s *Session) SessionID() string        { return s.sessionID }
+
+// AgentID is the agent the server reports for this session, empty when the
+// server does not name one.
+func (s *Session) AgentID() string { return s.agentID }
+
 func (s *Session) Events() <-chan Event     { return s.events }
 
 func (s *Session) readLoop() {

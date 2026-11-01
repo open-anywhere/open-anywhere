@@ -23,7 +23,6 @@ type fakeApps struct {
 	identity    app.Identity
 	prompt      string
 	playerNames []string
-	screens     []service.ScreenView
 	create      service.CreateResult
 	status      service.StatusView
 	operations  service.OperationsView
@@ -45,11 +44,6 @@ func (f *fakeApps) currentIdentity() app.Identity {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.identity
-}
-
-func (f *fakeApps) GetScreens(_ context.Context, owner app.Identity) ([]service.ScreenView, error) {
-	f.record(owner)
-	return f.screens, f.err
 }
 
 func (f *fakeApps) CreateApp(_ context.Context, owner app.Identity, prompt string, playerNames []string) (service.CreateResult, error) {
@@ -92,11 +86,8 @@ func (f *fakeApps) GetAppOperations(_ context.Context, owner app.Identity, _ str
 	}}}, f.err
 }
 
-func (f *fakeApps) StartApp(_ context.Context, owner app.Identity, _, _ string, force bool) (service.StatusView, error) {
+func (f *fakeApps) StartApp(_ context.Context, owner app.Identity, _ string) (service.StatusView, error) {
 	f.record(owner)
-	f.mu.Lock()
-	f.force = force
-	f.mu.Unlock()
 	return f.status, f.err
 }
 
@@ -120,7 +111,6 @@ func (f *fakeApps) SendRequest(_ context.Context, owner app.Identity, _, operati
 
 func TestServerSessionFlow(t *testing.T) {
 	fake := &fakeApps{
-		screens: []service.ScreenView{{ScreenID: "tv_1", Name: "客厅", Status: service.ScreenFree}},
 		create:  service.CreateResult{AppID: "app_1", State: app.StateBuilding},
 		status:  service.StatusView{AppID: "app_1", State: app.StateBuilding, Message: "正在构建"},
 	}
@@ -220,7 +210,7 @@ func TestServerSessionFlow(t *testing.T) {
 
 	call(3, "tools/list", nil)
 	tools, _ := resultOf(t, readResponse())["tools"].([]any)
-	if len(tools) != 8 {
+	if len(tools) != 7 {
 		t.Fatalf("tools = %d", len(tools))
 	}
 	names := make(map[string]bool, len(tools))
@@ -235,7 +225,7 @@ func TestServerSessionFlow(t *testing.T) {
 			updateTool = tool
 		}
 	}
-	for _, want := range []string{"get-screens", "create-app", "update-app", "get-app-status", "get-app-operations", "start-app", "stop-app", "send-request"} {
+	for _, want := range []string{"create-app", "update-app", "get-app-status", "get-app-operations", "start-app", "stop-app", "send-request"} {
 		if !names[want] {
 			t.Fatalf("missing tool %q in %+v", want, names)
 		}
@@ -258,18 +248,6 @@ func TestServerSessionFlow(t *testing.T) {
 		if value, ok := annotations["idempotentHint"].(bool); !ok || value {
 			t.Fatalf("%s idempotentHint = %v, want false", name, annotations["idempotentHint"])
 		}
-	}
-
-	call(4, "tools/call", map[string]any{"name": "get-screens", "arguments": map[string]any{}})
-	result = resultOf(t, readResponse())
-	if isError, _ := result["isError"].(bool); isError {
-		t.Fatalf("result = %+v", result)
-	}
-	if text := toolText(t, result); !strings.Contains(text, "客厅") {
-		t.Fatalf("text = %q", text)
-	}
-	if identity := fake.currentIdentity(); identity != (app.Identity{DeviceID: "device", AgentID: "agent", SessionID: "session"}) {
-		t.Fatalf("identity = %+v", identity)
 	}
 
 	call(5, "tools/call", map[string]any{"name": "create-app", "arguments": map[string]any{"prompt": "做一个小游戏", "player_names": []string{"韩鲁鹏", "邓军辉"}}})
@@ -298,24 +276,9 @@ func TestServerSessionFlow(t *testing.T) {
 		t.Fatalf("text = %q", text)
 	}
 
-	call(11, "tools/call", map[string]any{"name": "start-app", "arguments": map[string]any{"app_id": "app_1", "screen_id": "tv_1"}})
+	call(11, "tools/call", map[string]any{"name": "start-app", "arguments": map[string]any{"app_id": "app_1"}})
 	if text := toolText(t, resultOf(t, readResponse())); !strings.Contains(text, "app_1") {
 		t.Fatalf("text = %q", text)
-	}
-
-	fake.mu.Lock()
-	forced := fake.force
-	fake.mu.Unlock()
-	if forced {
-		t.Fatal("force must default to false")
-	}
-	call(111, "tools/call", map[string]any{"name": "start-app", "arguments": map[string]any{"app_id": "app_1", "screen_id": "tv_1", "force": true}})
-	_ = toolText(t, resultOf(t, readResponse()))
-	fake.mu.Lock()
-	forced = fake.force
-	fake.mu.Unlock()
-	if !forced {
-		t.Fatal("force=true did not reach the service")
 	}
 
 	call(12, "tools/call", map[string]any{"name": "stop-app", "arguments": map[string]any{"app_id": "app_1"}})
@@ -341,7 +304,7 @@ func TestServerSessionFlow(t *testing.T) {
 	}
 	fake.err = errors.New("service exploded")
 	fake.mu.Unlock()
-	call(14, "tools/call", map[string]any{"name": "get-screens"})
+	call(14, "tools/call", map[string]any{"name": "get-app-status", "arguments": map[string]any{"app_id": "app_1"}})
 	errorResult := resultOf(t, readResponse())
 	if errorResult["isError"] != true {
 		t.Fatalf("error result = %+v", errorResult)
@@ -385,11 +348,10 @@ func TestServerSessionFlow(t *testing.T) {
 
 	identity := fake.currentIdentity()
 	server.Notify(identity, app.Notification{
-		AppID:    "app_1",
-		State:    app.StateError,
-		ScreenID: "tv_1",
-		Message:  "应用进程已退出",
-		Error:    &app.Error{Stage: app.StageRunning, Code: "APP_EXITED"},
+		AppID:   "app_1",
+		State:   app.StateError,
+		Message: "应用进程已退出",
+		Error:   &app.Error{Stage: app.StageRunning, Code: "APP_EXITED"},
 	})
 	payload = readResponse()
 	if payload["method"] != "notifications/app_status" {
@@ -399,7 +361,7 @@ func TestServerSessionFlow(t *testing.T) {
 		t.Fatalf("notification has id: %+v", payload)
 	}
 	params, _ := payload["params"].(map[string]any)
-	if params["app_id"] != "app_1" || params["screen_id"] != "tv_1" {
+	if params["app_id"] != "app_1" {
 		t.Fatalf("params = %+v", params)
 	}
 

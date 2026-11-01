@@ -209,7 +209,7 @@ func TestServeMessageValidatesEveryPost(t *testing.T) {
 }
 
 func TestServeSSEWithValidatedIdentityScopesToolCalls(t *testing.T) {
-	apps := &fakeApps{screens: []service.ScreenView{{ScreenID: "tv_1", Name: "客厅", Status: service.ScreenFree}}}
+	apps := &fakeApps{status: service.StatusView{AppID: "app_1", State: app.StateIdle}}
 	validator := &fakeOwnerValidator{}
 	server := newOwnerServer(apps, validator)
 	defer server.Close()
@@ -282,7 +282,7 @@ func TestServeSSEWithValidatedIdentityScopesToolCalls(t *testing.T) {
 	post(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2024-11-05"}})
 	resultOf(t, readMessage())
 	post(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-	post(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "get-screens", "arguments": map[string]any{}}})
+	post(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "get-app-status", "arguments": map[string]any{"app_id": "app_1"}}})
 	result := resultOf(t, readMessage())
 	if isError, _ := result["isError"].(bool); isError {
 		t.Fatalf("result = %+v", result)

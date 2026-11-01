@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/open-anywhere/open-anywhere/internal/gateway/app"
+	"github.com/open-anywhere/open-anywhere/internal/gateway/hostiface"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/linx"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/service"
 	"github.com/open-anywhere/open-anywhere/internal/gateway/settings"
@@ -54,14 +55,13 @@ func (a *API) withAdmin(next authedHandler) http.HandlerFunc {
 	}
 }
 
-type adminAgentView struct {
+// adminDeviceView is one MAC attached to a Linx agent. Hardware and the
+// browser voice entry are both devices of the same agent.
+type adminDeviceView struct {
 	ID           string     `json:"id"`
-	UserID       string     `json:"user_id"`
-	Username     string     `json:"username,omitempty"`
 	Kind         string     `json:"kind"`
+	Name         string     `json:"name,omitempty"`
 	MAC          string     `json:"mac"`
-	AgentID      string     `json:"agent_id,omitempty"`
-	AgentName    string     `json:"agent_name,omitempty"`
 	State        string     `json:"state"`
 	Step         string     `json:"step,omitempty"`
 	Error        string     `json:"error,omitempty"`
@@ -71,15 +71,31 @@ type adminAgentView struct {
 	RegisteredAt *time.Time `json:"registered_at,omitempty"`
 }
 
-func adminAgentViewFrom(device store.PortalDevice, username string) adminAgentView {
-	view := adminAgentView{
+// adminAgentView is one Linx agent. Every device that shares its agent ID is
+// listed underneath; a user still being provisioned, with no agent ID yet,
+// is one row keyed by that user.
+type adminAgentView struct {
+	ID          string            `json:"id"`
+	UserID      string            `json:"user_id"`
+	Username    string            `json:"username,omitempty"`
+	AgentID     string            `json:"agent_id,omitempty"`
+	AgentName   string            `json:"agent_name,omitempty"`
+	State       string            `json:"state"`
+	Step        string            `json:"step,omitempty"`
+	Error       string            `json:"error,omitempty"`
+	ErrorCode   string            `json:"error_code,omitempty"`
+	DeviceCount int               `json:"device_count"`
+	Devices     []adminDeviceView `json:"devices"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+func adminDeviceViewFrom(device store.PortalDevice) adminDeviceView {
+	view := adminDeviceView{
 		ID:           device.ID,
-		UserID:       device.UserID,
-		Username:     username,
 		Kind:         device.Kind,
+		Name:         device.Name,
 		MAC:          device.MAC,
-		AgentID:      device.LinxAgentID,
-		AgentName:    device.AgentName,
 		State:        device.State,
 		Step:         device.Step,
 		Error:        device.Error,
@@ -92,6 +108,135 @@ func adminAgentViewFrom(device store.PortalDevice, username string) adminAgentVi
 		view.Error = "平台尚未配置，请联系维护者"
 	}
 	return view
+}
+
+// agentGroupKey collapses every device of one Linx agent. Devices that do not
+// have an agent ID yet stay with the other unfinished devices of that user.
+func agentGroupKey(device store.PortalDevice) string {
+	if id := strings.TrimSpace(device.LinxAgentID); id != "" {
+		return "agent:" + id
+	}
+	return "pending:" + device.UserID
+}
+
+// groupAdminAgents builds one row per Linx agent. Devices are ordered oldest
+// first, so the virtual device that opened the agent supplies the row status.
+func groupAdminAgents(devices []store.PortalDevice, usernameOf func(string) string) []adminAgentView {
+	sorted := append([]store.PortalDevice(nil), devices...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
+			return sorted[i].ID < sorted[j].ID
+		}
+		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+	})
+	order := make([]string, 0)
+	groups := map[string][]store.PortalDevice{}
+	for _, device := range sorted {
+		key := agentGroupKey(device)
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], device)
+	}
+	views := make([]adminAgentView, 0, len(order))
+	for _, key := range order {
+		views = append(views, adminAgentViewFromDevices(groups[key], usernameOf))
+	}
+	sort.SliceStable(views, func(i, j int) bool {
+		return latestDeviceCreated(views[i]).After(latestDeviceCreated(views[j]))
+	})
+	return views
+}
+
+func latestDeviceCreated(view adminAgentView) time.Time {
+	latest := view.CreatedAt
+	for _, device := range view.Devices {
+		if device.CreatedAt.After(latest) {
+			latest = device.CreatedAt
+		}
+	}
+	return latest
+}
+
+func adminAgentViewFromDevices(devices []store.PortalDevice, usernameOf func(string) string) adminAgentView {
+	lead := devices[0]
+	for _, device := range devices {
+		if device.Kind == store.PortalDeviceVirtual {
+			lead = device
+			break
+		}
+	}
+	username := ""
+	if usernameOf != nil {
+		username = usernameOf(lead.UserID)
+	}
+	members := make([]adminDeviceView, 0, len(devices))
+	latestUpdate := lead.UpdatedAt
+	earliest := devices[0].CreatedAt
+	for _, device := range devices {
+		members = append(members, adminDeviceViewFrom(device))
+		if device.UpdatedAt.After(latestUpdate) {
+			latestUpdate = device.UpdatedAt
+		}
+		if device.CreatedAt.Before(earliest) {
+			earliest = device.CreatedAt
+		}
+	}
+	id := lead.LinxAgentID
+	if id == "" {
+		id = lead.ID
+	}
+	view := adminAgentView{
+		ID:          id,
+		UserID:      lead.UserID,
+		Username:    username,
+		AgentID:     lead.LinxAgentID,
+		AgentName:   lead.AgentName,
+		State:       lead.State,
+		Step:        lead.Step,
+		Error:       lead.Error,
+		DeviceCount: len(members),
+		Devices:     members,
+		CreatedAt:   earliest,
+		UpdatedAt:   latestUpdate,
+	}
+	if lead.Error == deviceErrorCodePlatformNotConfigured {
+		view.ErrorCode = deviceErrorCodePlatformNotConfigured
+		view.Error = "平台尚未配置，请联系维护者"
+	}
+	return view
+}
+
+func adminAgentVisible(view adminAgentView, state, query string) bool {
+	if state != "" && view.State != state {
+		return false
+	}
+	if query == "" {
+		return true
+	}
+	if containsFold(view.Username, query) || containsFold(view.UserID, query) ||
+		containsFold(view.AgentID, query) || containsFold(view.AgentName, query) ||
+		containsFold(view.ID, query) {
+		return true
+	}
+	for _, device := range view.Devices {
+		if containsFold(device.MAC, query) || containsFold(device.Name, query) || containsFold(device.ID, query) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFold(value, query string) bool {
+	return query != "" && strings.Contains(strings.ToLower(value), strings.ToLower(query))
+}
+
+func countAdminAgents(views []adminAgentView) map[string]int {
+	counts := map[string]int{}
+	for _, view := range views {
+		counts[view.State]++
+	}
+	return counts
 }
 
 // adminAppView is deliberately smaller than AppView: it has no screen ID and
@@ -146,10 +291,7 @@ type adminUserView struct {
 }
 
 func adminUserViewFrom(user store.PortalUser, devices []store.PortalDevice) adminUserView {
-	agents := make([]adminAgentView, 0, len(devices))
-	for _, device := range devices {
-		agents = append(agents, adminAgentViewFrom(device, user.Username))
-	}
+	agents := groupAdminAgents(devices, func(string) string { return user.Username })
 	return adminUserView{
 		ID:          user.ID,
 		Username:    user.Username,
@@ -169,11 +311,17 @@ func (a *API) adminOverview(w http.ResponseWriter, r *http.Request, _ store.Port
 		writeError(w, err)
 		return
 	}
-	devices, err := a.db.CountPortalDevicesByState(ctx)
+	deviceCounts, err := a.db.CountPortalDevicesByState(ctx)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	deviceRows, err := a.db.ListPortalDevices(ctx)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	agentCounts := countAdminAgents(groupAdminAgents(deviceRows, nil))
 	admins, err := a.db.CountActiveAdmins(ctx)
 	if err != nil {
 		writeError(w, err)
@@ -204,11 +352,18 @@ func (a *API) adminOverview(w http.ResponseWriter, r *http.Request, _ store.Port
 			"admins":   admins,
 		},
 		"agents": map[string]any{
-			"total":        sumCounts(devices),
-			"registered":   devices[store.PortalDeviceRegistered],
-			"provisioning": devices[store.PortalDeviceProvisioning],
-			"error":        devices[store.PortalDeviceError],
-			"disabled":     devices[store.PortalDeviceDisabled],
+			"total":        sumCounts(agentCounts),
+			"registered":   agentCounts[store.PortalDeviceRegistered],
+			"provisioning": agentCounts[store.PortalDeviceProvisioning],
+			"error":        agentCounts[store.PortalDeviceError],
+			"disabled":     agentCounts[store.PortalDeviceDisabled],
+		},
+		"devices": map[string]any{
+			"total":        sumCounts(deviceCounts),
+			"registered":   deviceCounts[store.PortalDeviceRegistered],
+			"provisioning": deviceCounts[store.PortalDeviceProvisioning],
+			"error":        deviceCounts[store.PortalDeviceError],
+			"disabled":     deviceCounts[store.PortalDeviceDisabled],
 		},
 		"apps": map[string]any{
 			"total":    sumCounts(appCounts),
@@ -411,17 +566,22 @@ func (a *API) adminListAgents(w http.ResponseWriter, r *http.Request, _ store.Po
 	ctx := r.Context()
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	query := strings.TrimSpace(r.URL.Query().Get("query"))
-	devices, err := a.db.PortalDevicesAll(ctx, state, query, 500)
+	devices, err := a.db.ListPortalDevices(ctx)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	usernames := map[string]string{}
-	views := make([]adminAgentView, 0, len(devices))
-	for _, device := range devices {
-		views = append(views, adminAgentViewFrom(device, a.username(ctx, usernames, device.UserID)))
+	views := groupAdminAgents(devices, func(userID string) string {
+		return a.username(ctx, usernames, userID)
+	})
+	filtered := make([]adminAgentView, 0, len(views))
+	for _, view := range views {
+		if adminAgentVisible(view, state, query) {
+			filtered = append(filtered, view)
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"agents": views})
+	writeJSON(w, http.StatusOK, map[string]any{"agents": filtered})
 }
 
 func (a *API) adminRetryAgent(w http.ResponseWriter, r *http.Request, actor store.PortalUser) {
@@ -470,10 +630,26 @@ func (a *API) adminRetryAgent(w http.ResponseWriter, r *http.Request, actor stor
 		}
 		a.provision.Start(device.ID)
 	}
+	siblings, err := a.db.PortalDevicesByUser(ctx, device.UserID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	key := agentGroupKey(device)
+	members := make([]store.PortalDevice, 0, len(siblings))
+	for _, sibling := range siblings {
+		if agentGroupKey(sibling) == key {
+			members = append(members, sibling)
+		}
+	}
+	if len(members) == 0 {
+		members = []store.PortalDevice{device}
+	}
 	usernames := map[string]string{}
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"agent": adminAgentViewFrom(device, a.username(ctx, usernames, device.UserID)),
+	grouped := groupAdminAgents(members, func(userID string) string {
+		return a.username(ctx, usernames, userID)
 	})
+	writeJSON(w, http.StatusAccepted, map[string]any{"agent": grouped[0]})
 	a.logf("admin: %s retried agent %s", actor.ID, device.ID)
 }
 
@@ -579,7 +755,7 @@ func (a *API) adminGetSettings(w http.ResponseWriter, r *http.Request, _ store.P
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"settings": masked})
+	writeJSON(w, http.StatusOK, a.settingsResponse(masked))
 }
 
 func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor store.PortalUser) {
@@ -592,13 +768,23 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 		writeError(w, err)
 		return
 	}
-	if patch.Services != nil && a.apps != nil {
-		snapshot, err := a.settings.Snapshot(r.Context())
-		if err != nil {
-			writeError(w, err)
-			return
+	snapshot, err := a.settings.Snapshot(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if patch.Services != nil {
+		if patch.Services.CastingInterface != nil {
+			selection := hostiface.Normalize(*patch.Services.CastingInterface)
+			if selection != hostiface.Off && selection != hostiface.Auto {
+				if _, _, err := hostiface.Resolve(selection); err != nil {
+					writeError(w, apiError(http.StatusBadRequest, "INVALID_CASTING_INTERFACE",
+						"投屏网卡无效或不存在："+selection))
+					return
+				}
+			}
 		}
-		if settings.ServicesChanged(snapshot, patch.Services) {
+		if a.apps != nil && settings.ServicesChanged(snapshot, patch.Services) {
 			active, err := a.managedActiveResources(r.Context())
 			if err != nil {
 				writeError(w, err)
@@ -611,6 +797,7 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 			}
 		}
 	}
+	castingChanged := settings.CastingInterfaceChanged(snapshot, patch.Services)
 	if err := a.settings.Update(r.Context(), patch, actor.ID); err != nil {
 		switch {
 		case errors.Is(err, settings.ErrInvalidURL):
@@ -622,13 +809,21 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 		}
 		return
 	}
+	if castingChanged {
+		if err := a.applyCastingInterface(r.Context()); err != nil {
+			a.logf("admin: apply casting interface: %v", err)
+			writeError(w, apiError(http.StatusInternalServerError, "CASTING_APPLY_FAILED",
+				"投屏网卡已保存，但应用到虚拟设备失败，请稍后重试或重启 Gateway"))
+			return
+		}
+	}
 	masked, err := a.settings.Masked(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	a.logf("admin: %s updated platform settings", actor.ID)
-	response := map[string]any{"settings": masked}
+	response := a.settingsResponse(masked)
 	// A rotated token must also reach the MCP instance Linx already holds,
 	// otherwise Linx keeps calling the gateway with the old one.
 	if patch.Linx != nil && patch.Linx.RotateMCPToken && a.provision != nil {
@@ -641,6 +836,69 @@ func (a *API) adminUpdateSettings(w http.ResponseWriter, r *http.Request, actor 
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// settingsResponse adds the live casting NIC list and resolved status beside
+// the stored platform settings.
+func (a *API) settingsResponse(masked settings.Masked) map[string]any {
+	interfaces, err := hostiface.List()
+	if err != nil {
+		a.logf("admin: list casting interfaces: %v", err)
+		interfaces = nil
+	}
+	_, status, err := hostiface.Resolve(masked.Services.CastingInterface)
+	if err != nil {
+		status = hostiface.Status{
+			Selection: hostiface.Normalize(masked.Services.CastingInterface),
+			Message:   err.Error(),
+		}
+	}
+	return map[string]any{
+		"settings":           masked,
+		"casting":            status,
+		"casting_interfaces": interfaces,
+	}
+}
+
+// applyCastingInterface resolves the saved NIC and restarts virtual devices so
+// Linx picks up the updated self.cast.* tool list.
+func (a *API) applyCastingInterface(ctx context.Context) error {
+	if a.voice == nil || a.settings == nil {
+		return nil
+	}
+	snapshot, err := a.settings.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	ip, status, err := hostiface.Resolve(snapshot.Services.CastingInterface)
+	if err != nil {
+		return err
+	}
+	a.voice.SetOnSiteCasting(ip)
+	if status.Active {
+		a.logf("casting: using %s (%s)", status.Name, status.IPv4)
+	} else {
+		a.logf("casting: disabled (%s)", status.Message)
+	}
+	if a.provision == nil || a.db == nil {
+		return nil
+	}
+	devices, err := a.db.PortalDevicesByState(ctx, store.PortalDeviceRegistered)
+	if err != nil {
+		return err
+	}
+	for _, device := range devices {
+		if device.Kind != store.PortalDeviceVirtual {
+			continue
+		}
+		if state := a.voice.Status(device.ID); state.State == "offline" {
+			continue
+		}
+		if err := a.voice.Restart(a.provision.withCredential(device)); err != nil {
+			a.logf("admin: restart voice %s after casting change: %v", device.ID, err)
+		}
+	}
+	return nil
 }
 
 func (a *API) adminTestSettings(w http.ResponseWriter, r *http.Request, actor store.PortalUser) {
@@ -672,26 +930,17 @@ func (a *API) adminTestSettings(w http.ResponseWriter, r *http.Request, actor st
 	}
 	linxCheck := a.checkLinx(r.Context(), snapshot.Linx)
 	binding := service.Binding{
-		RenderURL:    snapshot.Services.RenderURL,
-		RenderToken:  snapshot.Services.RenderToken,
-		CastingURL:   snapshot.Services.CastingURL,
-		CastingToken: snapshot.Services.CastingToken,
-		Managed:      true,
+		RenderURL:   snapshot.Services.RenderURL,
+		RenderToken: snapshot.Services.RenderToken,
+		Managed:     true,
 	}
 	render := serviceCheck{Message: "尚未配置默认渲染服务"}
 	if binding.RenderURL != "" {
 		render = a.checkRender(r.Context(), binding)
 	}
-	casting := serviceCheck{Message: "尚未配置默认投屏服务"}
-	screens := 0
-	if binding.CastingURL != "" {
-		casting, screens = a.checkCasting(r.Context(), binding)
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"linx":    linxCheck,
-		"render":  render,
-		"casting": casting,
-		"screens": screens,
+		"linx":   linxCheck,
+		"render": render,
 	})
 }
 

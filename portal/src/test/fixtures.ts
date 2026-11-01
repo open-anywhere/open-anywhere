@@ -10,7 +10,6 @@ import type {
   Device,
   McpService,
   PlatformSettings,
-  Screen,
   ServiceBindingState,
   User,
 } from '../api'
@@ -77,16 +76,6 @@ export function makeAppDetail(overrides: Partial<AppDetail> = {}): AppDetail {
   }
 }
 
-export function makeScreen(overrides: Partial<Screen> = {}): Screen {
-  return {
-    screen_id: 'screen_1',
-    name: '客厅电视',
-    online: true,
-    status: 'free',
-    ...overrides,
-  }
-}
-
 export function makeServices(overrides: Partial<ServiceBindingState> = {}): ServiceBindingState {
   return {
     mode: 'managed',
@@ -94,13 +83,10 @@ export function makeServices(overrides: Partial<ServiceBindingState> = {}): Serv
     managed: {
       available: true,
       render_url: 'https://render.example.com',
-      casting_url: 'https://casting.example.com',
     },
     custom: {
       render_url: '',
-      casting_url: '',
       render_token_configured: false,
-      casting_token_configured: false,
     },
     ...overrides,
   }
@@ -134,19 +120,35 @@ export function makeAdminUser(overrides: Partial<AdminUser> = {}): AdminUser {
 }
 
 export function makeAdminAgent(overrides: Partial<AdminAgent> = {}): AdminAgent {
-  return {
+  const state = overrides.state ?? 'registered'
+  const step = overrides.step ?? 'done'
+  const device: AdminAgent['devices'][number] = {
     id: 'agent_device_1',
-    user_id: 'u_1',
-    username: 'ada',
     kind: 'virtual',
     mac: 'AA:BB:CC:DD:EE:01',
-    agent_id: 'agent_1',
-    agent_name: '小灵',
-    state: 'registered',
-    step: 'done',
+    state,
+    step,
+    error: overrides.error,
+    error_code: overrides.error_code,
     created_at: '2026-10-01T10:00:00Z',
     updated_at: '2026-10-02T10:00:00Z',
-    registered_at: '2026-10-01T10:01:00Z',
+    ...(state === 'registered' ? { registered_at: '2026-10-01T10:01:00Z' } : {}),
+  }
+  const devices = overrides.devices ?? [device]
+  return {
+    id: overrides.id || overrides.agent_id || 'agent_1',
+    user_id: 'u_1',
+    username: 'ada',
+    agent_id: 'agent_1',
+    agent_name: '小灵',
+    state,
+    step,
+    error: overrides.error,
+    error_code: overrides.error_code,
+    device_count: devices.length,
+    devices,
+    created_at: '2026-10-01T10:00:00Z',
+    updated_at: '2026-10-02T10:00:00Z',
     ...overrides,
   }
 }
@@ -214,6 +216,7 @@ export function makeAdminOverview(overrides: Partial<AdminOverview> = {}): Admin
   return {
     users: { total: 12, active: 10, disabled: 2, admins: 1 },
     agents: { total: 10, registered: 8, provisioning: 1, error: 1, disabled: 0 },
+    devices: { total: 15, registered: 12, provisioning: 2, error: 1, disabled: 0 },
     apps: { total: 7, running: 2, building: 1, error: 0, idle: 4 },
     platform: {
       agentapi: true,
@@ -249,9 +252,8 @@ export function makePlatformSettings(overrides: Partial<PlatformSettings> = {}):
     },
     services: {
       render_url: 'https://render.example.com',
-      casting_url: 'https://casting.example.com',
       render_token: { configured: false },
-      casting_token: { configured: false },
+      casting_interface: 'auto',
     },
     registration: { open: false },
     ready: { agentapi: true, linx: true, mcp: true, services: true },

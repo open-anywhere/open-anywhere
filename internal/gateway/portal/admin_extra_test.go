@@ -396,11 +396,17 @@ func TestAdminSetStatusReportsStorageFailure(t *testing.T) {
 
 type adminAgentListResponse struct {
 	Agents []struct {
-		ID        string `json:"id"`
-		Username  string `json:"username"`
-		State     string `json:"state"`
-		Error     string `json:"error"`
-		ErrorCode string `json:"error_code"`
+		ID          string `json:"id"`
+		AgentID     string `json:"agent_id"`
+		Username    string `json:"username"`
+		State       string `json:"state"`
+		Error       string `json:"error"`
+		ErrorCode   string `json:"error_code"`
+		DeviceCount int    `json:"device_count"`
+		Devices     []struct {
+			ID  string `json:"id"`
+			MAC string `json:"mac"`
+		} `json:"devices"`
 	} `json:"agents"`
 }
 
@@ -425,16 +431,16 @@ func TestAdminListAgentsFiltersAndMapsErrors(t *testing.T) {
 	if len(list.Agents) != 3 {
 		t.Fatalf("agents=%+v", list.Agents)
 	}
-	byID := map[string]int{}
+	byAgent := map[string]int{}
 	for index, agent := range list.Agents {
-		byID[agent.ID] = index
+		byAgent[agent.AgentID] = index
 	}
-	erinView := list.Agents[byID["dev_erin"]]
-	if erinView.ErrorCode != deviceErrorCodePlatformNotConfigured || erinView.Error != "平台尚未配置，请联系维护者" || erinView.Username != "erin" {
+	erinView := list.Agents[byAgent["agent_erin"]]
+	if erinView.ErrorCode != deviceErrorCodePlatformNotConfigured || erinView.Error != "平台尚未配置，请联系维护者" || erinView.Username != "erin" || erinView.DeviceCount != 1 {
 		t.Fatalf("erin=%+v", erinView)
 	}
-	if byID["dev_carol"] == byID["dev_erin"] {
-		t.Fatal("the second device of a user swallowed the first")
+	if byAgent["agent_carol"] == byAgent["agent_erin"] {
+		t.Fatal("two users were collapsed into one agent")
 	}
 
 	response, payload = env.do(t, http.MethodGet, "/api/admin/agents?state=error", "", nil)
@@ -457,6 +463,92 @@ func TestAdminListAgentsFiltersAndMapsErrors(t *testing.T) {
 	recorder = adminDirect(other.api.adminListAgents, http.MethodGet, "/api/admin/agents", "", store.PortalUser{})
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"username":""`) && !strings.Contains(recorder.Body.String(), `"agents":[]`) {
 		t.Fatalf("missing owner lookup: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAdminListAgentsGroupsDevicesThatShareAnAgent(t *testing.T) {
+	env := newPortalHTTPEnv(t)
+	env.login(t)
+	carol := createPortalTestUser(t, env, "usr_carol", "carol", "password123", store.PortalRoleUser)
+	createAdminDevice(t, env, "dev_carol", carol.ID, "AA:BB:CC:00:02:21", "agent_carol", store.PortalDeviceRegistered, "")
+	now := time.Now().UTC()
+	hardware := store.PortalDevice{
+		ID:          "dev_carol_hw",
+		UserID:      carol.ID,
+		Kind:        store.PortalDevicePhysical,
+		MAC:         "E8:F6:0A:8B:F4:E4",
+		LinxAgentID: "agent_carol",
+		AgentName:   "Open Anywhere · carol",
+		Name:        "小智",
+		State:       store.PortalDeviceRegistered,
+		Step:        stepDone,
+		CreatedAt:   now.Add(time.Hour),
+		UpdatedAt:   now.Add(time.Hour),
+	}
+	if err := env.db.CreatePortalDevice(context.Background(), hardware); err != nil {
+		t.Fatal(err)
+	}
+	testUser := createPortalTestUser(t, env, "usr_test", "test", "password123", store.PortalRoleUser)
+	createAdminDevice(t, env, "dev_test", testUser.ID, "02:BB:92:FF:5F:2B", "agent_test", store.PortalDeviceRegistered, "")
+
+	response, payload := env.do(t, http.MethodGet, "/api/admin/agents", "", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.StatusCode, payload)
+	}
+	var list adminAgentListResponse
+	if err := json.Unmarshal(payload, &list); err != nil {
+		t.Fatalf("body %s: %v", payload, err)
+	}
+	if len(list.Agents) != 2 {
+		t.Fatalf("agents=%+v", list.Agents)
+	}
+	var carolView *struct {
+		ID          string `json:"id"`
+		AgentID     string `json:"agent_id"`
+		Username    string `json:"username"`
+		State       string `json:"state"`
+		Error       string `json:"error"`
+		ErrorCode   string `json:"error_code"`
+		DeviceCount int    `json:"device_count"`
+		Devices     []struct {
+			ID  string `json:"id"`
+			MAC string `json:"mac"`
+		} `json:"devices"`
+	}
+	for index := range list.Agents {
+		if list.Agents[index].AgentID == "agent_carol" {
+			carolView = &list.Agents[index]
+		}
+	}
+	if carolView == nil || carolView.DeviceCount != 2 || carolView.Username != "carol" || carolView.ID != "agent_carol" {
+		t.Fatalf("carol=%+v", carolView)
+	}
+	macs := map[string]bool{}
+	for _, device := range carolView.Devices {
+		macs[device.MAC] = true
+	}
+	if !macs["AA:BB:CC:00:02:21"] || !macs["E8:F6:0A:8B:F4:E4"] {
+		t.Fatalf("devices=%+v", carolView.Devices)
+	}
+
+	response, payload = env.do(t, http.MethodGet, "/api/admin/overview", "", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("overview: %d %s", response.StatusCode, payload)
+	}
+	var overview struct {
+		Agents struct {
+			Total int `json:"total"`
+		} `json:"agents"`
+		Devices struct {
+			Total      int `json:"total"`
+			Registered int `json:"registered"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(payload, &overview); err != nil {
+		t.Fatal(err)
+	}
+	if overview.Agents.Total != 2 || overview.Devices.Total != 3 || overview.Devices.Registered != 3 {
+		t.Fatalf("overview=%+v", overview)
 	}
 }
 
@@ -709,7 +801,7 @@ func TestAdminSettingsReadUpdateAndFailures(t *testing.T) {
 	var initial struct {
 		Settings struct {
 			Registration struct {
-				Open bool `json:"Open"`
+				Open bool `json:"open"`
 			} `json:"registration"`
 		} `json:"settings"`
 	}
@@ -736,16 +828,37 @@ func TestAdminSettingsReadUpdateAndFailures(t *testing.T) {
 
 	body := `{"agentapi":{"base_url":"https://agent.example.com","agent_id":"ag_1","environment_id":"env_1","api_key":{"value":"agent-secret"}},` +
 		`"linx":{"api_base":"https://linx.example.com","api_key":{"value":"linx-secret"}},` +
-		`"services":{"render_url":"https://render.example.com","casting_url":"https://casting.example.com"},` +
+		`"services":{"render_url":"https://render.example.com","casting_interface":"off"},` +
 		`"registration":{"open":true}}`
 	response, payload = env.do(t, http.MethodPut, "/api/admin/settings", body, map[string]string{"Origin": env.server.URL})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("update: %d %s", response.StatusCode, payload)
 	}
+	var castingView struct {
+		Casting struct {
+			Selection string `json:"selection"`
+			Active    bool   `json:"active"`
+		} `json:"casting"`
+		Interfaces []struct {
+			Name string `json:"name"`
+			IPv4 string `json:"ipv4"`
+		} `json:"casting_interfaces"`
+		Settings struct {
+			Services struct {
+				CastingInterface string `json:"casting_interface"`
+			} `json:"services"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(payload, &castingView); err != nil {
+		t.Fatalf("casting view %s: %v", payload, err)
+	}
+	if castingView.Settings.Services.CastingInterface != "off" || castingView.Casting.Selection != "off" || castingView.Casting.Active {
+		t.Fatalf("casting not applied: %+v body=%s", castingView, payload)
+	}
 	var masked struct {
 		Settings struct {
 			Registration struct {
-				Open bool `json:"Open"`
+				Open bool `json:"open"`
 			} `json:"registration"`
 			Ready struct {
 				AgentAPI bool `json:"agentapi"`
@@ -759,6 +872,11 @@ func TestAdminSettingsReadUpdateAndFailures(t *testing.T) {
 	}
 	if !masked.Settings.Registration.Open || !masked.Settings.Ready.AgentAPI || !masked.Settings.Ready.Linx || !masked.Settings.Ready.Services {
 		t.Fatalf("masked=%+v body=%s", masked, payload)
+	}
+	response, payload = env.do(t, http.MethodPut, "/api/admin/settings",
+		`{"services":{"casting_interface":"missing-nic-xyz"}}`, map[string]string{"Origin": env.server.URL})
+	if response.StatusCode != http.StatusBadRequest || errorCode(t, payload) != "INVALID_CASTING_INTERFACE" {
+		t.Fatalf("missing nic: %d %s", response.StatusCode, payload)
 	}
 	response, payload = env.do(t, http.MethodGet, "/api/admin/settings", "", nil)
 	if response.StatusCode != http.StatusOK {
@@ -879,7 +997,7 @@ func TestAdminTestSettingsProbesEveryGroup(t *testing.T) {
 		t.Fatalf("malformed: %d %s", response.StatusCode, payload)
 	}
 	response, payload = env.do(t, http.MethodPost, "/api/admin/settings/test",
-		`{"services":{"casting_url":"not-a-url"}}`, origin)
+		`{"services":{"render_url":"not-a-url"}}`, origin)
 	if response.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("invalid url: %d %s", response.StatusCode, payload)
 	}
@@ -894,16 +1012,13 @@ func TestAdminTestSettingsProbesEveryGroup(t *testing.T) {
 		t.Fatalf("unconfigured: %d %s", response.StatusCode, payload)
 	}
 	var unconfigured struct {
-		Linx    serviceCheck `json:"linx"`
-		Render  serviceCheck `json:"render"`
-		Casting serviceCheck `json:"casting"`
-		Screens int          `json:"screens"`
+		Linx   serviceCheck `json:"linx"`
+		Render serviceCheck `json:"render"`
 	}
 	if err := json.Unmarshal(payload, &unconfigured); err != nil {
 		t.Fatalf("body %s: %v", payload, err)
 	}
-	if unconfigured.Linx.OK || unconfigured.Render.OK || unconfigured.Casting.OK || unconfigured.Screens != 0 ||
-		unconfigured.Render.Message == "" || unconfigured.Casting.Message == "" {
+	if unconfigured.Linx.OK || unconfigured.Render.OK || unconfigured.Render.Message == "" {
 		t.Fatalf("unconfigured=%+v", unconfigured)
 	}
 
@@ -924,36 +1039,21 @@ func TestAdminTestSettingsProbesEveryGroup(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer renderServer.Close()
-	castingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/healthz":
-			w.WriteHeader(http.StatusOK)
-		case "/v1/targets":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"targets":[{"id":"tv_1","name":"客厅","state":"online"}]}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer castingServer.Close()
-
 	body := fmt.Sprintf(`{"linx":{"api_base":%q,"api_key":{"value":"key"}},`+
-		`"services":{"render_url":%q,"casting_url":%q}}`,
-		linxServer.URL, renderServer.URL, castingServer.URL)
+		`"services":{"render_url":%q}}`,
+		linxServer.URL, renderServer.URL)
 	response, payload = env.do(t, http.MethodPost, "/api/admin/settings/test", body, origin)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("configured: %d %s", response.StatusCode, payload)
 	}
 	var configured struct {
-		Linx    serviceCheck `json:"linx"`
-		Render  serviceCheck `json:"render"`
-		Casting serviceCheck `json:"casting"`
-		Screens int          `json:"screens"`
+		Linx   serviceCheck `json:"linx"`
+		Render serviceCheck `json:"render"`
 	}
 	if err := json.Unmarshal(payload, &configured); err != nil {
 		t.Fatalf("body %s: %v", payload, err)
 	}
-	if !configured.Linx.OK || !configured.Render.OK || !configured.Casting.OK || configured.Screens != 1 {
+	if !configured.Linx.OK || !configured.Render.OK {
 		t.Fatalf("configured=%+v body=%s", configured, payload)
 	}
 
@@ -970,14 +1070,14 @@ func TestAdminTestSettingsProbesEveryGroup(t *testing.T) {
 	}
 
 	response, payload = env.do(t, http.MethodPost, "/api/admin/settings/test",
-		`{"services":{"render_url":"http://127.0.0.1:1","casting_url":"http://127.0.0.1:2"}}`, origin)
+		`{"services":{"render_url":"http://127.0.0.1:1"}}`, origin)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("unreachable services: %d %s", response.StatusCode, payload)
 	}
 	if err := json.Unmarshal(payload, &unconfigured); err != nil {
 		t.Fatal(err)
 	}
-	if unconfigured.Render.OK || unconfigured.Casting.OK || unconfigured.Screens != 0 {
+	if unconfigured.Render.OK {
 		t.Fatalf("unreachable services=%+v", unconfigured)
 	}
 
@@ -1024,8 +1124,7 @@ func configureReadyPlatform(t *testing.T, env *portalHTTPEnv) {
 			APIKey:  &settings.SecretValue{Value: "linx-secret"},
 		},
 		Services: &settings.ServicesPatch{
-			RenderURL:  settingsString("https://render.example.com"),
-			CastingURL: settingsString("https://casting.example.com"),
+			RenderURL: settingsString("https://render.example.com"),
 		},
 		Registration: &settings.RegistrationPatch{Open: settingsBool(true)},
 	}
@@ -1073,6 +1172,13 @@ func TestAdminOverviewCountsEverything(t *testing.T) {
 			Error        int `json:"error"`
 			Disabled     int `json:"disabled"`
 		} `json:"agents"`
+		Devices struct {
+			Total        int `json:"total"`
+			Registered   int `json:"registered"`
+			Provisioning int `json:"provisioning"`
+			Error        int `json:"error"`
+			Disabled     int `json:"disabled"`
+		} `json:"devices"`
 		Apps struct {
 			Total    int `json:"total"`
 			Running  int `json:"running"`
@@ -1095,6 +1201,9 @@ func TestAdminOverviewCountsEverything(t *testing.T) {
 	}
 	if out.Agents.Total != 3 || out.Agents.Registered != 1 || out.Agents.Provisioning != 1 || out.Agents.Error != 1 || out.Agents.Disabled != 0 {
 		t.Fatalf("agents=%+v", out.Agents)
+	}
+	if out.Devices.Total != 3 || out.Devices.Registered != 1 || out.Devices.Provisioning != 1 || out.Devices.Error != 1 || out.Devices.Disabled != 0 {
+		t.Fatalf("devices=%+v", out.Devices)
 	}
 	if out.Apps.Total != 4 || out.Apps.Running != 1 || out.Apps.Building != 1 || out.Apps.Error != 1 || out.Apps.Idle != 1 {
 		t.Fatalf("apps=%+v", out.Apps)

@@ -1,24 +1,18 @@
-// Package controlapi serves the local web console and its HTTP, SSE and
-// WebSocket control API. It should only listen on a loopback address.
+// Package controlapi serves the device control API the portal mounts: HTTP,
+// SSE and WebSocket. It has no standalone listener and no web console.
 package controlapi
 
 import (
 	"context"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 
 	"github.com/coder/websocket"
-	"github.com/open-anywhere/open-anywhere/internal/voiceentry/register"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/voice"
 )
-
-//go:embed console.html
-var consoleHTML []byte
 
 type Status struct {
 	State     voice.State `json:"state"`
@@ -40,7 +34,6 @@ type Server struct {
 	opusHandler func([]byte) error
 	audioSubs   map[chan []byte]struct{}
 	sampleRate  int
-	register    func(context.Context, register.Request) (register.Result, error)
 	disconnect  func() error
 	reconnect   func() error
 }
@@ -50,7 +43,6 @@ func New(controller *voice.Controller, statusFn func() Status) *Server {
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.console)
 	mux.HandleFunc("/status", s.status)
 	mux.HandleFunc("/announce", s.announce)
 	mux.HandleFunc("/say", s.say)
@@ -60,7 +52,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/events", s.events)
 	mux.HandleFunc("/audio", s.audio)
 	mux.HandleFunc("/playback", s.playback)
-	mux.HandleFunc("/device/register", s.registerDevice)
 	mux.HandleFunc("/disconnect", s.disconnectLinx)
 	mux.HandleFunc("/reconnect", s.reconnectLinx)
 	return sameOriginOnly(mux)
@@ -91,11 +82,6 @@ func sameOriginOnly(next http.Handler) http.Handler {
 // SetPCMHandler attaches a raw 16-bit mono 16kHz PCM receiver for browser audio.
 func (s *Server) SetPCMHandler(handler func([]byte) error) { s.pcmHandler = handler }
 
-// SetRegistration attaches the handler behind POST /device/register.
-func (s *Server) SetRegistration(fn func(context.Context, register.Request) (register.Result, error)) {
-	s.register = fn
-}
-
 // requirePost turns away state-changing endpoints reached with any other
 // method. sameOriginOnly cannot help here: a browser request made by an <img>
 // tag or a link preview is a GET with no Origin header, and without this check
@@ -109,37 +95,6 @@ func requirePost(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func (s *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
-	if !requirePost(w, r) {
-		return
-	}
-	// Requiring JSON forces a CORS preflight, so other sites cannot trigger this blindly.
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
-		return
-	}
-	if s.register == nil {
-		http.Error(w, "registration is unavailable", http.StatusNotImplemented)
-		return
-	}
-	var in register.Request
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
-		return
-	}
-	out, err := s.register(r.Context(), in)
-	if err != nil {
-		out.Error = err.Error()
-		if out.Status == "" {
-			out.Status = "error"
-		}
-		writeJSON(w, http.StatusBadGateway, out)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-// SetConnectionControl attaches the handlers behind POST /disconnect and /reconnect.
 func (s *Server) SetConnectionControl(disconnect, reconnect func() error) {
 	s.disconnect, s.reconnect = disconnect, reconnect
 }
@@ -257,15 +212,6 @@ func (s *Server) audio(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-}
-
-func (s *Server) console(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(consoleHTML)
 }
 
 func (s *Server) pause(w http.ResponseWriter, r *http.Request) {

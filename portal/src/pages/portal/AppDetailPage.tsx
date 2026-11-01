@@ -24,7 +24,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { useState } from 'react'
 import { ApiError, api, type Operation } from '../../api'
-import { appQueryOptions, meQueryOptions, screensQueryOptions } from '../../api/queries'
+import { appQueryOptions, meQueryOptions } from '../../api/queries'
 import { AppStateTag } from '../../components/Tags'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { deviceForApp } from '../../lib/device'
@@ -79,7 +79,6 @@ export function AppDetailPage() {
     refetchInterval: (query) => (query.state.data?.app.state === 'building' ? 3_000 : false),
   })
   const me = useQuery(meQueryOptions)
-  const screens = useQuery(screensQueryOptions)
 
   const openapi = useQuery({
     queryKey: ['openapi', appId],
@@ -94,7 +93,6 @@ export function AppDetailPage() {
       queryClient.removeQueries({ queryKey: ['app', appId] })
       queryClient.removeQueries({ queryKey: ['openapi', appId] })
       queryClient.invalidateQueries({ queryKey: ['apps'] })
-      queryClient.invalidateQueries({ queryKey: ['screens'] })
       message.success('应用已删除')
       navigate({ to: '/portal/apps' })
     },
@@ -135,7 +133,6 @@ export function AppDetailPage() {
   const title = detail.title || detail.name || '未命名应用'
   const building = detail.state === 'building'
   const device = deviceForApp(me.data?.devices, detail)
-  const screen = screens.data?.screens.find((item) => item.screen_id === detail.screen_id)
 
   return (
     <div className="page">
@@ -220,19 +217,6 @@ export function AppDetailPage() {
               key: 'state',
               label: '状态',
               children: appStateLabels[detail.state] ?? detail.state,
-            },
-            {
-              key: 'screen',
-              label: '屏幕',
-              children: screen ? (
-                <Link to="/portal/screens" className="text-link">
-                  {screen.name}
-                </Link>
-              ) : detail.screen_id ? (
-                '屏幕（暂不可见）'
-              ) : (
-                '—'
-              ),
             },
             { key: 'build_started', label: '开始生成', children: formatDate(detail.build_started_at) },
             { key: 'built', label: '生成完成', children: formatDate(detail.built_at) },

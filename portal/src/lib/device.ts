@@ -1,5 +1,21 @@
 import type { AppSummary, Device } from '../api'
 
+// groupDevices collects devices that share a Linx agent. A device that has
+// not been given an agent ID yet stays in a group of its own.
+export function groupDevices(devices: Device[]): Device[][] {
+  const groups = new Map<string, Device[]>()
+  for (const device of devices) {
+    const key = device.agent_id || device.id
+    const members = groups.get(key)
+    if (members) {
+      members.push(device)
+    } else {
+      groups.set(key, [device])
+    }
+  }
+  return [...groups.values()]
+}
+
 export function primaryDevice(devices?: Device[]): Device | undefined {
   if (!devices?.length) return undefined
   return devices.find((device) => device.kind === 'virtual') ?? devices[0]

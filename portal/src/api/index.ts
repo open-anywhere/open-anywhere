@@ -133,7 +133,6 @@ export interface AppSummary {
   built_at?: string
   build_duration_seconds?: number
   operation_count: number
-  screen_id?: string
   started_at?: string
   stopped_at?: string
   error?: AppError
@@ -174,24 +173,18 @@ export interface ServiceBindingState {
   managed: {
     available: boolean
     render_url: string
-    casting_url: string
   }
   custom: {
     render_url: string
-    casting_url: string
     render_token_configured: boolean
-    casting_token_configured: boolean
   }
 }
 
 export interface ServiceBindingInput {
   mode: ServiceMode
   render_url?: string
-  casting_url?: string
   render_token?: string
-  casting_token?: string
   clear_render_token?: boolean
-  clear_casting_token?: boolean
 }
 
 export interface ServiceCheck {
@@ -201,18 +194,13 @@ export interface ServiceCheck {
 
 export interface ServiceTestResult {
   render: ServiceCheck
-  casting: ServiceCheck
-  screens: number
 }
 
-export interface AdminAgent {
+export interface AdminDevice {
   id: string
-  user_id: string
-  username?: string
   kind: 'virtual' | 'physical'
+  name?: string
   mac: string
-  agent_id?: string
-  agent_name?: string
   state: DeviceState
   step?: string
   error?: string
@@ -220,6 +208,22 @@ export interface AdminAgent {
   created_at: string
   updated_at: string
   registered_at?: string
+}
+
+export interface AdminAgent {
+  id: string
+  user_id: string
+  username?: string
+  agent_id?: string
+  agent_name?: string
+  state: DeviceState
+  step?: string
+  error?: string
+  error_code?: string
+  device_count: number
+  devices: AdminDevice[]
+  created_at: string
+  updated_at: string
 }
 
 export interface AdminUser {
@@ -252,6 +256,7 @@ export interface AdminApp {
 export interface AdminOverview {
   users: { total: number; active: number; disabled: number; admins: number }
   agents: { total: number; registered: number; provisioning: number; error: number; disabled: number }
+  devices: { total: number; registered: number; provisioning: number; error: number; disabled: number }
   apps: { total: number; running: number; building: number; error: number; idle: number }
   platform: {
     agentapi: boolean
@@ -289,12 +294,24 @@ export interface PlatformSettings {
   }
   services: {
     render_url: string
-    casting_url: string
     render_token: SecretState
-    casting_token: SecretState
+    casting_interface: string
   }
   registration: { open: boolean }
   ready: { agentapi: boolean; linx: boolean; mcp: boolean; services: boolean }
+}
+
+export interface CastingInterface {
+  name: string
+  ipv4: string
+}
+
+export interface CastingStatus {
+  selection: string
+  active: boolean
+  name?: string
+  ipv4?: string
+  message?: string
 }
 
 export interface SecretPatch {
@@ -324,41 +341,22 @@ export interface PlatformSettingsPatch {
   }
   services?: {
     render_url?: string
-    casting_url?: string
     render_token?: SecretPatch
-    casting_token?: SecretPatch
+    casting_interface?: string
   }
   registration?: { open?: boolean }
+}
+
+export interface SettingsPayload {
+  settings: PlatformSettings
+  casting?: CastingStatus
+  casting_interfaces?: CastingInterface[]
+  warning?: string
 }
 
 export interface SettingsTestResult {
   linx: ServiceCheck
   render: ServiceCheck
-  casting: ServiceCheck
-  screens: number
-}
-
-export type ScreenStatus = 'free' | 'showing_app' | 'external' | 'unavailable'
-
-export interface ScreenAppRef {
-  app_id: string
-  name: string
-}
-
-export interface Screen {
-  screen_id: string
-  name: string
-  online: boolean
-  status: ScreenStatus
-  current_app?: ScreenAppRef
-}
-
-export interface StopScreenResult {
-  screen_id: string
-  app: {
-    app_id: string
-    state: AppState
-  }
 }
 
 export interface VoiceStatus {
@@ -509,9 +507,6 @@ export const api = {
       method: 'DELETE',
       body: '{}',
     }),
-  listScreens: () => request<{ screens: Screen[] }>('/screens'),
-  stopScreen: (screenId: string) =>
-    postJSON<StopScreenResult>(`/screens/${encodeURIComponent(screenId)}/stop`, {}),
   openapi: async (id: string) => {
     const response = await fetch(`${BASE}/apps/${encodeURIComponent(id)}/openapi.yaml`, {
       credentials: 'same-origin',
@@ -576,9 +571,9 @@ export const adminApi = {
     const suffix = search.toString()
     return adminRequest<{ apps: AdminApp[]; limit: number }>(`/apps${suffix ? `?${suffix}` : ''}`)
   },
-  settings: () => adminRequest<{ settings: PlatformSettings }>('/settings'),
+  settings: () => adminRequest<SettingsPayload>('/settings'),
   updateSettings: (patch: PlatformSettingsPatch) =>
-    adminRequest<{ settings: PlatformSettings; warning?: string }>('/settings', {
+    adminRequest<SettingsPayload>('/settings', {
       method: 'PUT',
       body: JSON.stringify(patch),
     }),
@@ -592,6 +587,10 @@ export const adminApi = {
 export const voice = {
   base: voiceBase,
   status: (deviceId: string) => requestURL<VoiceStatus>(`${voiceBase(deviceId)}/status`),
+  say: (deviceId: string, text: string) =>
+    postJSONURL<unknown>(`${voiceBase(deviceId)}/say`, { text }),
+  announce: (deviceId: string, text: string) =>
+    postJSONURL<unknown>(`${voiceBase(deviceId)}/announce`, { text }),
   pause: (deviceId: string) => postJSONURL<unknown>(`${voiceBase(deviceId)}/pause`),
   resume: (deviceId: string) => postJSONURL<unknown>(`${voiceBase(deviceId)}/resume`),
   abort: (deviceId: string) => postJSONURL<unknown>(`${voiceBase(deviceId)}/abort`),

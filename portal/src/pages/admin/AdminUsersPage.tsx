@@ -91,10 +91,11 @@ export function AdminUsersPage() {
           <Space direction="vertical" size={0}>
             {user.agents.map((agent) => (
               <span key={agent.id}>
-                {agent.agent_name || agent.mac}{' '}
+                {agent.agent_name || '未命名智能体'}{' '}
                 <Tag color={agent.state === 'registered' ? 'green' : agent.state === 'error' ? 'red' : 'blue'}>
                   {agent.state}
                 </Tag>
+                <span className="muted-text">{agent.device_count} 台设备</span>
               </span>
             ))}
           </Space>

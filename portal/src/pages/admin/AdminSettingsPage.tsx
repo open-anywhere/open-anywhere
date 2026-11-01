@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Select,
   Space,
   Spin,
   Switch,
@@ -48,11 +49,9 @@ interface SettingsFormValues {
   linx_intent_model_id?: string
   linx_rotate_mcp_token?: boolean
   render_url?: string
-  casting_url?: string
   render_token?: string
-  casting_token?: string
   clear_render_token?: boolean
-  clear_casting_token?: boolean
+  casting_interface?: string
   registration_open?: boolean
 }
 
@@ -148,10 +147,6 @@ function toPatch(values: SettingsFormValues, baseline: PlatformSettings): Platfo
     services.render_url = trimmed(values.render_url)
     servicesChanged = true
   }
-  if (trimmed(values.casting_url) !== baseline.services.casting_url) {
-    services.casting_url = trimmed(values.casting_url)
-    servicesChanged = true
-  }
   const renderToken = secretPatch(
     values.render_token,
     values.clear_render_token,
@@ -161,13 +156,8 @@ function toPatch(values: SettingsFormValues, baseline: PlatformSettings): Platfo
     services.render_token = renderToken
     servicesChanged = true
   }
-  const castingToken = secretPatch(
-    values.casting_token,
-    values.clear_casting_token,
-    baseline.services.casting_token.configured,
-  )
-  if (castingToken) {
-    services.casting_token = castingToken
+  if (trimmed(values.casting_interface) !== baseline.services.casting_interface) {
+    services.casting_interface = trimmed(values.casting_interface) || 'auto'
     servicesChanged = true
   }
   if (servicesChanged) patch.services = services
@@ -211,6 +201,8 @@ export function AdminSettingsPage() {
   const { message } = AntApp.useApp()
   const settings = useQuery(adminSettingsQueryOptions)
   const settingsData = settings.data?.settings
+  const castingStatus = settings.data?.casting
+  const castingInterfaces = settings.data?.casting_interfaces ?? []
 
   useEffect(() => {
     if (!settingsData) return
@@ -233,11 +225,9 @@ export function AdminSettingsPage() {
       linx_intent_model_id: settingsData.linx.intent_model_id,
       linx_rotate_mcp_token: false,
       render_url: settingsData.services.render_url,
-      casting_url: settingsData.services.casting_url,
       render_token: '',
-      casting_token: '',
       clear_render_token: false,
-      clear_casting_token: false,
+      casting_interface: settingsData.services.casting_interface || 'auto',
       registration_open: settingsData.registration.open,
     })
   }, [settingsData, form])
@@ -263,7 +253,7 @@ export function AdminSettingsPage() {
     onSuccess: (result) => {
       setError(undefined)
       setTestResult(result)
-      message[result.linx.ok && result.render.ok && result.casting.ok ? 'success' : 'warning'](
+      message[result.linx.ok && result.render.ok ? 'success' : 'warning'](
         '连接测试完成',
       )
     },
@@ -317,7 +307,7 @@ export function AdminSettingsPage() {
       {testResult ? (
         <Alert
           type={
-            testResult.linx.ok && testResult.render.ok && testResult.casting.ok
+            testResult.linx.ok && testResult.render.ok
               ? 'success'
               : 'warning'
           }
@@ -326,9 +316,7 @@ export function AdminSettingsPage() {
           message="连接测试"
           description={
             <span>
-              Linx：{checkLine(testResult.linx)} · Render：{checkLine(testResult.render)} ·
-              Casting：{checkLine(testResult.casting)}
-              {testResult.casting.ok ? ` · 发现 ${testResult.screens} 块屏幕` : ''}
+              Linx：{checkLine(testResult.linx)} · Render：{checkLine(testResult.render)}
             </span>
           }
         />
@@ -614,7 +602,7 @@ export function AdminSettingsPage() {
                     <div className="section-header">
                       <div>
                         <h2>默认屏幕服务</h2>
-                        <p>平台托管用户的 Render 与 Casting。仍有应用占用这些服务时不能修改。</p>
+                        <p>平台托管用户的应用运行服务。仍有应用占用时不能修改。</p>
                       </div>
                       {statusTag(settingsData.ready.services)}
                     </div>
@@ -642,29 +630,63 @@ export function AdminSettingsPage() {
                         <Checkbox>清除已保存的 Render Token</Checkbox>
                       </Form.Item>
                     ) : null}
-                    <Form.Item label="Casting 地址" name="casting_url">
-                      <Input placeholder="https://casting.example.com" autoComplete="off" />
-                    </Form.Item>
+                  </section>
+                  <section className="surface settings-section">
+                    <div className="section-header">
+                      <div>
+                        <h2>虚拟设备投屏网卡</h2>
+                        <p>
+                          嵌入的语音入口在本机发 SSDP / DLNA。单网卡可自动启用；多网卡请指定与电视同网段的那一张。保存后会重连已在线的虚拟设备。
+                        </p>
+                      </div>
+                      {castingStatus?.active ? (
+                        <Tag color="green">已启用</Tag>
+                      ) : (
+                        <Tag>未启用</Tag>
+                      )}
+                    </div>
                     <Form.Item
-                      label="Casting Token"
-                      name="casting_token"
-                      extra={
-                        settingsData.services.casting_token.configured
-                          ? '已保存 Token；留空保持不变。'
-                          : '可选。'
-                      }
+                      label="投屏网卡"
+                      name="casting_interface"
+                      extra="真机固件不受此项影响，仍使用设备自己的 self.cast.*。"
                     >
-                      <Input.Password
-                        placeholder={
-                          settingsData.services.casting_token.configured ? '已保存，留空保持不变' : '可选'
-                        }
-                        autoComplete="new-password"
+                      <Select
+                        options={(() => {
+                          const options = [
+                            {
+                              value: 'auto',
+                              label: '自动（仅检测到一张局域网网卡时启用）',
+                            },
+                            { value: 'off', label: '关闭（不注册 self.cast.*）' },
+                            ...castingInterfaces.map((item) => ({
+                              value: item.name,
+                              label: `${item.name}（${item.ipv4}）`,
+                            })),
+                          ]
+                          const current = settingsData.services.casting_interface
+                          if (
+                            current &&
+                            current !== 'auto' &&
+                            current !== 'off' &&
+                            !options.some((item) => item.value === current)
+                          ) {
+                            options.push({
+                              value: current,
+                              label: `${current}（当前不可用）`,
+                            })
+                          }
+                          return options
+                        })()}
                       />
                     </Form.Item>
-                    {settingsData.services.casting_token.configured ? (
-                      <Form.Item name="clear_casting_token" valuePropName="checked">
-                        <Checkbox>清除已保存的 Casting Token</Checkbox>
-                      </Form.Item>
+                    {castingStatus?.active ? (
+                      <Alert
+                        type="success"
+                        showIcon
+                        message={`当前使用 ${castingStatus.name}（${castingStatus.ipv4}）`}
+                      />
+                    ) : castingStatus?.message ? (
+                      <Alert type="info" showIcon message={castingStatus.message} />
                     ) : null}
                   </section>
                   </>

@@ -77,11 +77,4 @@ describe('AppRow', () => {
     expect(screen.getByText('生成中')).toBeInTheDocument()
   })
 
-  it('names the screen it is playing on', async () => {
-    await renderInRouter(<AppRow app={makeApp({ screen_id: 'screen_1' })} screenName="客厅电视" />)
-    expect(screen.getByText('客厅电视')).toBeInTheDocument()
-
-    await renderInRouter(<AppRow app={makeApp({ screen_id: 'screen_1' })} />)
-    expect(screen.getByText('已在屏幕上')).toBeInTheDocument()
-  })
 })

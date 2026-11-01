@@ -41,6 +41,13 @@ func (t *transport) SessionID() string {
 	return t.s.SessionID()
 }
 
+// Session returns the current Linx session, nil when disconnected.
+func (t *transport) Session() *linx.Session {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.s
+}
+
 func (t *transport) current() (*linx.Session, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

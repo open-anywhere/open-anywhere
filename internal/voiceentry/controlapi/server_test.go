@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/coder/websocket"
-	"github.com/open-anywhere/open-anywhere/internal/voiceentry/register"
 	"github.com/open-anywhere/open-anywhere/internal/voiceentry/voice"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,17 +28,6 @@ func TestAnnounceEndpoint(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 202 {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-}
-
-func TestConsoleEndpoint(t *testing.T) {
-	c := voice.NewController(fakeTransport{}, voice.Realtime)
-	s := New(c, func() Status { return Status{} })
-	r := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "灵矽本地控制台") {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }
@@ -158,35 +145,5 @@ func TestConnectionControlEndpoints(t *testing.T) {
 	}
 	if len(calls) != 2 {
 		t.Fatalf("calls=%v", calls)
-	}
-}
-
-func TestRegisterEndpointRequiresJSONAndReturnsResult(t *testing.T) {
-	s := New(voice.NewController(fakeTransport{}, voice.Realtime), func() Status { return Status{} })
-	s.SetRegistration(func(_ context.Context, in register.Request) (register.Result, error) {
-		if in.APIKey == "bad" {
-			return register.Result{Status: "pending", Code: "1"}, errors.New("bind failed")
-		}
-		return register.Result{Status: "pending", Code: "123456"}, nil
-	})
-	ts := httptest.NewServer(s.Handler())
-	defer ts.Close()
-	post := func(ctype, body string) (*http.Response, string) {
-		resp, err := http.Post(ts.URL+"/device/register", ctype, strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
-		return resp, string(b)
-	}
-	if resp, _ := post("text/plain", "{}"); resp.StatusCode != http.StatusUnsupportedMediaType {
-		t.Fatalf("text/plain=%d", resp.StatusCode)
-	}
-	if resp, body := post("application/json", "{}"); resp.StatusCode != http.StatusOK || !strings.Contains(body, `"code":"123456"`) {
-		t.Fatalf("ok=%d %s", resp.StatusCode, body)
-	}
-	if resp, body := post("application/json", `{"api_key":"bad"}`); resp.StatusCode != http.StatusBadGateway || !strings.Contains(body, "bind failed") || strings.Contains(body, "bad") {
-		t.Fatalf("err=%d %s", resp.StatusCode, body)
 	}
 }
