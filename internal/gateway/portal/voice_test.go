@@ -150,3 +150,53 @@ func TestVoiceManagerStopOfAnUnknownDeviceIsHarmless(t *testing.T) {
 		t.Fatal("stop invented a runtime")
 	}
 }
+
+func TestVoiceManagerStopsARuntimeWithNoAttachedPage(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	manager := NewVoiceManager(ctx, WithVoiceIdleGrace(80*time.Millisecond))
+	defer manager.StopAll()
+	device := store.PortalDevice{
+		ID: "dev_1", Kind: store.PortalDeviceVirtual, State: store.PortalDeviceRegistered,
+		CredentialPath: writeCredential(t, t.TempDir(), "dev_1"),
+	}
+	if err := manager.Start(device); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if status := manager.Status("dev_1"); status.State == "offline" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("an unattached runtime was not stopped")
+}
+
+func TestVoiceManagerKeepsARuntimeWhileAPageIsAttached(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	manager := NewVoiceManager(ctx, WithVoiceIdleGrace(80*time.Millisecond))
+	defer manager.StopAll()
+	device := store.PortalDevice{
+		ID: "dev_1", Kind: store.PortalDeviceVirtual, State: store.PortalDeviceRegistered,
+		CredentialPath: writeCredential(t, t.TempDir(), "dev_1"),
+	}
+	if err := manager.Start(device); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	release := manager.Acquire("dev_1")
+	time.Sleep(250 * time.Millisecond)
+	if status := manager.Status("dev_1"); status.State == "offline" {
+		t.Fatal("an attached page lost its runtime")
+	}
+	release()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if status := manager.Status("dev_1"); status.State == "offline" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the runtime did not stop after the page detached")
+}

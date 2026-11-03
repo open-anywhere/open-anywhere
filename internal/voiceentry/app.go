@@ -61,6 +61,12 @@ type Config struct {
 	Timeout time.Duration
 	// ReconnectDelays is the backoff after an unexpected disconnect.
 	ReconnectDelays []time.Duration
+	// NoAutoReconnect keeps a resident client disconnected after the Linx
+	// session closes. The portal uses it for page-bound virtual devices: an
+	// agent that ended the conversation (or a dropped connection) stays
+	// offline until the page explicitly reconnects, instead of dialing back
+	// on its own.
+	NoAutoReconnect bool
 
 	// Casting enables the self.cast.* tools. The device discovers and controls
 	// DLNA renderers on its own network, so there is no casting service to
@@ -155,11 +161,11 @@ func (a *App) deviceTools() []linx.Tool {
 
 func (a *App) status() controlapi.Status {
 	st := controlapi.Status{
-		State:          a.controller.State(),
-		Mode:           a.controller.Mode(),
-		SessionID:      a.transport.SessionID(),
-		Connected:      a.transport.Connected(),
-		Volume: a.tools.Volume(),
+		State:     a.controller.State(),
+		Mode:      a.controller.Mode(),
+		SessionID: a.transport.SessionID(),
+		Connected: a.transport.Connected(),
+		Volume:    a.tools.Volume(),
 	}
 	if dev := a.dev.Load(); dev != nil {
 		st.MAC, st.Registered = dev.MAC, true
@@ -176,7 +182,6 @@ func (a *App) Handler() http.Handler {
 	}
 	return a.api.Handler()
 }
-
 
 // Status reports the current session state without exposing credentials.
 func (a *App) Status() controlapi.Status { return a.status() }
@@ -390,6 +395,16 @@ func (a *App) loop(ctx context.Context) error {
 			}
 			if !a.cfg.Serve {
 				return errors.New("灵矽连接已关闭")
+			}
+			if a.cfg.NoAutoReconnect {
+				// The session is gone; stay down until the page asks for a
+				// new one. Without this, an agent that said goodbye would
+				// reconnect by itself while the call page is still open.
+				a.down = true
+				a.transport.Set(nil)
+				a.controller.Disconnected()
+				log.Printf("Linx disconnected; waiting for an explicit reconnect")
+				continue
 			}
 			a.autoReconnect(ctx)
 		}

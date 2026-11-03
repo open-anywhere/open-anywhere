@@ -102,7 +102,7 @@ describe('DevicePanel for a browser agent', () => {
 
     expect(screen.getByText('智能体暂时不在线')).toBeInTheDocument()
     expect(screen.getByText('连接已断开或没有响应，可以重新连接。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /开始对话/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /开始对话/ })).toBeEnabled()
     expect(screen.queryByRole('button', { name: /断开连接/ })).toBeNull()
 
     // The panel action and the header action share a label.

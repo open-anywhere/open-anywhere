@@ -7,6 +7,7 @@ import { appsQueryOptions, meQueryOptions } from '../../api/queries'
 import { EmptyState } from '../../components/EmptyState'
 import { usePageTitle } from '../../hooks/usePageTitle'
 import { deriveActivity, type ActivityItem } from '../../lib/activity'
+import { devicePollInterval } from '../../lib/device'
 import { ActivityEntry } from './components/ActivityEntry'
 import { PageHeader } from './components/PageHeader'
 
@@ -48,8 +49,7 @@ export function ActivityPage() {
   usePageTitle('动态')
   const me = useQuery({
     ...meQueryOptions,
-    refetchInterval: (query) =>
-      query.state.data?.devices.some((device) => device.state === 'provisioning') ? 2_000 : false,
+    refetchInterval: (query) => devicePollInterval(query.state.data?.devices),
   })
   const apps = useQuery({
     ...appsQueryOptions,

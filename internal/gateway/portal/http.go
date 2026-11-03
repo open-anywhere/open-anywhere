@@ -470,6 +470,10 @@ func (a *API) VoiceHandler() http.Handler {
 			writeError(w, apiError(http.StatusServiceUnavailable, "VOICE_UNAVAILABLE", "语音运行时还未就绪，请稍后重试"))
 			return
 		}
+		// Long-lived requests (events SSE, audio/playback WebSockets) hold this
+		// presence until the page closes. Status polling refreshes it too.
+		release := a.voice.Acquire(deviceID)
+		defer release()
 		http.StripPrefix("/voice/"+deviceID, handler).ServeHTTP(w, r)
 	})
 }

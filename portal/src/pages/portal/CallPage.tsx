@@ -12,7 +12,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useSearch } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import type { Device } from '../../api'
-import { ApiError, api } from '../../api'
+import { ApiError, api, voice } from '../../api'
 import { meQueryOptions } from '../../api/queries'
 import { VoiceTag } from '../../components/Tags'
 import { useDeviceConnection } from '../../hooks/useDeviceConnection'
@@ -128,10 +128,46 @@ function CallSession({ device }: { device: Device }) {
     at: Date.parse(line.at) || 0,
   }))
   const { disconnect, reconnect } = useDeviceConnection()
-  const offline = device.voice.state === 'offline'
   const voiceState = session.status?.state ?? device.voice.state
   const connected = session.status?.connected ?? device.voice.connected
+  // Connection comes from the live status probe, not only the /me snapshot:
+  // a Linx session can close while this page stays open.
+  const offline = !connected
   const paused = voiceState === 'idle'
+
+  // A virtual device is page-bound and does not reconnect on its own after
+  // the Linx session closes. Check the live status first, then reconnect and
+  // wait for the session before opening the microphone and playback sockets.
+  const handleStart = async () => {
+    let live = connected
+    try {
+      const next = await voice.status(device.id)
+      live = next.connected
+    } catch {
+      live = false
+    }
+    if (!live) {
+      try {
+        await reconnect.mutateAsync(device.id)
+      } catch {
+        return
+      }
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        try {
+          const next = await voice.status(device.id)
+          if (next.connected) {
+            live = true
+            break
+          }
+        } catch {
+          // The runtime can reject status while it is still starting.
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 250))
+      }
+    }
+    await session.start()
+  }
+
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string>()
@@ -222,7 +258,7 @@ function CallSession({ device }: { device: Device }) {
             type="info"
             showIcon
             message="智能体已断开连接"
-            description="需要时点右上角的“重新连接”，之后就能继续对话。"
+            description="点“开始对话”会自动连接；也可以点右上角的“重新连接”。"
           />
         ) : null}
 
@@ -289,7 +325,7 @@ function CallSession({ device }: { device: Device }) {
           starting={session.starting}
           paused={paused}
           volume={session.volume}
-          onStart={() => void session.start()}
+          onStart={() => void handleStart()}
           onStop={session.stop}
           onToggleMicrophone={() => void session.toggleMicrophone()}
           onTogglePlayback={() => void session.togglePlayback()}

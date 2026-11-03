@@ -32,6 +32,12 @@ type VoiceManager struct {
 	mu   sync.Mutex
 	apps map[string]*voiceRuntime
 	logf func(string, ...any)
+	// presence tracks the browser requests currently attached to each runtime.
+	// A virtual device is page-bound: once no page has touched it for
+	// idleGrace, the watchdog stops the runtime instead of keeping a Linx
+	// session open forever.
+	presence  map[string]*voicePresence
+	idleGrace time.Duration
 	// casting is the LAN address on-site casting starts from. Nil keeps the
 	// self.cast.* tools off, matching a deployment with no screens nearby.
 	casting net.IP
@@ -40,6 +46,11 @@ type VoiceManager struct {
 	// would otherwise see — and cast to — the operator's screens. Nil allows
 	// every virtual device, which is only correct for a single-tenant portal.
 	castingFor func(userID string) bool
+}
+
+type voicePresence struct {
+	clients  int
+	lastSeen time.Time
 }
 
 // VoiceOption adjusts a manager at construction time.
@@ -56,6 +67,16 @@ func WithOnSiteCasting(localIP net.IP) VoiceOption {
 // next (re)start. Without it every virtual device gets the tools.
 func WithCastingFor(predicate func(userID string) bool) VoiceOption {
 	return func(m *VoiceManager) { m.castingFor = predicate }
+}
+
+// WithVoiceIdleGrace changes how long a virtual device may have no attached
+// browser before its Linx runtime is stopped. The default is 30 seconds.
+func WithVoiceIdleGrace(grace time.Duration) VoiceOption {
+	return func(m *VoiceManager) {
+		if grace > 0 {
+			m.idleGrace = grace
+		}
+	}
 }
 
 // SetOnSiteCasting updates the LAN address used by future (and restarted)
@@ -106,11 +127,79 @@ const voiceStopWait = 5 * time.Second
 
 // NewVoiceManager returns a manager whose runtimes stop when ctx is canceled.
 func NewVoiceManager(ctx context.Context, options ...VoiceOption) *VoiceManager {
-	manager := &VoiceManager{ctx: ctx, apps: make(map[string]*voiceRuntime), logf: log.Printf}
+	manager := &VoiceManager{
+		ctx:       ctx,
+		apps:      make(map[string]*voiceRuntime),
+		presence:  make(map[string]*voicePresence),
+		idleGrace: 30 * time.Second,
+		logf:      log.Printf,
+	}
 	for _, option := range options {
 		option(manager)
 	}
+	go manager.watch()
 	return manager
+}
+
+// watch stops virtual-device runtimes whose page has been gone for idleGrace.
+func (m *VoiceManager) watch() {
+	interval := m.idleGrace / 2
+	if interval < 50*time.Millisecond {
+		interval = 50 * time.Millisecond
+	}
+	if interval > 5*time.Second {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case now := <-ticker.C:
+			m.mu.Lock()
+			var idle []string
+			for deviceID, presence := range m.presence {
+				if presence.clients == 0 && now.Sub(presence.lastSeen) >= m.idleGrace {
+					idle = append(idle, deviceID)
+				}
+			}
+			m.mu.Unlock()
+			for _, deviceID := range idle {
+				m.logf("portal: voice runtime for %s has no attached page; stopping", deviceID)
+				m.Stop(deviceID)
+			}
+		}
+	}
+}
+
+// Acquire marks a browser request as attached to the device's runtime. The
+// returned release function must run when the request ends; an SSE or
+// WebSocket request therefore keeps the runtime alive until the page closes.
+func (m *VoiceManager) Acquire(deviceID string) func() {
+	m.mu.Lock()
+	presence := m.presence[deviceID]
+	if presence == nil {
+		presence = &voicePresence{}
+		m.presence[deviceID] = presence
+	}
+	presence.clients++
+	presence.lastSeen = time.Now()
+	m.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			if current := m.presence[deviceID]; current != nil {
+				if current.clients > 0 {
+					current.clients--
+				}
+				current.lastSeen = time.Now()
+			}
+			m.mu.Unlock()
+		})
+	}
 }
 
 // Start launches the runtime for a registered device. Repeated calls return
@@ -136,6 +225,10 @@ func (m *VoiceManager) Start(device store.PortalDevice) error {
 		Serve:      true,
 		NoListen:   true,
 		Out:        io.Discard,
+		// A page-bound virtual device must not dial back on its own after the
+		// Linx session ends (for example, after the agent says goodbye).
+		// The call page reconnects explicitly when the user starts again.
+		NoAutoReconnect: true,
 	}
 	if casting != nil {
 		config.Casting = true
@@ -148,6 +241,7 @@ func (m *VoiceManager) Start(device store.PortalDevice) error {
 	ctx, cancel := context.WithCancel(m.ctx)
 	runtime := &voiceRuntime{app: app, cancel: cancel, done: make(chan struct{})}
 	m.apps[device.ID] = runtime
+	m.presence[device.ID] = &voicePresence{lastSeen: time.Now()}
 	go func() {
 		defer close(runtime.done)
 		err := app.Run(ctx)
@@ -195,9 +289,9 @@ func (m *VoiceManager) Restart(device store.PortalDevice) error {
 	return m.Start(device)
 }
 
-// Stop cancels a device's runtime. Logging out or closing a tab does not call
-// this: the runtime is meant to stay online like real hardware. The user's
-// explicit disconnect does, and the device stays offline until reconnected.
+// Stop cancels a device's runtime. An explicit disconnect stops it immediately;
+// the idle watchdog calls the same path after the page has been gone for
+// idleGrace, so a virtual device is page-bound rather than always online.
 func (m *VoiceManager) Stop(deviceID string) {
 	m.stop(deviceID)
 }
@@ -208,6 +302,7 @@ func (m *VoiceManager) stop(deviceID string) <-chan struct{} {
 	m.mu.Lock()
 	runtime, ok := m.apps[deviceID]
 	delete(m.apps, deviceID)
+	delete(m.presence, deviceID)
 	m.mu.Unlock()
 	if !ok {
 		return nil
@@ -221,6 +316,7 @@ func (m *VoiceManager) StopAll() {
 	m.mu.Lock()
 	apps := m.apps
 	m.apps = make(map[string]*voiceRuntime)
+	m.presence = make(map[string]*voicePresence)
 	m.mu.Unlock()
 	for _, runtime := range apps {
 		runtime.cancel()

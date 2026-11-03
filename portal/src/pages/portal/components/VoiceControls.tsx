@@ -54,7 +54,7 @@ export function VoiceControls({
           {!supported
             ? '当前浏览器不支持语音对话，请使用最新版 Chrome 或 Edge 打开。'
             : offline
-              ? '智能体已断开连接，重新连接后才能对话。'
+              ? '智能体已断开连接，点“开始对话”会自动连接。'
               : '开口就好。浏览器会请求麦克风权限。'}
         </div>
         <Button
@@ -62,7 +62,7 @@ export function VoiceControls({
           size="large"
           icon={<PhoneOutlined />}
           loading={starting}
-          disabled={!supported || offline}
+          disabled={!supported}
           onClick={onStart}
         >
           开始对话

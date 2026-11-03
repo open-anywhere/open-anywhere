@@ -8,6 +8,7 @@ import { meQueryOptions } from '../../api/queries'
 import { DeviceStateTag, VoiceTag } from '../../components/Tags'
 import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { usePageTitle } from '../../hooks/usePageTitle'
+import { devicePollInterval } from '../../lib/device'
 import { formatDate } from '../../lib/format'
 import { AddDeviceModal } from './components/AddDeviceModal'
 import { PageHeader } from './components/PageHeader'
@@ -21,8 +22,7 @@ export function DevicesPage() {
 
   const me = useQuery({
     ...meQueryOptions,
-    refetchInterval: (query) =>
-      query.state.data?.devices.some((device) => device.state === 'provisioning') ? 2_000 : false,
+    refetchInterval: (query) => devicePollInterval(query.state.data?.devices),
   })
 
   const refresh = () => {
