@@ -46,10 +46,14 @@ describe('VoiceControls before a call', () => {
     expect(screen.getByRole('button', { name: /开始对话/ })).toBeDisabled()
   })
 
-  it('explains a disconnected agent and disables the call', () => {
-    setup({ offline: true })
-    expect(screen.getByText('智能体已断开连接，重新连接后才能对话。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /开始对话/ })).toBeDisabled()
+  it('explains a disconnected agent and lets the call reconnect', async () => {
+    const user = userEvent.setup()
+    const { onStart } = setup({ offline: true })
+    expect(screen.getByText('智能体已断开连接，点“开始对话”会自动连接。')).toBeInTheDocument()
+    const button = screen.getByRole('button', { name: /开始对话/ })
+    expect(button).toBeEnabled()
+    await user.click(button)
+    expect(onStart).toHaveBeenCalledTimes(1)
   })
 
   it('shows a spinner while starting', () => {

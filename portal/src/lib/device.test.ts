@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { deviceForApp, deviceLabel, findDevice, primaryDevice } from './device'
+import {
+  deviceForApp,
+  deviceLabel,
+  devicePollInterval,
+  findDevice,
+  primaryDevice,
+} from './device'
 import { makeApp, makeDevice } from '../test/fixtures'
 
 describe('primaryDevice', () => {
@@ -69,5 +75,29 @@ describe('deviceForApp', () => {
 
   it('returns undefined when nothing matches', () => {
     expect(deviceForApp([makeDevice({ mac: 'zzz', id: 'zzz', agent_id: 'zzz' })], app)).toBeUndefined()
+  })
+})
+
+describe('devicePollInterval', () => {
+  it('does not poll without devices or when everything is offline', () => {
+    expect(devicePollInterval()).toBe(false)
+    expect(devicePollInterval([])).toBe(false)
+    expect(
+      devicePollInterval([
+        makeDevice({ voice: { state: 'offline', connected: false, session_id: 's_1' } }),
+      ]),
+    ).toBe(false)
+  })
+
+  it('polls quickly while a device is provisioning', () => {
+    expect(devicePollInterval([makeDevice({ state: 'provisioning' })])).toBe(2_000)
+  })
+
+  it('polls while a voice runtime is connected', () => {
+    expect(
+      devicePollInterval([
+        makeDevice({ voice: { state: 'listening', connected: true, session_id: 's_1' } }),
+      ]),
+    ).toBe(3_000)
   })
 })

@@ -166,7 +166,7 @@ Portal 不再有屏幕页，也没有 `GET /api/portal/screens`。屏幕发现�
 
 ### 4.5 语音与实时字幕
 
-- 每台虚拟设备对应一个内嵌 `voiceentry.App`；注册完成即启动，Gateway 重启后恢复。
+- 每台虚拟设备对应一个内嵌 `voiceentry.App`；注册完成即启动，Gateway 重启后恢复。对话页关闭、默认 30 秒内没有页面请求后运行时自动停止；再次点“开始对话”会先重连。Linx 会话关闭（例如智能体结束对话）后不会自动重连，运行时保持离线，等对话页显式发起重连。
 - 通话页 `/portal/call?device={id}` 使用浏览器麦克风与扬声器，复用 `/voice/{device_id}/status|events|audio|playback|pause|resume|abort`。
 - 实时字幕来自 voiceentry 的 `stt` / `tts` 事件流；不提供文字输入框，也不新增文字发送接口。
 - `/voice/{device_id}/...` 先校验会话 Cookie 与设备归属，要求 `kind=virtual`、`state=registered`，只放行通话页需要的端点。

@@ -42,3 +42,18 @@ export function deviceForApp(devices: Device[] | undefined, app: AppSummary): De
       device.mac === app.device_id || device.id === app.device_id || device.agent_id === app.device_id,
   )
 }
+
+// devicePollInterval keeps the agent/device cards current while a voice
+// runtime is connected, so the "收听中" tag flips to offline after the page is
+// closed and the gateway's idle watchdog stops the runtime.
+export function devicePollInterval(devices?: Device[]): number | false {
+  if (!devices?.length) return false
+  if (devices.some((device) => device.state === 'provisioning')) return 2_000
+  const voiceActive = devices.some(
+    (device) =>
+      device.voice.connected ||
+      device.voice.state === 'listening' ||
+      device.voice.state === 'connecting',
+  )
+  return voiceActive ? 3_000 : false
+}

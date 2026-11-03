@@ -7,7 +7,7 @@ import { ApiError, api, type CreateDeviceInput } from '../../api'
 import { appsQueryOptions, meQueryOptions } from '../../api/queries'
 import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { usePageTitle } from '../../hooks/usePageTitle'
-import { deviceForApp, groupDevices } from '../../lib/device'
+import { deviceForApp, devicePollInterval, groupDevices } from '../../lib/device'
 import { AgentSettingsModal } from './components/AgentSettingsModal'
 import { AppRow } from './components/AppRow'
 import { DevicePanel } from './components/DevicePanel'
@@ -21,8 +21,7 @@ export function AgentsPage() {
 
   const me = useQuery({
     ...meQueryOptions,
-    refetchInterval: (query) =>
-      query.state.data?.devices.some((device) => device.state === 'provisioning') ? 2_000 : false,
+    refetchInterval: (query) => devicePollInterval(query.state.data?.devices),
   })
 
   const [settingsDevice, setSettingsDevice] = useState<string>()

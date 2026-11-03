@@ -15,7 +15,7 @@ import { appsQueryOptions, meQueryOptions, servicesQueryOptions } from '../../ap
 import { EmptyState } from '../../components/EmptyState'
 import { useDeviceConnection } from '../../hooks/useDeviceConnection'
 import { usePageTitle } from '../../hooks/usePageTitle'
-import { primaryDevice } from '../../lib/device'
+import { devicePollInterval, primaryDevice } from '../../lib/device'
 import { AppRow } from './components/AppRow'
 import { DevicePanel } from './components/DevicePanel'
 import { PageHeader } from './components/PageHeader'
@@ -29,8 +29,7 @@ export function OverviewPage() {
 
   const me = useQuery({
     ...meQueryOptions,
-    refetchInterval: (query) =>
-      query.state.data?.devices.some((device) => device.state === 'provisioning') ? 2_000 : false,
+    refetchInterval: (query) => devicePollInterval(query.state.data?.devices),
   })
   const apps = useQuery({
     ...appsQueryOptions,

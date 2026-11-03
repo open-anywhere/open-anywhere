@@ -365,6 +365,30 @@ func TestResidentKeepsRetryingWhileLinxRefusesConnections(t *testing.T) {
 	}
 }
 
+func TestResidentStaysDownAfterTheSessionClosesWhenAutoReconnectIsOff(t *testing.T) {
+	f := newFakeLinx(t, true)
+	base, stop := startResident(t, Config{
+		DevicePath:      writeDevice(t, f.wsURL()),
+		NoAutoReconnect: true,
+	})
+	defer func() {
+		if err := stop(); err != nil {
+			t.Fatalf("stop: %v", err)
+		}
+	}()
+
+	waitStatus(t, base, func(s statusBody) bool { return !s.Connected && s.State == "disconnected" })
+	time.Sleep(100 * time.Millisecond)
+	if got := f.sessions.Load(); got != 1 {
+		t.Fatalf("sessions=%d, want 1 (no automatic reconnect)", got)
+	}
+
+	if got := post(t, base+"/reconnect", `{}`); got != http.StatusAccepted {
+		t.Fatalf("reconnect=%d", got)
+	}
+	waitStatus(t, base, func(s statusBody) bool { return s.Connected })
+}
+
 func TestResidentStopsWhileWaitingToReconnect(t *testing.T) {
 	f := newFakeLinx(t, true)
 	_, stop := startResident(t, Config{DevicePath: writeDevice(t, f.wsURL()), ReconnectDelays: []time.Duration{time.Hour}})

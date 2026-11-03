@@ -118,7 +118,7 @@ export function DevicePanel({
         </div>
         <Space wrap>
           {device.state === 'registered' && !hardware ? (
-            <Button type="primary" icon={<AudioOutlined />} disabled={voiceOffline} onClick={onCall}>
+            <Button type="primary" icon={<AudioOutlined />} onClick={onCall}>
               开始对话
             </Button>
           ) : null}
