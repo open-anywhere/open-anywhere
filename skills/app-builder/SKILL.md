@@ -40,11 +40,9 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 6. **自测与打包**：运行
    ```bash
    bash <skill-dir>/scripts/self-test.sh /mnt/session/outputs \
-     --op-method POST --op-path /api/join --op-body '{"user_name":"验证玩家"}' \
-     --bad-op-method POST --bad-op-path /api/join --bad-op-body '{"user_name":"  "}' \
-     --package
+     --op-method POST --op-path /api/join --op-body '{"user_name":"验证玩家"}'
    ```
-   脚本一次完成静态检查、测试端口启动、`/health`、`/`、业务操作、错误分支抽查、打包和归档校验。`--op-*` 必须调用本次构建的一个能改变状态的业务操作（路径以 `/api/` 开头）；`--bad-op-*` 抽查一个错误场景（4xx/5xx 是预期），两者响应都必须是 JSON 且包含字符串 `message`。失败时按输出修复并重跑，直到看到 `self-test passed`。不要做浏览器截图、UI 自动化或穷举错误分支。
+   脚本一次完成静态检查、打包、归档校验，并从 `artifact.tar.gz` 解压后按生产环境启动（工作目录为归档根目录，只传 `PATH`/`LANG`/`TZ`/`TMPDIR`、`HOST=0.0.0.0`、`PORT`、`NODE_ENV=production`），检查 `/health`、`/`、`openapi.yaml` 声明的每个 `/api/*` 操作（最多 12 个，路径参数替换为 `verify`，POST/PUT/PATCH 发送空 JSON 对象），最后发送 `SIGTERM` 确认应用自行退出。它还会验证 `PORT` 缺失或非法时应用以非零状态退出。`--op-*` 可选，用于额外验证一个能改变状态的业务成功路径，必须返回 2xx、JSON 对象和字符串 `message`。失败时按输出修复并重跑，直到看到 `self-test passed`。不要做浏览器截图、UI 自动化或穷举错误分支。
 
 缺少细节时按合理假设完成，并在最终说明中列出关键假设。
 
@@ -93,7 +91,7 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 
 ## 最小验证
 
-没有实际运行的检查不得声称通过，但也只做必要检查：自测只跑一次 `scripts/self-test.sh`，它已覆盖静态检查（`validate-artifact.sh`）、一次启动、`/health`、`/`、一个改变状态的业务操作、一个错误分支抽查，以及 `--package` 时的打包和归档校验。
+没有实际运行的检查不得声称通过，但也只做必要检查：自测只跑一次 `scripts/self-test.sh`，它已覆盖静态检查、打包与归档校验、`PORT` 缺失/非法时的退出行为、按生产环境从归档启动、`/health`、`/`、`openapi.yaml` 声明的每个 `/api/*` 操作的 2xx/4xx 响应、可选的成功路径，以及 `SIGTERM` 退出。
 
 不要截图、跑浏览器或 UI 自动化，不要逐项测试所有错误分支，也不要反复换端口重启。细节见 `references/self-test.md`。
 
@@ -104,5 +102,4 @@ artifact.tar.gz          # 以上三项的归档，位于 outputs 根目录
 - `references/self-test.md`：init-template.sh 与 self-test.sh 的用法说明。
 - `references/app-template/`：最小可运行模板，由 init-template.sh 复制。
 - `scripts/init-template.sh`：一条命令复制模板到产物目录。
-- `scripts/self-test.sh`：静态检查、启动验证、业务操作抽查、打包与归档校验。
-- `scripts/validate-artifact.sh`：归档结构和启动契约的静态检查（self-test 内部调用）。
+- `scripts/self-test.sh`：静态检查、打包与归档校验、生产等价启动、API 探测和 `SIGTERM` 退出检查。

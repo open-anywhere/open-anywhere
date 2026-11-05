@@ -14,9 +14,7 @@ bash <skill-dir>/scripts/init-template.sh /mnt/session/outputs
 
 ```bash
 bash <skill-dir>/scripts/self-test.sh /mnt/session/outputs \
-  --op-method POST --op-path /api/join --op-body '{"user_name":"验证玩家"}' \
-  --bad-op-method POST --bad-op-path /api/join --bad-op-body '{"user_name":"  "}' \
-  --package
+  --op-method POST --op-path /api/join --op-body '{"user_name":"验证玩家"}'
 ```
 
 参数：
@@ -24,20 +22,21 @@ bash <skill-dir>/scripts/self-test.sh /mnt/session/outputs \
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
 | 第一个位置参数 | 是 | 产物目录，包含 `app/`、`openapi.yaml`、`launch.json` |
-| `--op-method`、`--op-path` | 是 | 调用一个能改变状态的业务操作；method 取 GET/POST/PUT/PATCH/DELETE，路径以 `/api/` 开头 |
-| `--op-body` | 否 | JSON 请求体，无请求体时省略 |
-| `--bad-op-method`、`--bad-op-path` | 否 | 错误分支抽查，例如空白 `user_name`；预期 4xx/5xx，响应仍需 JSON 且含 `message` |
-| `--bad-op-body` | 否 | 错误分支的 JSON 请求体 |
-| `--package` | 建议 | 打包 `artifact.tar.gz` 并对归档做校验 |
+| `--op-method`、`--op-path` | 否 | 额外调用一个能改变状态的业务操作，要求 2xx；路径以 `/api/` 开头 |
+| `--op-body` | 否 | 业务操作的 JSON 请求体，无请求体时省略 |
 
 脚本按顺序执行：
 
-1. **静态检查**：运行 `validate-artifact.sh`，覆盖 JavaScript 语法、JSON 合法性、`launch.json` 字段、OpenAPI 结构和外部资源引用。
-2. **启动**：在 4310–4314 中挑一个空闲测试端口启动应用，按 `launch.json` 的 `readyTimeoutMs`（上限 30 秒）等待 `/health` 就绪。
-3. **HTTP 检查**：`/health` 返回 `{"status":"ok"}`；`/` 返回 200 和 text/html。
-4. **业务检查**：脚本发起 `--op-*` 请求，要求返回 2xx、响应是 JSON 且包含字符串 `message`；`--bad-op-*` 接受 4xx/5xx，只要求响应是 JSON 且包含字符串 `message`。脚本会打印响应原文供核对。
-5. **打包**：`--package` 时生成 `artifact.tar.gz` 并再次运行 `validate-artifact.sh` 检查归档。
+1. **静态检查**：JavaScript 语法、`package.json` 是合法 JSON 对象、`launch.json` 字段、OpenAPI 结构（含 `operationId` 唯一性）、`app/public` 外部资源引用。
+2. **打包**：总是生成 `artifact.tar.gz`，随后所有运行检查都针对这个归档，而不是源目录。
+3. **归档校验**：归档大小、条目数、必需文件、路径安全、重复条目、链接/特殊文件，以及解压后的总大小。
+4. **启动契约负向检查**：`PORT` 缺失和 `PORT` 非法时，应用必须在 5 秒内以非零状态退出，并向 stderr 输出原因；否则失败。
+5. **生产等价启动**：把归档解压到临时目录，以归档根目录为工作目录，只传 `PATH`/`LANG`/`TZ`/`TMPDIR` 和 `HOST=0.0.0.0`、`PORT`、`NODE_ENV=production`，按 `launch.json` 的 `runtimeArgs` 启动，按 `readyTimeoutMs`（上限 30 秒）等待 `/health`。
+6. **HTTP 检查**：`/health` 返回 200、`application/json` 和精确的 `{"status":"ok"}`；`/` 返回 200 和 text/html。
+7. **API 探测**：从 `openapi.yaml` 提取所有 `/api/*` 操作（GET/POST/PUT/PATCH/DELETE，最多 12 个）。路径参数替换为 `verify`，POST/PUT/PATCH 发送空 JSON 对象，逐个请求；每个响应必须是 JSON 对象、包含字符串 `message`，且状态码为 2xx 或 4xx。5xx、3xx、非 JSON 或缺少 `message` 都算失败。提取不到操作时回退到应用提供的 `GET /openapi.json`。
+8. **可选成功路径**：传入 `--op-*` 时额外调用一次，要求 2xx、JSON 对象和字符串 `message`。
+9. **存活与退出**：请求完成后应用进程仍须存活，`/health` 仍须返回 `{"status":"ok"}`；发送 `SIGTERM` 后须在 5 秒内退出。
 
-失败时脚本打印 FAIL 行和应用日志尾部，按输出修复后重跑整个脚本；必须看到 `self-test passed` 才能结束。脚本不测试 SIGTERM、退出码或残留进程，测试进程由脚本在结束时清理；沙箱结束时会自动清理。
+失败时脚本打印 FAIL 行和应用 stdout/stderr 尾部，按输出修复后重跑整个脚本；必须看到 `self-test passed` 才能结束。测试进程和临时目录由脚本清理。
 
-`self-test.sh` 不启动浏览器，也不检查页面布局。画布适配（1280×720、一屏放下、无页面滚动）按 `artifact-contract.md` 的“渲染画布”和模板实现；不要用额外浏览器截图代替这一步。
+探测请求使用空 JSON 对象和占位路径参数，通过 2xx/4xx 响应确认接口可请求、不崩溃、错误分支返回 JSON `message`；真实成功路径需要的话用 `--op-*` 补一次。脚本不启动浏览器，也不检查页面布局。画布适配（1280×720、一屏放下、无页面滚动）按 `artifact-contract.md` 的“渲染画布”和模板实现；不要用额外浏览器截图代替这一步。
