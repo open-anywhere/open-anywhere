@@ -86,11 +86,10 @@ skills/app-builder/
 │   └── self-test.md             # 模板复制与自测脚本用法
 └── scripts/
     ├── init-template.sh         # 一条命令复制模板到产物目录
-    ├── self-test.sh             # 静态检查、启动验证、业务操作抽查、打包与归档校验
-    └── validate-artifact.sh     # 归档结构和启动契约的静态检查
+    └── self-test.sh             # 静态检查、打包、归档校验、生产等价启动、API 探测、SIGTERM 退出检查
 ```
 
-`references/app-template/` 是可直接复制的最小 Node.js 应用，内置一个猜电影示例：玩家加入、根据线索提交电影名、答对得分并进入下一轮。构建时由 `scripts/init-template.sh` 一条命令复制模板，由 `scripts/self-test.sh` 一条命令完成静态检查、启动验证、业务操作抽查、打包和归档校验，避免智能体逐个读文件搬运或分步手工验证。`SKILL.md` 要求先复制模板再按需求修改，避免智能体从零搭建；实际业务替换模板中的电影玩法和接口，但保留产物与身份约定。模板放在 `references/` 而不是 `assets/`：`assets/` 容易被当作仅供展示的素材，智能体不保证读取和使用。模板内容跟随 [app-artifact.md](app-artifact.md) 更新。
+`references/app-template/` 是可直接复制的最小 Node.js 应用，内置一个猜电影示例：玩家加入、根据线索提交电影名、答对得分并进入下一轮。构建时由 `scripts/init-template.sh` 一条命令复制模板，由 `scripts/self-test.sh` 一条命令完成静态检查、打包、归档校验、按生产环境从归档启动、`/api/*` 探测和 `SIGTERM` 退出检查，避免智能体逐个读文件搬运或分步手工验证。`SKILL.md` 要求先复制模板再按需求修改，避免智能体从零搭建；实际业务替换模板中的电影玩法和接口，但保留产物与身份约定。模板放在 `references/` 而不是 `assets/`：`assets/` 容易被当作仅供展示的素材，智能体不保证读取和使用。模板内容跟随 [app-artifact.md](app-artifact.md) 更新。
 
 上传技能：
 
